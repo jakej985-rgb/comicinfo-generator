@@ -23,27 +23,36 @@ MONTH_MAP = {
     "november": 11, "nov": 11, "december": 12, "dec": 12
 }
 
-def fetch_gcp_html(url: str, timeout: int = 5) -> str:
-    """Helper to fetch HTML content from comics.org URL with fast timeout."""
+def fetch_gcp_html(url: str, timeout: int = 2) -> str:
+    """Helper to fetch HTML content from comics.org URL with fast direct check & HTTPS Wayback Machine fallback."""
     if HAS_CURL_CFFI:
         try:
             r = cffi_requests.get(url, headers=HEADERS, impersonate="chrome120", timeout=timeout)
-            if r.status_code == 200 and "Just a moment..." not in r.text:
+            if r.status_code == 200 and "Just a moment..." not in r.text and "<title>Just a moment..." not in r.text:
                 return r.text
         except Exception:
             pass
 
     try:
         r = requests.get(url, headers=HEADERS, timeout=timeout)
-        if r.status_code == 200 and "Just a moment..." not in r.text:
+        if r.status_code == 200 and "Just a moment..." not in r.text and "<title>Just a moment..." not in r.text:
+            return r.text
+    except Exception:
+        pass
+
+    # HTTPS Wayback Machine Archive Fallback if Cloudflare blocks direct HTTP request
+    try:
+        wb_url = f"https://web.archive.org/web/2024/{url}"
+        r = requests.get(wb_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}, timeout=8)
+        if r.status_code == 200 and len(r.text) > 1000:
             return r.text
     except Exception:
         pass
 
     return ""
 
-def fetch_gcp_api_json(url: str, timeout: int = 5) -> dict:
-    """Helper to fetch JSON content from comics.org REST API endpoint with fast timeout."""
+def fetch_gcp_api_json(url: str, timeout: int = 2) -> dict:
+    """Helper to fetch JSON content from comics.org REST API endpoint with fast 2s timeout."""
     clean_url = url if "?format=json" in url else f"{url.rstrip('/')}/?format=json"
     headers = dict(HEADERS)
     headers["Accept"] = "application/json"
@@ -65,8 +74,43 @@ def fetch_gcp_api_json(url: str, timeout: int = 5) -> dict:
 
     return {}
 
+def parse_gcd_soup(soup: BeautifulSoup, url: str) -> Comic:
+    """Parses BeautifulSoup object from GCD HTML page."""
+    c = Comic()
+    c.web = url
+
+    h1 = soup.find("h1")
+    if h1:
+        c.series = h1.get_text(" ", strip=True)
+        c.title = c.series
+
+    title_tag = soup.find("title")
+    if title_tag:
+        t_text = title_tag.get_text(" ", strip=True)
+        m = re.search(r"GCD\s*::\s*Issue\s*::\s*(.+?)(?:\s*#\s*(.*))?$", t_text, re.I)
+        if m:
+            c.series = m.group(1).strip()
+            c.number = m.group(2).strip() if m.group(2) else ""
+            c.title = f"{c.series} #{c.number}" if c.number else c.series
+
+    page_txt = soup.get_text(" ", strip=True)
+    m_pub = re.search(r"([A-Za-z0-9\s]+),\s*(\d{4})\s+Series", page_txt)
+    if m_pub:
+        pub_raw = m_pub.group(1).strip()
+        pub_parts = pub_raw.split()
+        c.publisher = pub_parts[-1] if pub_parts else pub_raw
+        c.year = int(m_pub.group(2))
+
+    return c
+
 def parse_gcp_text_refined(text: str, default_url: str = "") -> Comic:
     """Parses Grand Comics Database HTML or copied page text layout into a Comic object."""
+    if "<html" in text.lower() or "<body" in text.lower() or "<title>" in text.lower():
+        soup = BeautifulSoup(text, "html.parser")
+        c_soup = parse_gcd_soup(soup, default_url)
+        if c_soup.series and c_soup.series != "Grand Comics Database Issue":
+            return c_soup
+
     c = Comic()
     lines = [l.strip() for l in text.split("\n") if l.strip()]
 
@@ -154,7 +198,7 @@ def parse_gcp_text_refined(text: str, default_url: str = "") -> Comic:
 def scrape_gcp_issue(url_or_text: str) -> Comic:
     """
     Scrapes a Grand Comics Database (comics.org / GCP) issue page or copied page layout text into a Comic.
-    Never throws an unhandled error if Cloudflare or API rate limits block the request.
+    Uses HTTPS Wayback Machine archive fallback if Cloudflare blocks direct HTTP request.
     """
     input_str = url_or_text.strip()
 
@@ -172,8 +216,8 @@ def scrape_gcp_issue(url_or_text: str) -> Comic:
     issue_id = m_issue.group(1) if m_issue else "1"
     c.number = issue_id
     
-    # 1. Try API first with 5s timeout
-    api_data = fetch_gcp_api_json(f"https://www.comics.org/api/issue/{issue_id}/", timeout=5)
+    # 1. Try API first with 2s timeout
+    api_data = fetch_gcp_api_json(f"https://www.comics.org/api/issue/{issue_id}/", timeout=2)
     if api_data and api_data.get("id"):
         c.number = str(api_data.get("number", "")).strip().lstrip("#")
         c.title = api_data.get("title", "") or ""
@@ -187,12 +231,12 @@ def scrape_gcp_issue(url_or_text: str) -> Comic:
 
         series_api = api_data.get("series")
         if series_api:
-            s_data = fetch_gcp_api_json(series_api, timeout=5)
+            s_data = fetch_gcp_api_json(series_api, timeout=2)
             if s_data:
                 c.series = s_data.get("name", "")
                 pub_api = s_data.get("publisher")
                 if pub_api:
-                    p_data = fetch_gcp_api_json(pub_api, timeout=5)
+                    p_data = fetch_gcp_api_json(pub_api, timeout=2)
                     if p_data:
                         c.publisher = p_data.get("name", "")
 
@@ -232,20 +276,18 @@ def scrape_gcp_issue(url_or_text: str) -> Comic:
 
         return c
 
-    # 2. Try HTML Scraper with 5s timeout
-    html_text = fetch_gcp_html(url, timeout=5)
+    # 2. Try HTML Scraper (Direct or HTTPS Wayback Machine Cache)
+    html_text = fetch_gcp_html(url, timeout=2)
     if html_text:
-        return parse_gcp_text_refined(html_text, url)
+        res_c = parse_gcp_text_refined(html_text, url)
+        if res_c.series and res_c.series != "Grand Comics Database Issue":
+            return res_c
 
-    # 3. If input is multi-line or contains copied text
-    if len(input_str.split("\n")) > 1:
-        return parse_gcp_text_refined(input_str, url)
-
-    # 4. Safe Fallback if Cloudflare / API rate-limits block direct HTTP access
+    # 3. Safe Fallback
     c.title = f"GCP Issue #{issue_id}"
     c.series = "Grand Comics Database Issue"
     c.publisher = "Grand Comics Database (GCP)"
-    c.summary = f"Metadata generated for GCP Issue #{issue_id} ({url}). Note: Direct scraping was blocked by Cloudflare anti-bot. You can paste the copied page text into the URL box to extract full metadata."
+    c.summary = f"Metadata generated for GCP Issue #{issue_id} ({url}). Note: Direct scraping was blocked by Cloudflare anti-bot."
     return c
 
 def scrape_gcp_volume(volume_url: str) -> tuple[str, dict[str, str], list[dict]]:
@@ -259,8 +301,8 @@ def scrape_gcp_volume(volume_url: str) -> tuple[str, dict[str, str], list[dict]]
 
     series_id = m_series.group(1)
 
-    # 1. API Fetching with 5s timeout
-    s_data = fetch_gcp_api_json(f"https://www.comics.org/api/series/{series_id}/", timeout=5)
+    # 1. API Fetching with 2s timeout
+    s_data = fetch_gcp_api_json(f"https://www.comics.org/api/series/{series_id}/", timeout=2)
     if s_data and s_data.get("name"):
         series_name = s_data.get("name", "")
         issue_map = {}
@@ -272,7 +314,7 @@ def scrape_gcp_volume(volume_url: str) -> tuple[str, dict[str, str], list[dict]]
             if m_iss:
                 iss_id = m_iss.group(1)
                 web_url = f"https://www.comics.org/issue/{iss_id}/"
-                i_data = fetch_gcp_api_json(iss_api_url, timeout=3)
+                i_data = fetch_gcp_api_json(iss_api_url, timeout=2)
                 num = str(i_data.get("number", "")).strip().lstrip("#").lstrip("0") or "0"
 
                 if num not in issue_map:
@@ -289,8 +331,8 @@ def scrape_gcp_volume(volume_url: str) -> tuple[str, dict[str, str], list[dict]]
         )
         return series_name, issue_map, issues_list
 
-    # 2. HTML Scraper Fallback
-    html_text = fetch_gcp_html(volume_url, timeout=5)
+    # 2. HTML Scraper Fallback (Direct or Wayback)
+    html_text = fetch_gcp_html(volume_url, timeout=2)
     soup = BeautifulSoup(html_text, "html.parser")
 
     series_name = ""
@@ -336,7 +378,7 @@ def search_gcp(query: str, search_type: str = "all") -> list[dict]:
     # 1. Search Series
     if search_type in ("all", "gcp_volume"):
         search_url = f"https://www.comics.org/search/advanced/process/?target=series&method=contains&series_name={encoded_query}"
-        html_text = fetch_gcp_html(search_url, timeout=5)
+        html_text = fetch_gcp_html(search_url, timeout=2)
         if html_text:
             soup = BeautifulSoup(html_text, "html.parser")
             for tr in soup.find_all("tr"):
@@ -370,7 +412,7 @@ def search_gcp(query: str, search_type: str = "all") -> list[dict]:
     # 2. Search Issues
     if search_type in ("all", "gcp_issue"):
         search_url = f"https://www.comics.org/search/advanced/process/?target=issue&method=contains&issue_name={encoded_query}"
-        html_text = fetch_gcp_html(search_url, timeout=5)
+        html_text = fetch_gcp_html(search_url, timeout=2)
         if html_text:
             soup = BeautifulSoup(html_text, "html.parser")
             for tr in soup.find_all("tr"):
