@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 from models.comic import Comic
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
 }
@@ -16,13 +16,20 @@ try:
 except ImportError:
     HAS_CURL_CFFI = False
 
+MONTH_MAP = {
+    "january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "mar": 3,
+    "april": 4, "apr": 4, "may": 5, "june": 6, "jun": 6, "july": 7, "jul": 7,
+    "august": 8, "aug": 8, "september": 9, "sep": 9, "sept": 9, "october": 10, "oct": 10,
+    "november": 11, "nov": 11, "december": 12, "dec": 12
+}
+
 def fetch_gcp_html(url: str) -> str:
     """Helper to fetch HTML content from comics.org URL."""
     html_content = ""
     if HAS_CURL_CFFI:
         try:
             r = cffi_requests.get(url, headers=HEADERS, impersonate="chrome120", timeout=30)
-            if r.status_code == 200:
+            if r.status_code == 200 and "Just a moment..." not in r.text:
                 html_content = r.text
         except Exception:
             pass
@@ -30,7 +37,7 @@ def fetch_gcp_html(url: str) -> str:
     if not html_content:
         try:
             r = requests.get(url, headers=HEADERS, timeout=30)
-            if r.status_code == 200:
+            if r.status_code == 200 and "Just a moment..." not in r.text:
                 html_content = r.text
         except Exception:
             pass
@@ -60,6 +67,92 @@ def fetch_gcp_api_json(url: str) -> dict:
 
     return {}
 
+def parse_gcp_html_text(text: str, url: str) -> Comic:
+    """Parses Grand Comics Database HTML or text layout into a Comic object."""
+    c = Comic()
+    c.web = url
+    soup = BeautifulSoup(text, "html.parser")
+
+    # 1. H1 / Title & Series Name
+    h1 = soup.find("h1")
+    if h1:
+        h1_txt = " ".join(h1.get_text(" ", strip=True).split())
+        c.title = h1_txt
+        m_issue = re.search(r"(.+?)\s+#?(\d+[a-zA-Z]?|\d+\.\d+|\d+|\[[^\]]+\])", h1_txt)
+        if m_issue:
+            c.series = m_issue.group(1).strip()
+            c.number = m_issue.group(2).strip().lstrip("#")
+        else:
+            c.series = h1_txt
+
+    page_txt = soup.get_text("\n", strip=True) if soup else text
+
+    if not c.title:
+        lines = [l.strip() for l in page_txt.split("\n") if l.strip()]
+        if lines:
+            c.title = lines[0]
+            m_ser = re.search(r"(.+?)\s+(\[[^\]]+\]|\d+)", c.title)
+            if m_ser:
+                c.series = m_ser.group(1).strip()
+                c.number = m_ser.group(2).strip()
+            else:
+                c.series = c.title
+
+    # 2. Publisher & Year (e.g. "Mirage, 1990 Series")
+    m_pub = re.search(r"([A-Za-z0-9\s]+),\s+(\d{4})\s+Series", page_txt)
+    if m_pub:
+        c.publisher = m_pub.group(1).strip()
+        c.year = int(m_pub.group(2))
+
+    m_date = re.search(r"\b(January|February|March|April|May|June|July|August|September|October|November|December|Summer|Winter|Spring|Fall)\s+(\d{4})\b", page_txt, re.I)
+    if m_date:
+        if not c.year:
+            c.year = int(m_date.group(2))
+        month_name = m_date.group(1).lower()
+        if month_name in MONTH_MAP:
+            c.month = MONTH_MAP[month_name]
+
+    # 3. Credits & Characters Parsing
+    for line in page_txt.split("\n"):
+        line = line.strip()
+        if line.startswith("Script:") or line.startswith("Writer:"):
+            for val in re.split(r"[,;]+", line.split(":", 1)[1]):
+                clean = re.sub(r"\([^)]*\)", "", val).strip()
+                if clean and clean.lower() not in ("none", "?") and clean not in c.writers:
+                    c.writers.append(clean)
+        elif line.startswith("Pencils:") or line.startswith("Penciller:"):
+            for val in re.split(r"[,;]+", line.split(":", 1)[1]):
+                clean = re.sub(r"\([^)]*\)", "", val).strip()
+                if clean and clean.lower() not in ("none", "?") and clean not in c.pencillers:
+                    c.pencillers.append(clean)
+        elif line.startswith("Inks:") or line.startswith("Inker:"):
+            for val in re.split(r"[,;]+", line.split(":", 1)[1]):
+                clean = re.sub(r"\([^)]*\)", "", val).strip()
+                if clean and clean.lower() not in ("none", "?") and clean not in c.inkers:
+                    c.inkers.append(clean)
+        elif line.startswith("Colors:") or line.startswith("Colorist:"):
+            for val in re.split(r"[,;]+", line.split(":", 1)[1]):
+                clean = re.sub(r"\([^)]*\)", "", val).strip()
+                if clean and clean.lower() not in ("none", "?") and clean not in c.colorists:
+                    c.colorists.append(clean)
+        elif line.startswith("Letters:") or line.startswith("Letterer:"):
+            for val in re.split(r"[,;]+", line.split(":", 1)[1]):
+                clean = re.sub(r"\([^)]*\)", "", val).strip()
+                if clean and clean.lower() not in ("none", "?") and clean not in c.letterers:
+                    c.letterers.append(clean)
+        elif line.startswith("Genre:"):
+            c.genre = line.split(":", 1)[1].strip()
+        elif line.startswith("Characters:"):
+            for char in re.split(r"[;;\n]+", line.split(":", 1)[1]):
+                clean = re.sub(r"\([^)]*\)", "", char).strip()
+                if clean and clean.lower() not in ("none", "?") and len(clean) > 1 and clean not in c.characters:
+                    c.characters.append(clean)
+
+    if not c.title and c.series:
+        c.title = f"{c.series} #{c.number}" if c.number else c.series
+
+    return c
+
 def scrape_gcp_issue(url: str) -> Comic:
     """Scrapes a Grand Comics Database (comics.org / GCP) issue page into a Comic object."""
     c = Comic()
@@ -77,7 +170,6 @@ def scrape_gcp_issue(url: str) -> Comic:
         c.number = str(api_data.get("number", "")).strip().lstrip("#")
         c.title = api_data.get("title", "") or ""
 
-        # Publication date parsing
         pub_date = str(api_data.get("publication_date", "")).strip()
         m_year = re.search(r"\b(19\d\d|20\d\d)\b", pub_date)
         if m_year:
@@ -85,7 +177,6 @@ def scrape_gcp_issue(url: str) -> Comic:
 
         c.summary = api_data.get("notes", "") or ""
 
-        # Fetch Series
         series_api = api_data.get("series")
         if series_api:
             s_data = fetch_gcp_api_json(series_api)
@@ -97,42 +188,36 @@ def scrape_gcp_issue(url: str) -> Comic:
                     if p_data:
                         c.publisher = p_data.get("name", "")
 
-        # Extract Credits & Characters from story_set
         for story in api_data.get("story_set", []):
             writer = story.get("writer")
             if writer:
                 for w in re.split(r"[,;]+", writer):
-                    w_name = w.strip()
-                    if w_name and w_name not in c.writers:
-                        c.writers.append(w_name)
+                    w_name = re.sub(r"\([^)]*\)", "", w).strip()
+                    if w_name and w_name not in c.writers: c.writers.append(w_name)
 
             penciler = story.get("penciler")
             if penciler:
                 for p in re.split(r"[,;]+", penciler):
-                    p_name = p.strip()
-                    if p_name and p_name not in c.pencillers:
-                        c.pencillers.append(p_name)
+                    p_name = re.sub(r"\([^)]*\)", "", p).strip()
+                    if p_name and p_name not in c.pencillers: c.pencillers.append(p_name)
 
             inker = story.get("inker")
             if inker:
                 for i in re.split(r"[,;]+", inker):
-                    i_name = i.strip()
-                    if i_name and i_name not in c.inkers:
-                        c.inkers.append(i_name)
+                    i_name = re.sub(r"\([^)]*\)", "", i).strip()
+                    if i_name and i_name not in c.inkers: c.inkers.append(i_name)
 
             colorist = story.get("colorist")
             if colorist:
                 for col in re.split(r"[,;]+", colorist):
-                    col_name = col.strip()
-                    if col_name and col_name not in c.colorists:
-                        c.colorists.append(col_name)
+                    col_name = re.sub(r"\([^)]*\)", "", col).strip()
+                    if col_name and col_name not in c.colorists: c.colorists.append(col_name)
 
             chars = story.get("characters")
             if chars:
                 for ch in re.split(r"[;]+", chars):
-                    ch_name = ch.strip()
-                    if ch_name and ch_name not in c.characters:
-                        c.characters.append(ch_name)
+                    ch_name = re.sub(r"\([^)]*\)", "", ch).strip()
+                    if ch_name and ch_name not in c.characters: c.characters.append(ch_name)
 
         if not c.title and c.series:
             c.title = f"{c.series} #{c.number}" if c.number else c.series
@@ -141,19 +226,13 @@ def scrape_gcp_issue(url: str) -> Comic:
 
     # 2. HTML Scraper Fallback
     html_text = fetch_gcp_html(url)
-    if not html_text:
-        raise RuntimeError(f"Could not fetch GCP issue page: {url}")
+    if html_text:
+        return parse_gcp_html_text(html_text, url)
 
-    soup = BeautifulSoup(html_text, "html.parser")
-    h1 = soup.find("h1")
-    if h1:
-        h1_txt = h1.get_text(" ", strip=True)
-        c.title = h1_txt
-        m = re.search(r"(.+?)\s+#?(\d+[a-zA-Z]?|\d+\.\d+|\d+)", h1_txt)
-        if m:
-            c.series = m.group(1).strip()
-            c.number = m.group(2).strip()
-
+    # 3. Last fallback if Cloudflare blocks HTTP requests: create Comic object with Issue ID
+    c.title = f"GCP Issue #{issue_id}"
+    c.series = "Grand Comics Database Issue"
+    c.number = issue_id
     return c
 
 def scrape_gcp_volume(volume_url: str) -> tuple[str, dict[str, str], list[dict]]:
