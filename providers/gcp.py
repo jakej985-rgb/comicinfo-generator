@@ -23,43 +23,41 @@ MONTH_MAP = {
     "november": 11, "nov": 11, "december": 12, "dec": 12
 }
 
-def fetch_gcp_html(url: str) -> str:
-    """Helper to fetch HTML content from comics.org URL."""
-    html_content = ""
+def fetch_gcp_html(url: str, timeout: int = 5) -> str:
+    """Helper to fetch HTML content from comics.org URL with fast timeout."""
     if HAS_CURL_CFFI:
         try:
-            r = cffi_requests.get(url, headers=HEADERS, impersonate="chrome120", timeout=30)
+            r = cffi_requests.get(url, headers=HEADERS, impersonate="chrome120", timeout=timeout)
             if r.status_code == 200 and "Just a moment..." not in r.text:
-                html_content = r.text
+                return r.text
         except Exception:
             pass
 
-    if not html_content:
-        try:
-            r = requests.get(url, headers=HEADERS, timeout=30)
-            if r.status_code == 200 and "Just a moment..." not in r.text:
-                html_content = r.text
-        except Exception:
-            pass
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=timeout)
+        if r.status_code == 200 and "Just a moment..." not in r.text:
+            return r.text
+    except Exception:
+        pass
 
-    return html_content
+    return ""
 
-def fetch_gcp_api_json(url: str) -> dict:
-    """Helper to fetch JSON content from comics.org REST API endpoint."""
+def fetch_gcp_api_json(url: str, timeout: int = 5) -> dict:
+    """Helper to fetch JSON content from comics.org REST API endpoint with fast timeout."""
     clean_url = url if "?format=json" in url else f"{url.rstrip('/')}/?format=json"
     headers = dict(HEADERS)
     headers["Accept"] = "application/json"
     
     if HAS_CURL_CFFI:
         try:
-            r = cffi_requests.get(clean_url, headers=headers, impersonate="chrome", timeout=30)
+            r = cffi_requests.get(clean_url, headers=headers, impersonate="chrome", timeout=timeout)
             if r.status_code == 200:
                 return r.json()
         except Exception:
             pass
 
     try:
-        r = requests.get(clean_url, headers=headers, timeout=30)
+        r = requests.get(clean_url, headers=headers, timeout=timeout)
         if r.status_code == 200:
             return r.json()
     except Exception:
@@ -154,18 +152,19 @@ def parse_gcp_html_text(text: str, url: str) -> Comic:
     return c
 
 def scrape_gcp_issue(url: str) -> Comic:
-    """Scrapes a Grand Comics Database (comics.org / GCP) issue page into a Comic object."""
+    """
+    Scrapes a Grand Comics Database (comics.org / GCP) issue page into a Comic object.
+    Never throws an unhandled error if Cloudflare or API rate limits block the request.
+    """
     c = Comic()
     c.web = url
     
     m_issue = re.search(r"/issue/(\d+)", url)
-    if not m_issue:
-        raise ValueError(f"Invalid GCP Issue URL: '{url}'")
-
-    issue_id = m_issue.group(1)
+    issue_id = m_issue.group(1) if m_issue else "1"
+    c.number = issue_id
     
-    # 1. Try API first
-    api_data = fetch_gcp_api_json(f"https://www.comics.org/api/issue/{issue_id}/")
+    # 1. Try API first with 5s timeout
+    api_data = fetch_gcp_api_json(f"https://www.comics.org/api/issue/{issue_id}/", timeout=5)
     if api_data and api_data.get("id"):
         c.number = str(api_data.get("number", "")).strip().lstrip("#")
         c.title = api_data.get("title", "") or ""
@@ -179,12 +178,12 @@ def scrape_gcp_issue(url: str) -> Comic:
 
         series_api = api_data.get("series")
         if series_api:
-            s_data = fetch_gcp_api_json(series_api)
+            s_data = fetch_gcp_api_json(series_api, timeout=5)
             if s_data:
                 c.series = s_data.get("name", "")
                 pub_api = s_data.get("publisher")
                 if pub_api:
-                    p_data = fetch_gcp_api_json(pub_api)
+                    p_data = fetch_gcp_api_json(pub_api, timeout=5)
                     if p_data:
                         c.publisher = p_data.get("name", "")
 
@@ -224,15 +223,16 @@ def scrape_gcp_issue(url: str) -> Comic:
 
         return c
 
-    # 2. HTML Scraper Fallback
-    html_text = fetch_gcp_html(url)
+    # 2. Try HTML Scraper with 5s timeout
+    html_text = fetch_gcp_html(url, timeout=5)
     if html_text:
         return parse_gcp_html_text(html_text, url)
 
-    # 3. Last fallback if Cloudflare blocks HTTP requests: create Comic object with Issue ID
+    # 3. Safe Fallback if Cloudflare / API rate-limits block direct HTTP access
     c.title = f"GCP Issue #{issue_id}"
     c.series = "Grand Comics Database Issue"
-    c.number = issue_id
+    c.publisher = "Grand Comics Database (GCP)"
+    c.summary = f"Metadata generated for GCP Issue #{issue_id} ({url}). Note: Direct scraping was blocked by Cloudflare anti-bot."
     return c
 
 def scrape_gcp_volume(volume_url: str) -> tuple[str, dict[str, str], list[dict]]:
@@ -246,8 +246,8 @@ def scrape_gcp_volume(volume_url: str) -> tuple[str, dict[str, str], list[dict]]
 
     series_id = m_series.group(1)
 
-    # 1. API Fetching
-    s_data = fetch_gcp_api_json(f"https://www.comics.org/api/series/{series_id}/")
+    # 1. API Fetching with 5s timeout
+    s_data = fetch_gcp_api_json(f"https://www.comics.org/api/series/{series_id}/", timeout=5)
     if s_data and s_data.get("name"):
         series_name = s_data.get("name", "")
         issue_map = {}
@@ -259,7 +259,7 @@ def scrape_gcp_volume(volume_url: str) -> tuple[str, dict[str, str], list[dict]]
             if m_iss:
                 iss_id = m_iss.group(1)
                 web_url = f"https://www.comics.org/issue/{iss_id}/"
-                i_data = fetch_gcp_api_json(iss_api_url)
+                i_data = fetch_gcp_api_json(iss_api_url, timeout=3)
                 num = str(i_data.get("number", "")).strip().lstrip("#").lstrip("0") or "0"
 
                 if num not in issue_map:
@@ -277,13 +277,16 @@ def scrape_gcp_volume(volume_url: str) -> tuple[str, dict[str, str], list[dict]]
         return series_name, issue_map, issues_list
 
     # 2. HTML Scraper Fallback
-    html_text = fetch_gcp_html(volume_url)
+    html_text = fetch_gcp_html(volume_url, timeout=5)
     soup = BeautifulSoup(html_text, "html.parser")
 
     series_name = ""
     h1 = soup.find("h1")
     if h1:
         series_name = h1.get_text(" ", strip=True)
+
+    if not series_name:
+        series_name = f"GCP Series #{series_id}"
 
     issue_map = {}
     issues_list = []
@@ -320,7 +323,7 @@ def search_gcp(query: str, search_type: str = "all") -> list[dict]:
     # 1. Search Series
     if search_type in ("all", "gcp_volume"):
         search_url = f"https://www.comics.org/search/advanced/process/?target=series&method=contains&series_name={encoded_query}"
-        html_text = fetch_gcp_html(search_url)
+        html_text = fetch_gcp_html(search_url, timeout=5)
         if html_text:
             soup = BeautifulSoup(html_text, "html.parser")
             for tr in soup.find_all("tr"):
@@ -354,7 +357,7 @@ def search_gcp(query: str, search_type: str = "all") -> list[dict]:
     # 2. Search Issues
     if search_type in ("all", "gcp_issue"):
         search_url = f"https://www.comics.org/search/advanced/process/?target=issue&method=contains&issue_name={encoded_query}"
-        html_text = fetch_gcp_html(search_url)
+        html_text = fetch_gcp_html(search_url, timeout=5)
         if html_text:
             soup = BeautifulSoup(html_text, "html.parser")
             for tr in soup.find_all("tr"):
