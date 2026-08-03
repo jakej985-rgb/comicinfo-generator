@@ -15,7 +15,7 @@ if repo_dir not in sys.path:
     sys.path.insert(0, repo_dir)
 
 from models.comic import Comic, merge_comics
-from providers.comicvine import scrape_issue, scrape_volume
+from providers.comicvine import scrape_issue, scrape_volume, search_comicvine
 from writers.archive import embed_comicinfo_in_cbz
 from writers.comicinfo import write_xml, generate_xml_bytes
 from converters.cbr_to_cbz import convert_cbr_to_cbz
@@ -297,7 +297,29 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             except Exception:
                 fields = {}
 
-        if parsed.path == "/api/scrape":
+        if parsed.path == "/api/search":
+            query = fields.get("query", "").strip()
+            search_type = fields.get("type", "all").strip()
+
+            if not query:
+                self._set_headers(400)
+                self.wfile.write(json.dumps({"error": "Missing search query"}).encode("utf-8"))
+                return
+
+            try:
+                results = search_comicvine(query, search_type)
+                self._set_headers(200)
+                self.wfile.write(json.dumps({
+                    "success": True,
+                    "query": query,
+                    "count": len(results),
+                    "results": results
+                }).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+
+        elif parsed.path == "/api/scrape":
             url_val = fields.get("urls") or fields.get("url") or ""
             if not url_val:
                 self._set_headers(400)

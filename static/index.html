@@ -21,11 +21,44 @@
                 <div class="logo-icon">📚</div>
                 <div>
                     <h1>ComicInfo Generator</h1>
-                    <p class="subtitle">Scrape metadata, auto-convert CBR to CBZ, and embed ComicInfo.xml</p>
+                    <p class="subtitle">Search, scrape metadata, auto-convert CBR to CBZ, and embed ComicInfo.xml</p>
                 </div>
             </div>
-            <div class="badge">v2.4 • Multi-Issue Collected Edition Merging</div>
+            <div class="badge">v2.5 • Integrated Comic Vine Search Engine</div>
         </header>
+
+        <!-- Search Bar Section -->
+        <section class="card search-card">
+            <form id="search-form">
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label for="search-query">
+                        <span class="icon">🔍</span> Search Comic Vine Database
+                    </label>
+                    <div class="input-with-button">
+                        <input type="text" id="search-query" placeholder="Enter series or issue title (e.g. Bart Simpson, Spider-Man, Angelus, Batman)..." required />
+                        <select id="search-type" class="search-type-select">
+                            <option value="all">All Results</option>
+                            <option value="volume">Series / Volumes Only (/4050-)</option>
+                            <option value="issue">Single Issues Only (/4000-)</option>
+                        </select>
+                        <button type="submit" id="btn-search" class="btn btn-primary" style="flex: initial; min-width: 130px;">
+                            <span class="btn-icon">🔍</span> Search
+                        </button>
+                    </div>
+                </div>
+            </form>
+
+            <!-- Search Results Container -->
+            <div id="search-results-container" class="search-results-wrapper hidden">
+                <div class="search-header">
+                    <h3 id="search-results-count">Search Results</h3>
+                    <button type="button" id="btn-clear-search" class="btn-sm btn-secondary">Clear Results</button>
+                </div>
+                <div id="search-results-grid" class="search-results-grid">
+                    <!-- Dynamic search result cards -->
+                </div>
+            </div>
+        </section>
 
         <!-- Mode Navigation Tabs -->
         <div class="mode-tabs">

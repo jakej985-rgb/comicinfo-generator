@@ -5,10 +5,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const singleCard = document.getElementById('single-mode-card');
     const batchCard = document.getElementById('batch-mode-card');
 
+    // Search Elements
+    const searchForm = document.getElementById('search-form');
+    const searchQueryInput = document.getElementById('search-query');
+    const searchTypeSelect = document.getElementById('search-type');
+    const btnSearch = document.getElementById('btn-search');
+    const searchResultsContainer = document.getElementById('search-results-container');
+    const searchResultsCount = document.getElementById('search-results-count');
+    const searchResultsGrid = document.getElementById('search-results-grid');
+    const btnClearSearch = document.getElementById('btn-clear-search');
+
     // Single Form Elements
     const form = document.getElementById('tagger-form');
     const filePathInput = document.getElementById('file_path');
-    const urlInput = document.getElementById('url'); // Now textarea
+    const urlInput = document.getElementById('url'); // Textarea
     const btnBrowse = document.getElementById('btn-browse');
     const filePicker = document.getElementById('file-picker');
     const btnPreview = document.getElementById('btn-preview');
@@ -109,6 +119,114 @@ document.addEventListener('DOMContentLoaded', () => {
         progressPercent.textContent = `${percent}%`;
         progressFill.style.width = `${percent}%`;
     }
+
+    // 0. Search Engine Logic
+    searchForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const query = searchQueryInput.value.trim();
+        const searchType = searchTypeSelect.value;
+
+        if (!query) return;
+
+        btnSearch.disabled = true;
+        showStatus('info', 'Searching Comic Vine', `Searching database for '${query}'...`);
+
+        try {
+            const res = await fetch('/api/search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query, type: searchType })
+            });
+            const data = await res.json();
+
+            if (!res.ok || data.error) {
+                throw new Error(data.error || 'Failed to execute search.');
+            }
+
+            renderSearchResults(data.results || [], query);
+            showStatus('success', 'Search Complete', `Found ${data.count} result(s) for '${query}'.`);
+        } catch (err) {
+            showStatus('error', 'Search Failed', err.message);
+        } finally {
+            btnSearch.disabled = false;
+        }
+    });
+
+    function renderSearchResults(results, query) {
+        searchResultsGrid.innerHTML = '';
+        searchResultsCount.textContent = `Search Results for '${query}' (${results.length})`;
+
+        if (results.length === 0) {
+            searchResultsGrid.innerHTML = '<p class="help-text">No results found. Try a different title or search query.</p>';
+            searchResultsContainer.classList.remove('hidden');
+            return;
+        }
+
+        results.forEach(item => {
+            const card = document.createElement('div');
+            card.className = 'search-result-card';
+
+            const placeholderImg = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="60" height="85" viewBox="0 0 60 85"><rect width="60" height="85" fill="%23040810"/><text x="50%" y="50%" fill="%2394a3b8" dominant-baseline="middle" text-anchor="middle" font-size="20">📚</text></svg>';
+            const imgSrc = item.image || placeholderImg;
+            const typeBadgeClass = item.type === 'volume' ? 'volume' : 'issue';
+
+            let actionButtonsHtml = '';
+            if (item.type === 'volume') {
+                actionButtonsHtml = `<button type="button" class="btn-use-url btn-use-volume" data-url="${item.url}">📁 Use for Batch Folder</button>`;
+            } else {
+                actionButtonsHtml = `
+                    <button type="button" class="btn-use-url btn-use-single" data-url="${item.url}">📄 Use for Single File</button>
+                    <button type="button" class="btn-use-url btn-add-tpb" data-url="${item.url}">➕ Add to TPB</button>
+                `;
+            }
+
+            card.innerHTML = `
+                <img src="${imgSrc}" class="search-thumb" alt="Cover" />
+                <div class="search-info">
+                    <span class="search-title">${item.title}</span>
+                    <span class="search-type-badge ${typeBadgeClass}">${item.type_label} ${item.year ? '(' + item.year + ')' : ''}</span>
+                    ${actionButtonsHtml}
+                </div>
+            `;
+            searchResultsGrid.appendChild(card);
+        });
+
+        // Search Action Click Handlers
+        searchResultsGrid.querySelectorAll('.btn-use-volume').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const url = e.target.getAttribute('data-url');
+                volumeUrlInput.value = url;
+                tabBatch.click();
+                showStatus('success', 'URL Selected', `Set Volume URL to '${url}'!`);
+            });
+        });
+
+        searchResultsGrid.querySelectorAll('.btn-use-single').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const url = e.target.getAttribute('data-url');
+                urlInput.value = url;
+                tabSingle.click();
+                showStatus('success', 'URL Selected', `Set Single Issue URL to '${url}'!`);
+            });
+        });
+
+        searchResultsGrid.querySelectorAll('.btn-add-tpb').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const url = e.target.getAttribute('data-url');
+                const existing = urlInput.value.trim();
+                urlInput.value = existing ? `${existing}\n${url}` : url;
+                tabSingle.click();
+                showStatus('success', 'URL Added', `Appended issue URL to TPB list!`);
+            });
+        });
+
+        searchResultsContainer.classList.remove('hidden');
+    }
+
+    btnClearSearch.addEventListener('click', () => {
+        searchResultsContainer.classList.add('hidden');
+        searchQueryInput.value = '';
+    });
 
     function renderComic(comic) {
         metaSeries.textContent = comic.series || 'N/A';

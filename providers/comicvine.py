@@ -1,4 +1,5 @@
 import re
+import urllib.parse
 import requests
 from bs4 import BeautifulSoup
 from models.comic import Comic
@@ -317,3 +318,60 @@ def scrape_volume(volume_url: str, max_pages_limit: int = 50) -> tuple[str, dict
     )
 
     return series_name, issue_map, issues_list
+
+def search_comicvine(query: str, search_type: str = "all") -> list[dict]:
+    """
+    Searches Comic Vine for series volumes or single issues.
+    Returns list of search result dicts: title, url, image, type, year, count, description.
+    """
+    clean_query = query.strip()
+    if not clean_query:
+        return []
+
+    encoded_query = urllib.parse.quote_plus(clean_query)
+    search_url = f"https://comicvine.gamespot.com/search/?q={encoded_query}"
+    if search_type == "volume":
+        search_url += "&indices%5B0%5D=volume"
+    elif search_type == "issue":
+        search_url += "&indices%5B0%5D=issue"
+
+    html_content = fetch_html(search_url)
+    soup = BeautifulSoup(html_content, "html.parser")
+
+    results = []
+    for li in soup.find_all(["li", "div"], class_=re.compile(r"search-result|media|wiki-block", re.I)):
+        a = li.find("a", href=re.compile(r"/(?:4000|4050)-\d+"))
+        if not a:
+            continue
+
+        href = a["href"]
+        full_url = href if href.startswith("http") else "https://comicvine.gamespot.com" + href
+        raw_title = a.get_text(" ", strip=True)
+
+        img = li.find("img")
+        img_src = img.get("src", "") if img else ""
+
+        text_block = li.get_text(" ", strip=True)
+        is_volume = "/4050-" in full_url
+
+        m_year = re.search(r"\b(19\d\d|20\d\d)\b", text_block)
+        year_str = m_year.group(1) if m_year else ""
+
+        m_count = re.search(r"\((\d+)\s+issues\)", text_block, re.I)
+        count_str = f"{m_count.group(1)} issues" if m_count else ""
+
+        clean_title = re.sub(r"\s+", " ", raw_title).strip()
+
+        if clean_title and full_url and not any(r["url"] == full_url for r in results):
+            results.append({
+                "title": clean_title,
+                "url": full_url,
+                "image": img_src,
+                "type": "volume" if is_volume else "issue",
+                "type_label": "Volume / Series" if is_volume else "Single Issue",
+                "year": year_str,
+                "count": count_str,
+                "description": text_block[:160]
+            })
+
+    return results
