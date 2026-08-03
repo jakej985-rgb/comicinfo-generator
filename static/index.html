@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com; img-src 'self' data: https:;">
+    <title>ComicInfo Generator & Tagger</title>
+    <!-- Modern Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="background-glow"></div>
+    
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo-group">
+                <div class="logo-icon">📚</div>
+                <div>
+                    <h1>ComicInfo Generator</h1>
+                    <p class="subtitle">Scrape metadata, auto-convert CBR to CBZ, and embed ComicInfo.xml</p>
+                </div>
+            </div>
+            <div class="badge">v2.4 • Multi-Issue Collected Edition Merging</div>
+        </header>
+
+        <!-- Mode Navigation Tabs -->
+        <div class="mode-tabs">
+            <button type="button" id="tab-single" class="tab-btn active">
+                <span class="tab-icon">📄</span> Single Issue / TPB File
+            </button>
+            <button type="button" id="tab-batch" class="tab-btn">
+                <span class="tab-icon">📁</span> Batch Series Folder
+            </button>
+        </div>
+
+        <!-- Main Form Card (Single Issue Mode) -->
+        <main id="single-mode-card" class="card main-card">
+            <form id="tagger-form">
+                <!-- Input 1: Comic File Path with Browse Button -->
+                <div class="form-group">
+                    <label for="file_path">
+                        <span class="icon">📁</span> Comic Archive File Path <span class="badge-optional">CBZ or CBR</span>
+                    </label>
+                    <div class="input-with-button">
+                        <input type="text" id="file_path" placeholder="/home/user/Comics/Batman_001.cbz" required />
+                        <button type="button" id="btn-browse" class="btn btn-browse">
+                            <span class="btn-icon">📂</span> Browse File...
+                        </button>
+                        <input type="file" id="file-picker" accept=".cbz,.cbr" style="display: none;" />
+                    </div>
+                    <span class="help-text">Click <b>Browse File...</b> to select your comic file. <code>.cbr</code> files are automatically converted to <code>.cbz</code> (and original <code>.cbr</code> deleted).</span>
+                </div>
+
+                <!-- Input 2: Comic Vine URL(s) Textarea -->
+                <div class="form-group">
+                    <label for="url">
+                        <span class="icon">🔗</span> Comic Vine Issue Link(s) <span class="badge-optional">1 or Multiple (TPB)</span>
+                    </label>
+                    <div class="input-wrapper">
+                        <textarea id="url" rows="3" placeholder="Paste 1 URL for single issue, or multiple URLs (1 per line) for TPB / Collected Editions:&#10;https://comicvine.gamespot.com/angelus-1-volume-1/4000-433609/&#10;https://comicvine.gamespot.com/angelus-2-volume-1/4000-433610/" required></textarea>
+                    </div>
+                    <span class="help-text">Paste 1 URL for single issues, or multiple URLs (one per line) to merge multi-issue Trade Paperbacks!</span>
+                </div>
+
+                <!-- Actions -->
+                <div class="button-group">
+                    <button type="button" id="btn-preview" class="btn btn-secondary">
+                        <span class="btn-icon">🔍</span> Preview Metadata
+                    </button>
+                    <button type="submit" id="btn-embed" class="btn btn-primary">
+                        <span class="btn-icon">⚡</span> Grab & Embed to Comic
+                    </button>
+                </div>
+            </form>
+        </main>
+
+        <!-- Main Form Card (Batch Series Folder Mode) -->
+        <main id="batch-mode-card" class="card main-card hidden">
+            <form id="batch-tagger-form">
+                <!-- Input 1: Comic Folder Path with Browse Directory Button -->
+                <div class="form-group">
+                    <label for="folder_path">
+                        <span class="icon">📂</span> Series Folder Directory <span class="badge-optional">Multiple CBR / CBZ</span>
+                    </label>
+                    <div class="input-with-button">
+                        <input type="text" id="folder_path" placeholder="/mnt/disk1/Comics/Angelus/Volume 01 (2011)" required />
+                        <button type="button" id="btn-browse-folder" class="btn btn-browse">
+                            <span class="btn-icon">📁</span> Browse Folder...
+                        </button>
+                    </div>
+                    <span class="help-text">Choose the folder containing all your issue files (`.cbz` or `.cbr`).</span>
+                </div>
+
+                <!-- Input 2: Comic Vine Series / Volume Root URL -->
+                <div class="form-group">
+                    <label for="volume_url">
+                        <span class="icon">🔗</span> Comic Vine Series / Volume Link
+                    </label>
+                    <div class="input-wrapper">
+                        <input type="url" id="volume_url" placeholder="https://comicvine.gamespot.com/angelus/4050-69279/" required />
+                    </div>
+                    <span class="help-text">Paste the main Comic Vine volume URL (`/4050-XXXXX/`). All issue numbers will be auto-matched!</span>
+                </div>
+
+                <!-- Options -->
+                <div class="form-group-checkbox">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="chk-delete-cbr" checked />
+                        <span>Remove original <code>.cbr</code> file after successful conversion to <code>.cbz</code></span>
+                    </label>
+                </div>
+
+                <!-- Batch Actions -->
+                <div class="button-group">
+                    <button type="button" id="btn-batch-preview" class="btn btn-secondary">
+                        <span class="btn-icon">🔍</span> Preview Folder & Matching
+                    </button>
+                    <button type="submit" id="btn-batch-embed" class="btn btn-primary">
+                        <span class="btn-icon">⚡</span> Start Batch Conversion & Tagging
+                    </button>
+                </div>
+            </form>
+        </main>
+
+        <!-- Status / Alert Box -->
+        <div id="status-box" class="status-box hidden">
+            <div class="status-icon" id="status-icon">ℹ️</div>
+            <div class="status-content">
+                <h4 id="status-title">Processing...</h4>
+                <p id="status-message">Connecting to provider...</p>
+            </div>
+        </div>
+
+        <!-- Single Metadata Result Card -->
+        <section id="result-card" class="card result-card hidden">
+            <div class="card-header">
+                <h2>Extracted Metadata Preview</h2>
+                <span class="status-badge" id="result-badge">Scraped Successfully</span>
+            </div>
+
+            <div class="comic-meta-grid">
+                <div class="meta-item">
+                    <span class="meta-label">Series</span>
+                    <span class="meta-value" id="meta-series">-</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Issue Number</span>
+                    <span class="meta-value" id="meta-number">-</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Title</span>
+                    <span class="meta-value" id="meta-title">-</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Publisher</span>
+                    <span class="meta-value" id="meta-publisher">-</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Release Date</span>
+                    <span class="meta-value" id="meta-date">-</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Volume</span>
+                    <span class="meta-value" id="meta-volume">-</span>
+                </div>
+            </div>
+
+            <!-- Summary -->
+            <div class="meta-section">
+                <h3>Summary / Overview</h3>
+                <p id="meta-summary" class="summary-text">No summary extracted.</p>
+            </div>
+
+            <!-- Creator Credits -->
+            <div class="meta-section">
+                <h3>Creator Credits</h3>
+                <div id="credits-container" class="credits-grid"></div>
+            </div>
+
+            <!-- Characters -->
+            <div class="meta-section">
+                <h3>Characters Featured</h3>
+                <div id="characters-container" class="credits-grid"></div>
+            </div>
+
+            <!-- Teams -->
+            <div class="meta-section">
+                <h3>Teams Featured</h3>
+                <div id="teams-container" class="credits-grid"></div>
+            </div>
+
+            <!-- Story Arcs -->
+            <div class="meta-section">
+                <h3>Story Arcs</h3>
+                <div id="story-arcs-container" class="credits-grid"></div>
+            </div>
+        </section>
+
+        <!-- Batch Results & Live Execution Card -->
+        <section id="batch-result-card" class="card result-card hidden">
+            <div class="card-header">
+                <h2>Batch Folder Execution & Live Log</h2>
+                <span class="status-badge" id="batch-result-badge">Ready to Start</span>
+            </div>
+
+            <!-- Progress Bar -->
+            <div class="progress-section">
+                <div class="progress-header">
+                    <span id="progress-text">Processing: 0 / 0 files</span>
+                    <span id="progress-percent" class="progress-percent">0%</span>
+                </div>
+                <div class="progress-track">
+                    <div id="progress-fill" class="progress-fill" style="width: 0%;"></div>
+                </div>
+            </div>
+
+            <!-- Detailed Terminal Execution Log Box -->
+            <div class="meta-section">
+                <h3>Detailed Execution Log</h3>
+                <div id="batch-log-box" class="terminal-log-box">
+                    <span class="log-line text-muted">[System] Ready to begin batch processing.</span>
+                </div>
+            </div>
+
+            <!-- Matched Preview Table -->
+            <div class="meta-section">
+                <h3>Matched Issues Preview & Multi-Issue Collected Edition Selector</h3>
+                <div id="batch-preview-table-wrapper" class="table-wrapper">
+                    <table class="preview-table">
+                        <thead>
+                            <tr>
+                                <th>File Name</th>
+                                <th>Issue #</th>
+                                <th>Action</th>
+                                <th>Comic Vine Link / Select</th>
+                                <th>Status</th>
+                                <th>Inspect</th>
+                            </tr>
+                        </thead>
+                        <tbody id="batch-preview-tbody">
+                            <!-- Dynamic Preview Rows -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Multi-Issue Modal Popup -->
+    <div id="multi-issue-modal" class="modal-backdrop hidden">
+        <div class="modal-content card">
+            <div class="modal-header">
+                <h3 id="modal-title">🧩 Select Multiple Issues for Collected Edition</h3>
+                <button type="button" id="modal-close" class="modal-close-btn">&times;</button>
+            </div>
+            <p id="modal-subtitle" class="help-text">Check all single issues contained inside this TPB/Collected file:</p>
+            
+            <div id="modal-issue-list" class="modal-issue-list">
+                <!-- Checkbox options generated dynamically -->
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" id="modal-cancel-btn" class="btn btn-secondary">Cancel</button>
+                <button type="button" id="modal-save-btn" class="btn btn-primary">Save Multi-Issue Selection</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
