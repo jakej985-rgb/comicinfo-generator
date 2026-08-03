@@ -22,7 +22,7 @@ def main():
 
     # Check for --web flag
     if "--web" in args or "-w" in args:
-        port = 5000
+        port = 5005
         for arg in args:
             if arg.isdigit():
                 port = int(arg)

@@ -21,7 +21,7 @@ from writers.archive import embed_comicinfo_in_cbz
 from writers.comicinfo import write_xml, generate_xml_bytes
 from converters.cbr_to_cbz import convert_cbr_to_cbz
 
-PORT = 5000
+PORT = 5005
 STATIC_DIR = os.path.join(repo_dir, "static")
 
 def comic_to_dict(c: Comic) -> dict:
@@ -73,7 +73,6 @@ def scrape_any_volume(url: str) -> tuple[str, dict[str, str], list[dict]]:
 
 def fetch_and_merge_urls(url_val) -> Comic:
     """Accepts a single URL string, GCP page text layout, list of URLs, or multi-line string and scrapes/merges them."""
-    # Check if raw string contains GCP page text layout
     if isinstance(url_val, str) and (any(k in url_val for k in ["Pencils:", "Script:", "Characters:", "Table of Contents"]) or ("comics.org" in url_val and len(url_val.split("\n")) > 2)):
         return scrape_gcp_issue(url_val)
 
@@ -92,7 +91,6 @@ def fetch_and_merge_urls(url_val) -> Comic:
             urls = [u.strip() for u in re.split(r"[\n,\s]+", url_val) if u.strip() and u.strip().startswith("http")]
 
     if not urls:
-        # Fallback to direct input string if single text block
         if isinstance(url_val, str) and url_val.strip():
             return scrape_single_url(url_val.strip())
         raise ValueError("No valid comic database URLs or page text provided.")
