@@ -23,6 +23,13 @@ MONTH_MAP = {
     "november": 11, "nov": 11, "december": 12, "dec": 12
 }
 
+def clean_creator_name(val: str) -> str:
+    """Cleans up creator name strings by removing notes, parentheses, and trailing characters."""
+    c = re.sub(r"\s*\([^)]*\)", "", val)
+    c = re.sub(r"\s*\([^)]*", "", c)
+    c = c.strip().strip("?").strip()
+    return c
+
 def fetch_gcp_html(url: str, timeout: int = 2) -> str:
     """Helper to fetch HTML content from comics.org URL with fast direct check & HTTPS Wayback Machine fallback."""
     if HAS_CURL_CFFI:
@@ -153,31 +160,31 @@ def parse_gcp_text_refined(text: str, default_url: str = "") -> Comic:
     for line in clean_lines:
         if line.startswith("Script:") or line.startswith("Writer:"):
             for val in re.split(r"[,;]+", line.split(":", 1)[1]):
-                clean = re.sub(r"\s*\([^)]*\)", "", val).strip().strip("?")
+                clean = clean_creator_name(val)
                 if clean and clean.lower() not in ("none", "") and clean not in c.writers:
                     c.writers.append(clean)
 
         elif line.startswith("Pencils:") or line.startswith("Penciller:"):
             for val in re.split(r"[,;]+", line.split(":", 1)[1]):
-                clean = re.sub(r"\s*\([^)]*\)", "", val).strip().strip("?")
+                clean = clean_creator_name(val)
                 if clean and clean.lower() not in ("none", "") and clean not in c.pencillers:
                     c.pencillers.append(clean)
 
         elif line.startswith("Inks:") or line.startswith("Inker:"):
             for val in re.split(r"[,;]+", line.split(":", 1)[1]):
-                clean = re.sub(r"\s*\([^)]*\)", "", val).strip().strip("?")
+                clean = clean_creator_name(val)
                 if clean and clean.lower() not in ("none", "") and clean not in c.inkers:
                     c.inkers.append(clean)
 
         elif line.startswith("Colors:") or line.startswith("Colorist:"):
             for val in re.split(r"[,;]+", line.split(":", 1)[1]):
-                clean = re.sub(r"\s*\([^)]*\)", "", val).strip().strip("?")
+                clean = clean_creator_name(val)
                 if clean and clean.lower() not in ("none", "") and clean not in c.colorists:
                     c.colorists.append(clean)
 
         elif line.startswith("Letters:") or line.startswith("Letterer:"):
             for val in re.split(r"[,;]+", line.split(":", 1)[1]):
-                clean = re.sub(r"\s*\([^)]*\)", "", val).strip().strip("?")
+                clean = clean_creator_name(val)
                 if clean and clean.lower() not in ("none", "") and clean not in c.letterers:
                     c.letterers.append(clean)
 
@@ -186,7 +193,7 @@ def parse_gcp_text_refined(text: str, default_url: str = "") -> Comic:
 
         elif line.startswith("Characters:"):
             for char in re.split(r"[;;\n]+", line.split(":", 1)[1]):
-                clean = re.sub(r"\s*\([^)]*\)", "", char).strip()
+                clean = clean_creator_name(char)
                 if clean and clean.lower() not in ("none", "") and len(clean) > 1 and clean not in c.characters:
                     c.characters.append(clean)
 
@@ -244,31 +251,31 @@ def scrape_gcp_issue(url_or_text: str) -> Comic:
             writer = story.get("writer")
             if writer:
                 for w in re.split(r"[,;]+", writer):
-                    w_name = re.sub(r"\s*\([^)]*\)", "", w).strip()
+                    w_name = clean_creator_name(w)
                     if w_name and w_name not in c.writers: c.writers.append(w_name)
 
             penciler = story.get("penciler")
             if penciler:
                 for p in re.split(r"[,;]+", penciler):
-                    p_name = re.sub(r"\s*\([^)]*\)", "", p).strip()
+                    p_name = clean_creator_name(p)
                     if p_name and p_name not in c.pencillers: c.pencillers.append(p_name)
 
             inker = story.get("inker")
             if inker:
                 for i in re.split(r"[,;]+", inker):
-                    i_name = re.sub(r"\s*\([^)]*\)", "", i).strip()
+                    i_name = clean_creator_name(i)
                     if i_name and i_name not in c.inkers: c.inkers.append(i_name)
 
             colorist = story.get("colorist")
             if colorist:
                 for col in re.split(r"[,;]+", colorist):
-                    col_name = re.sub(r"\s*\([^)]*\)", "", col).strip()
+                    col_name = clean_creator_name(col)
                     if col_name and col_name not in c.colorists: c.colorists.append(col_name)
 
             chars = story.get("characters")
             if chars:
                 for ch in re.split(r"[;]+", chars):
-                    ch_name = re.sub(r"\s*\([^)]*\)", "", ch).strip()
+                    ch_name = clean_creator_name(ch)
                     if ch_name and ch_name not in c.characters: c.characters.append(ch_name)
 
         if not c.title and c.series:
@@ -281,13 +288,15 @@ def scrape_gcp_issue(url_or_text: str) -> Comic:
     if html_text:
         res_c = parse_gcp_text_refined(html_text, url)
         if res_c.series and res_c.series != "Grand Comics Database Issue":
+            if not res_c.summary:
+                res_c.summary = f"Scraped Series, Publisher & Date from archive. To include full creator credits & characters, copy-paste the GCP page text into the box!"
             return res_c
 
     # 3. Safe Fallback
     c.title = f"GCP Issue #{issue_id}"
     c.series = "Grand Comics Database Issue"
     c.publisher = "Grand Comics Database (GCP)"
-    c.summary = f"Metadata generated for GCP Issue #{issue_id} ({url}). Note: Direct scraping was blocked by Cloudflare anti-bot."
+    c.summary = f"Metadata generated for GCP Issue #{issue_id} ({url}). Note: Direct scraping was blocked by Cloudflare anti-bot. Copy-paste the GCP page text into the box to extract full creator credits & characters."
     return c
 
 def scrape_gcp_volume(volume_url: str) -> tuple[str, dict[str, str], list[dict]]:
