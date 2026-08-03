@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com; img-src 'self' data: https:;">
-    <title>ComicInfo Generator & Tagger</title>
+    <title>ComicInfo Generator & Tagger (CV & GCP)</title>
     <!-- Modern Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -21,10 +21,10 @@
                 <div class="logo-icon">📚</div>
                 <div>
                     <h1>ComicInfo Generator</h1>
-                    <p class="subtitle">Search, scrape metadata, auto-convert CBR to CBZ, and embed ComicInfo.xml</p>
+                    <p class="subtitle">Multi-Database Tagger for Comic Vine (CV) & Grand Comics Database (GCP)</p>
                 </div>
             </div>
-            <div class="badge">v2.5 • Integrated Comic Vine Search Engine</div>
+            <div class="badge">v3.0 • CV & GCP Databases Supported</div>
         </header>
 
         <!-- Search Bar Section -->
@@ -32,14 +32,16 @@
             <form id="search-form">
                 <div class="form-group" style="margin-bottom: 0;">
                     <label for="search-query">
-                        <span class="icon">🔍</span> Search Comic Vine Database
+                        <span class="icon">🔍</span> Search Comic Databases (CV & GCP)
                     </label>
                     <div class="input-with-button">
                         <input type="text" id="search-query" placeholder="Enter series or issue title (e.g. Bart Simpson, Spider-Man, Angelus, Batman)..." required />
                         <select id="search-type" class="search-type-select">
-                            <option value="all">All Results</option>
-                            <option value="volume">Series / Volumes Only (/4050-)</option>
-                            <option value="issue">Single Issues Only (/4000-)</option>
+                            <option value="all">All Sources</option>
+                            <option value="cv_volume">CV Series</option>
+                            <option value="cv_issue">CV Issue</option>
+                            <option value="gcp_volume">GCP Series</option>
+                            <option value="gcp_issue">GCP Issue</option>
                         </select>
                         <button type="submit" id="btn-search" class="btn btn-primary" style="flex: initial; min-width: 130px;">
                             <span class="btn-icon">🔍</span> Search
@@ -88,15 +90,15 @@
                     <span class="help-text">Click <b>Browse File...</b> to select your comic file. <code>.cbr</code> files are automatically converted to <code>.cbz</code> (and original <code>.cbr</code> deleted).</span>
                 </div>
 
-                <!-- Input 2: Comic Vine URL(s) Textarea -->
+                <!-- Input 2: Comic URL(s) Textarea with Provider Badge Indicator -->
                 <div class="form-group">
                     <label for="url">
-                        <span class="icon">🔗</span> Comic Vine Issue Link(s) <span class="badge-optional">1 or Multiple (TPB)</span>
+                        <span class="icon">🔗</span> Database Issue Link(s) <span id="provider-badge-single" class="badge-provider hidden">CV</span>
                     </label>
                     <div class="input-wrapper">
-                        <textarea id="url" rows="3" placeholder="Paste 1 URL for single issue, or multiple URLs (1 per line) for TPB / Collected Editions:&#10;https://comicvine.gamespot.com/angelus-1-volume-1/4000-433609/&#10;https://comicvine.gamespot.com/angelus-2-volume-1/4000-433610/" required></textarea>
+                        <textarea id="url" rows="3" placeholder="Paste 1 URL for single issue, or multiple URLs (1 per line) for TPB / Collected Editions:&#10;CV: https://comicvine.gamespot.com/angelus-1-volume-1/4000-433609/&#10;GCP: https://www.comics.org/issue/508570/" required></textarea>
                     </div>
-                    <span class="help-text">Paste 1 URL for single issues, or multiple URLs (one per line) to merge multi-issue Trade Paperbacks!</span>
+                    <span class="help-text">Paste Comic Vine (CV) or Grand Comics Database (GCP) issue URLs! Paste multiple URLs (one per line) for TPBs.</span>
                 </div>
 
                 <!-- Actions -->
@@ -128,15 +130,15 @@
                     <span class="help-text">Choose the folder containing all your issue files (`.cbz` or `.cbr`).</span>
                 </div>
 
-                <!-- Input 2: Comic Vine Series / Volume Root URL -->
+                <!-- Input 2: Series / Volume Root URL with Provider Badge Indicator -->
                 <div class="form-group">
                     <label for="volume_url">
-                        <span class="icon">🔗</span> Comic Vine Series / Volume Link
+                        <span class="icon">🔗</span> Series / Volume Link <span id="provider-badge-batch" class="badge-provider hidden">CV</span>
                     </label>
                     <div class="input-wrapper">
-                        <input type="url" id="volume_url" placeholder="https://comicvine.gamespot.com/angelus/4050-69279/" required />
+                        <input type="url" id="volume_url" placeholder="CV: https://comicvine.gamespot.com/angelus/4050-69279/  OR  GCP: https://www.comics.org/series/43261/" required />
                     </div>
-                    <span class="help-text">Paste the main Comic Vine volume URL (`/4050-XXXXX/`). All issue numbers will be auto-matched!</span>
+                    <span class="help-text">Paste main CV (`/4050-XXXXX/`) or GCP (`/series/XXXXX/`) volume link. All issue numbers will be auto-matched!</span>
                 </div>
 
                 <!-- Options -->
@@ -269,7 +271,7 @@
                                 <th>File Name</th>
                                 <th>Issue #</th>
                                 <th>Action</th>
-                                <th>Comic Vine Link / Select</th>
+                                <th>Database Link / Select</th>
                                 <th>Status</th>
                                 <th>Inspect</th>
                             </tr>

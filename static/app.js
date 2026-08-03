@@ -5,6 +5,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const singleCard = document.getElementById('single-mode-card');
     const batchCard = document.getElementById('batch-mode-card');
 
+    // Provider Badges
+    const providerBadgeSingle = document.getElementById('provider-badge-single');
+    const providerBadgeBatch = document.getElementById('provider-badge-batch');
+
     // Search Elements
     const searchForm = document.getElementById('search-form');
     const searchQueryInput = document.getElementById('search-query');
@@ -76,6 +80,36 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentPreviewItems = [];
     let currentIssuesList = [];
 
+    function detectProvider(urlStr) {
+        if (!urlStr) return null;
+        if (urlStr.toLowerCase().includes('comics.org')) return 'GCP';
+        if (urlStr.toLowerCase().includes('comicvine')) return 'CV';
+        return null;
+    }
+
+    function updateUrlBadges() {
+        const singleProv = detectProvider(urlInput.value);
+        if (singleProv) {
+            providerBadgeSingle.textContent = singleProv;
+            providerBadgeSingle.className = `badge-provider ${singleProv.toLowerCase()}`;
+            providerBadgeSingle.classList.remove('hidden');
+        } else {
+            providerBadgeSingle.classList.add('hidden');
+        }
+
+        const batchProv = detectProvider(volumeUrlInput.value);
+        if (batchProv) {
+            providerBadgeBatch.textContent = batchProv;
+            providerBadgeBatch.className = `badge-provider ${batchProv.toLowerCase()}`;
+            providerBadgeBatch.classList.remove('hidden');
+        } else {
+            providerBadgeBatch.classList.add('hidden');
+        }
+    }
+
+    urlInput.addEventListener('input', updateUrlBadges);
+    volumeUrlInput.addEventListener('input', updateUrlBadges);
+
     // Tab Switching Logic
     tabSingle.addEventListener('click', () => {
         tabSingle.classList.add('active');
@@ -129,7 +163,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!query) return;
 
         btnSearch.disabled = true;
-        showStatus('info', 'Searching Comic Vine', `Searching database for '${query}'...`);
+        showStatus('info', 'Searching Comic Databases', `Searching CV & GCP for '${query}'...`);
 
         try {
             const res = await fetch('/api/search', {
@@ -157,7 +191,7 @@ document.addEventListener('DOMContentLoaded', () => {
         searchResultsCount.textContent = `Search Results for '${query}' (${results.length})`;
 
         if (results.length === 0) {
-            searchResultsGrid.innerHTML = '<p class="help-text">No results found. Try a different title or search query.</p>';
+            searchResultsGrid.innerHTML = '<p class="help-text">No results found. Try a different title or search filter.</p>';
             searchResultsContainer.classList.remove('hidden');
             return;
         }
@@ -168,10 +202,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const placeholderImg = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="60" height="85" viewBox="0 0 60 85"><rect width="60" height="85" fill="%23040810"/><text x="50%" y="50%" fill="%2394a3b8" dominant-baseline="middle" text-anchor="middle" font-size="20">📚</text></svg>';
             const imgSrc = item.image || placeholderImg;
-            const typeBadgeClass = item.type === 'volume' ? 'volume' : 'issue';
+            
+            const provider = item.provider || (item.url.includes('comics.org') ? 'GCP' : 'CV');
+            const provClass = provider.toLowerCase();
+            const isVolume = item.type.includes('volume') || item.type.includes('series');
 
             let actionButtonsHtml = '';
-            if (item.type === 'volume') {
+            if (isVolume) {
                 actionButtonsHtml = `<button type="button" class="btn-use-url btn-use-volume" data-url="${item.url}">📁 Use for Batch Folder</button>`;
             } else {
                 actionButtonsHtml = `
@@ -184,7 +221,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 <img src="${imgSrc}" class="search-thumb" alt="Cover" />
                 <div class="search-info">
                     <span class="search-title">${item.title}</span>
-                    <span class="search-type-badge ${typeBadgeClass}">${item.type_label} ${item.year ? '(' + item.year + ')' : ''}</span>
+                    <div style="display:flex; gap:0.35rem; align-items:center; flex-wrap:wrap;">
+                        <span class="badge-provider ${provClass}">${provider}</span>
+                        <span class="search-type-badge ${provClass}">${item.type_label || (isVolume ? 'Series' : 'Issue')} ${item.year ? '(' + item.year + ')' : ''}</span>
+                    </div>
                     ${actionButtonsHtml}
                 </div>
             `;
@@ -196,6 +236,7 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.addEventListener('click', (e) => {
                 const url = e.target.getAttribute('data-url');
                 volumeUrlInput.value = url;
+                updateUrlBadges();
                 tabBatch.click();
                 showStatus('success', 'URL Selected', `Set Volume URL to '${url}'!`);
             });
@@ -205,6 +246,7 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.addEventListener('click', (e) => {
                 const url = e.target.getAttribute('data-url');
                 urlInput.value = url;
+                updateUrlBadges();
                 tabSingle.click();
                 showStatus('success', 'URL Selected', `Set Single Issue URL to '${url}'!`);
             });
@@ -215,6 +257,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const url = e.target.getAttribute('data-url');
                 const existing = urlInput.value.trim();
                 urlInput.value = existing ? `${existing}\n${url}` : url;
+                updateUrlBadges();
                 tabSingle.click();
                 showStatus('success', 'URL Added', `Appended issue URL to TPB list!`);
             });
@@ -447,7 +490,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const item = currentPreviewItems[idx];
                 const rowBadge = document.getElementById(`row-badge-${idx}`);
 
-                item.comic = null; // Clear cached comic on link change
+                item.comic = null;
 
                 if (selectedUrl) {
                     item.matched_url = selectedUrl;
@@ -530,7 +573,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 const loadingText = targetUrls.length > 1
                     ? `⏳ Scraping & merging ${targetUrls.length} issues for collected edition...`
-                    : `⏳ Scraping issue metadata from Comic Vine...`;
+                    : `⏳ Scraping issue metadata from database...`;
 
                 detailsContainer.innerHTML = `<span class="help-text">${loadingText}</span>`;
 
@@ -567,7 +610,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const checkedBoxes = modalIssueList.querySelectorAll('input[type="checkbox"]:checked');
         const selectedUrls = Array.from(checkedBoxes).map(cb => cb.value);
 
-        item.comic = null; // Clear cached comic
+        item.comic = null;
 
         if (selectedUrls.length > 0) {
             item.matched_urls = selectedUrls;
@@ -626,13 +669,14 @@ document.addEventListener('DOMContentLoaded', () => {
     btnPreview.addEventListener('click', async () => {
         const rawUrls = urlInput.value.trim();
         if (!rawUrls) {
-            showStatus('error', 'URL Required', 'Please enter at least one valid Comic Vine issue URL.');
+            showStatus('error', 'URL Required', 'Please enter at least one valid CV or GCP issue URL.');
             return;
         }
 
         btnPreview.disabled = true;
         btnEmbed.disabled = true;
-        showStatus('info', 'Scraping Metadata', 'Fetching issue metadata from Comic Vine...');
+        const prov = detectProvider(rawUrls) || 'Database';
+        showStatus('info', 'Scraping Metadata', `Fetching issue metadata from ${prov}...`);
 
         try {
             const res = await fetch('/api/scrape', {
@@ -647,8 +691,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             renderComic(data.comic);
-            resultBadge.textContent = data.comic.count > 1 ? `Merged TPB (${data.comic.count} Issues)` : 'Preview Loaded';
-            showStatus('success', 'Metadata Loaded', `Successfully fetched and merged ${data.comic.count || 1} issue(s)!`);
+            resultBadge.textContent = data.comic.count > 1 ? `Merged TPB (${data.comic.count} Issues)` : `Preview Loaded [${data.provider || 'CV'}]`;
+            showStatus('success', 'Metadata Loaded', `Successfully fetched [${data.provider || 'CV'}] metadata for ${data.comic.count || 1} issue(s)!`);
         } catch (err) {
             showStatus('error', 'Extraction Failed', err.message);
         } finally {
@@ -664,12 +708,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const rawUrls = urlInput.value.trim();
 
         if (!filePath || !rawUrls) {
-            showStatus('error', 'Missing Information', 'Please provide both the comic file (or path) and Comic Vine URL(s).');
+            showStatus('error', 'Missing Information', 'Please provide both the comic file (or path) and database URL(s).');
             return;
         }
 
         btnPreview.disabled = true;
         btnEmbed.disabled = true;
+        const prov = detectProvider(rawUrls) || 'Database';
 
         try {
             const formData = new FormData();
@@ -682,8 +727,8 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 const isCbr = filePath.toLowerCase().endsWith('.cbr');
                 const statusMsg = isCbr
-                    ? `Converting .cbr to .cbz, removing original .cbr, and embedding ComicInfo.xml...`
-                    : `Embedding ComicInfo.xml into '${filePath}'...`;
+                    ? `Converting .cbr to .cbz, removing original .cbr, and embedding ComicInfo.xml [${prov}]...`
+                    : `Embedding ComicInfo.xml [${prov}] into '${filePath}'...`;
                 showStatus('info', 'Tagging Comic', statusMsg);
             }
 
@@ -702,7 +747,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             renderComic(data.comic);
-            resultBadge.textContent = data.comic.count > 1 ? `Embedded TPB (${data.comic.count} Issues)` : 'Embedded in CBZ';
+            resultBadge.textContent = data.comic.count > 1 ? `Embedded TPB (${data.comic.count} Issues)` : `Embedded in CBZ [${data.provider || 'CV'}]`;
             showStatus('success', 'Successfully Embedded', data.message || 'ComicInfo.xml has been updated in the archive.');
         } catch (err) {
             showStatus('error', 'Embedding Failed', err.message);
@@ -724,7 +769,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         btnBatchPreview.disabled = true;
         btnBatchEmbed.disabled = true;
-        showStatus('info', 'Scraping Volume & Matching Files', 'Extracting volume issue links and scanning local directory...');
+        const prov = detectProvider(volumeUrl) || 'Database';
+        showStatus('info', 'Scraping Volume & Matching Files', `Extracting volume issue links [${prov}] and scanning local directory...`);
 
         try {
             const res = await fetch('/api/batch-preview', {
@@ -743,11 +789,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
             renderPreviewTable(currentPreviewItems, currentIssuesList);
 
-            batchResultBadge.textContent = `${data.matched_count}/${data.total_files} Matched`;
+            batchResultBadge.textContent = `${data.matched_count}/${data.total_files} Matched [${data.provider || 'CV'}]`;
             batchResultCard.classList.remove('hidden');
 
-            appendLog('info', `🔍 Volume Preview loaded for series '${data.series_name}': Found ${data.total_files} local files (${data.matched_count} auto-matched with Comic Vine). Click '🧩 Multi' on any file to select multiple issues for TPB collected editions.`);
-            showStatus('success', 'Volume Preview Ready', `Matched ${data.matched_count} of ${data.total_files} files for series '${data.series_name}'. Click '🧩 Multi' on any file for TPB multi-issue collected editions.`);
+            appendLog('info', `🔍 Volume Preview loaded [${data.provider || 'CV'}] for series '${data.series_name}': Found ${data.total_files} local files (${data.matched_count} auto-matched). Click '🧩 Multi' on any file to select multiple issues for TPB collected editions.`);
+            showStatus('success', 'Volume Preview Ready', `Matched ${data.matched_count} of ${data.total_files} files [${data.provider || 'CV'}] for series '${data.series_name}'.`);
             return data;
         } catch (err) {
             showStatus('error', 'Preview Failed', err.message);
@@ -793,7 +839,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const targetUrls = item.matched_urls && item.matched_urls.length > 0 ? item.matched_urls : (item.matched_url ? [item.matched_url] : []);
 
             if (targetUrls.length === 0) {
-                appendLog('warning', `[${i+1}/${total}] ⚠️ Skipped '${item.filename}': No issue link selected. Use the dropdown or 🧩 Multi button to set issues.`);
+                appendLog('warning', `[${i+1}/${total}] ⚠️ Skipped '${item.filename}': No issue link selected.`);
                 if (rowBadge) {
                     rowBadge.className = 'tbl-badge unmatched';
                     rowBadge.textContent = 'SKIPPED';
@@ -824,10 +870,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     throw new Error(data.error || 'Failed to process comic file.');
                 }
 
-                item.comic = data.comic; // Cache scraped metadata
+                item.comic = data.comic;
                 successCount++;
                 const delMsg = data.deleted_original ? ' (Original .cbr deleted)' : '';
-                appendLog('success', `[${i+1}/${total}] ✅ Successfully embedded ComicInfo.xml into '${item.filename}'${delMsg}!`);
+                appendLog('success', `[${i+1}/${total}] ✅ Successfully embedded ComicInfo.xml [${data.provider || 'CV'}] into '${item.filename}'${delMsg}!`);
 
                 if (rowBadge) {
                     rowBadge.className = targetUrls.length > 1 ? 'tbl-badge tpb' : 'tbl-badge ready';

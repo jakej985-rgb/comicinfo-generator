@@ -15,7 +15,8 @@ if repo_dir not in sys.path:
     sys.path.insert(0, repo_dir)
 
 from models.comic import Comic, merge_comics
-from providers.comicvine import scrape_issue, scrape_volume, search_comicvine
+from providers.comicvine import scrape_issue as scrape_cv_issue, scrape_volume as scrape_cv_volume, search_comicvine
+from providers.gcp import scrape_gcp_issue, scrape_gcp_volume, search_gcp
 from writers.archive import embed_comicinfo_in_cbz
 from writers.comicinfo import write_xml, generate_xml_bytes
 from converters.cbr_to_cbz import convert_cbr_to_cbz
@@ -51,6 +52,24 @@ def comic_to_dict(c: Comic) -> dict:
         "story_arcs": c.story_arcs,
     }
 
+def detect_provider(url: str) -> str:
+    """Returns 'GCP' if comics.org URL, otherwise 'CV'."""
+    if "comics.org" in url.lower():
+        return "GCP"
+    return "CV"
+
+def scrape_single_url(url: str) -> Comic:
+    """Routes single issue scraping based on provider URL (CV vs GCP)."""
+    if detect_provider(url) == "GCP":
+        return scrape_gcp_issue(url)
+    return scrape_cv_issue(url)
+
+def scrape_any_volume(url: str) -> tuple[str, dict[str, str], list[dict]]:
+    """Routes volume scraping based on provider URL (CV vs GCP)."""
+    if detect_provider(url) == "GCP":
+        return scrape_gcp_volume(url)
+    return scrape_cv_volume(url)
+
 def fetch_and_merge_urls(url_val) -> Comic:
     """Accepts a single URL string, list of URLs, or multi-line string and scrapes/merges them."""
     urls = []
@@ -68,13 +87,51 @@ def fetch_and_merge_urls(url_val) -> Comic:
             urls = [u.strip() for u in re.split(r"[\n,\s]+", url_val) if u.strip() and u.strip().startswith("http")]
 
     if not urls:
-        raise ValueError("No valid Comic Vine URLs provided.")
+        raise ValueError("No valid comic database URLs provided.")
 
     if len(urls) == 1:
-        return scrape_issue(urls[0])
+        return scrape_single_url(urls[0])
 
-    comics = [scrape_issue(u) for u in urls]
+    comics = [scrape_single_url(u) for u in urls]
     return merge_comics(comics)
+
+def search_all_providers(query: str, search_type: str = "all") -> list[dict]:
+    """
+    Unified search handler for Comic Vine (CV) and Grand Comics Database (GCP).
+    Filter options:
+    - 'all': All Sources
+    - 'cv_volume': CV Series
+    - 'cv_issue': CV Issue
+    - 'gcp_volume': GCP Series
+    - 'gcp_issue': GCP Issue
+    """
+    results = []
+
+    # 1. Comic Vine (CV) Searches
+    if search_type in ("all", "cv_volume", "cv_issue"):
+        cv_type = "all"
+        if search_type == "cv_volume": cv_type = "volume"
+        elif search_type == "cv_issue": cv_type = "issue"
+        
+        cv_results = search_comicvine(query, cv_type)
+        for r in cv_results:
+            r["provider"] = "CV"
+            if r["type"] == "volume":
+                r["type"] = "cv_volume"
+                r["type_label"] = "CV Series"
+            else:
+                r["type"] = "cv_issue"
+                r["type_label"] = "CV Issue"
+            results.append(r)
+
+    # 2. Grand Comics Database (GCP) Searches
+    if search_type in ("all", "gcp_volume", "gcp_issue"):
+        gcp_results = search_gcp(query, search_type)
+        for r in gcp_results:
+            r["provider"] = "GCP"
+            results.append(r)
+
+    return results
 
 def extract_issue_num_from_filename(filename: str) -> str:
     """Extracts issue number from a comic archive filename using accurate hierarchy."""
@@ -307,7 +364,7 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                results = search_comicvine(query, search_type)
+                results = search_all_providers(query, search_type)
                 self._set_headers(200)
                 self.wfile.write(json.dumps({
                     "success": True,
@@ -323,12 +380,15 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             url_val = fields.get("urls") or fields.get("url") or ""
             if not url_val:
                 self._set_headers(400)
-                self.wfile.write(json.dumps({"error": "Missing Comic Vine URL(s)"}).encode("utf-8"))
+                self.wfile.write(json.dumps({"error": "Missing database URL(s)"}).encode("utf-8"))
                 return
             try:
                 comic = fetch_and_merge_urls(url_val)
+                provider = detect_provider(str(url_val))
+                res_dict = comic_to_dict(comic)
+                res_dict["provider"] = provider
                 self._set_headers(200)
-                self.wfile.write(json.dumps({"success": True, "comic": comic_to_dict(comic)}).encode("utf-8"))
+                self.wfile.write(json.dumps({"success": True, "provider": provider, "comic": res_dict}).encode("utf-8"))
             except Exception as e:
                 self._set_headers(500)
                 self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
@@ -340,10 +400,12 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"error": "Missing Volume URL"}).encode("utf-8"))
                 return
             try:
-                series_name, issue_map, issues_list = scrape_volume(url)
+                series_name, issue_map, issues_list = scrape_any_volume(url)
+                provider = detect_provider(url)
                 self._set_headers(200)
                 self.wfile.write(json.dumps({
                     "success": True,
+                    "provider": provider,
                     "series_name": series_name,
                     "issues": issue_map,
                     "issues_list": issues_list,
@@ -368,7 +430,8 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                series_name, issue_map, issues_list = scrape_volume(volume_url)
+                provider = detect_provider(volume_url)
+                series_name, issue_map, issues_list = scrape_any_volume(volume_url)
 
                 comic_files = [
                     f for f in sorted(os.listdir(folder_path_input))
@@ -405,6 +468,7 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 self._set_headers(200)
                 self.wfile.write(json.dumps({
                     "success": True,
+                    "provider": provider,
                     "series_name": series_name,
                     "folder_path": folder_path_input,
                     "total_files": len(comic_files),
@@ -425,7 +489,7 @@ class ComicServerHandler(BaseHTTPRequestHandler):
 
             if not url_val:
                 self._set_headers(400)
-                self.wfile.write(json.dumps({"error": "Comic Vine URL(s) required"}).encode("utf-8"))
+                self.wfile.write(json.dumps({"error": "Comic database URL(s) required"}).encode("utf-8"))
                 return
 
             real_file_path = ""
@@ -461,15 +525,20 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                     converted_note = f" (Converted from '{os.path.basename(real_file_path)}' & deleted original .cbr)"
 
                 comic = fetch_and_merge_urls(url_val)
+                provider = detect_provider(str(url_val))
                 embed_comicinfo_in_cbz(target_archive, comic)
+
+                res_dict = comic_to_dict(comic)
+                res_dict["provider"] = provider
 
                 self._set_headers(200)
                 self.wfile.write(json.dumps({
                     "success": True,
+                    "provider": provider,
                     "target_file": target_archive,
                     "deleted_original": delete_old_cbr if was_cbr else False,
-                    "message": f"Successfully embedded ComicInfo.xml into '{os.path.basename(target_archive)}'{converted_note}.",
-                    "comic": comic_to_dict(comic)
+                    "message": f"Successfully embedded ComicInfo.xml [{provider}] into '{os.path.basename(target_archive)}'{converted_note}.",
+                    "comic": res_dict
                 }).encode("utf-8"))
             except Exception as e:
                 self._set_headers(500)
@@ -501,7 +570,7 @@ def run_server(port=PORT):
         sys.exit(1)
 
     print(f"==================================================")
-    print(f" ComicInfo Generator Web UI running!")
+    print(f" ComicInfo Generator Web UI running! [CV & GCP]")
     print(f" Open in browser: http://localhost:{target_port}")
     print(f"==================================================")
     try:
