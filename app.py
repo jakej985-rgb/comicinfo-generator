@@ -53,16 +53,17 @@ def comic_to_dict(c: Comic) -> dict:
     }
 
 def detect_provider(url: str) -> str:
-    """Returns 'GCP' if comics.org URL, otherwise 'CV'."""
-    if "comics.org" in url.lower():
+    """Returns 'GCP' if comics.org URL or GCP text layout, otherwise 'CV'."""
+    url_lower = url.lower()
+    if "comics.org" in url_lower or any(k in url for k in ["Pencils:", "Script:", "Characters:", "Table of Contents"]):
         return "GCP"
     return "CV"
 
-def scrape_single_url(url: str) -> Comic:
-    """Routes single issue scraping based on provider URL (CV vs GCP)."""
-    if detect_provider(url) == "GCP":
-        return scrape_gcp_issue(url)
-    return scrape_cv_issue(url)
+def scrape_single_url(url_or_text: str) -> Comic:
+    """Routes single issue scraping based on provider URL or GCP text layout."""
+    if detect_provider(url_or_text) == "GCP":
+        return scrape_gcp_issue(url_or_text)
+    return scrape_cv_issue(url_or_text)
 
 def scrape_any_volume(url: str) -> tuple[str, dict[str, str], list[dict]]:
     """Routes volume scraping based on provider URL (CV vs GCP)."""
@@ -71,7 +72,11 @@ def scrape_any_volume(url: str) -> tuple[str, dict[str, str], list[dict]]:
     return scrape_cv_volume(url)
 
 def fetch_and_merge_urls(url_val) -> Comic:
-    """Accepts a single URL string, list of URLs, or multi-line string and scrapes/merges them."""
+    """Accepts a single URL string, GCP page text layout, list of URLs, or multi-line string and scrapes/merges them."""
+    # Check if raw string contains GCP page text layout
+    if isinstance(url_val, str) and (any(k in url_val for k in ["Pencils:", "Script:", "Characters:", "Table of Contents"]) or ("comics.org" in url_val and len(url_val.split("\n")) > 2)):
+        return scrape_gcp_issue(url_val)
+
     urls = []
     if isinstance(url_val, list):
         urls = [str(u).strip() for u in url_val if u and str(u).strip()]
@@ -87,7 +92,10 @@ def fetch_and_merge_urls(url_val) -> Comic:
             urls = [u.strip() for u in re.split(r"[\n,\s]+", url_val) if u.strip() and u.strip().startswith("http")]
 
     if not urls:
-        raise ValueError("No valid comic database URLs provided.")
+        # Fallback to direct input string if single text block
+        if isinstance(url_val, str) and url_val.strip():
+            return scrape_single_url(url_val.strip())
+        raise ValueError("No valid comic database URLs or page text provided.")
 
     if len(urls) == 1:
         return scrape_single_url(urls[0])
@@ -380,7 +388,7 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             url_val = fields.get("urls") or fields.get("url") or ""
             if not url_val:
                 self._set_headers(400)
-                self.wfile.write(json.dumps({"error": "Missing database URL(s)"}).encode("utf-8"))
+                self.wfile.write(json.dumps({"error": "Missing database URL(s) or page text"}).encode("utf-8"))
                 return
             try:
                 comic = fetch_and_merge_urls(url_val)
@@ -489,7 +497,7 @@ class ComicServerHandler(BaseHTTPRequestHandler):
 
             if not url_val:
                 self._set_headers(400)
-                self.wfile.write(json.dumps({"error": "Comic database URL(s) required"}).encode("utf-8"))
+                self.wfile.write(json.dumps({"error": "Comic database URL(s) or page text required"}).encode("utf-8"))
                 return
 
             real_file_path = ""

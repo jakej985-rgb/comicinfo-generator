@@ -65,85 +65,85 @@ def fetch_gcp_api_json(url: str, timeout: int = 5) -> dict:
 
     return {}
 
-def parse_gcp_html_text(text: str, url: str) -> Comic:
-    """Parses Grand Comics Database HTML or text layout into a Comic object."""
+def parse_gcp_text_refined(text: str, default_url: str = "") -> Comic:
+    """Parses Grand Comics Database HTML or copied page text layout into a Comic object."""
     c = Comic()
-    c.web = url
-    soup = BeautifulSoup(text, "html.parser")
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
 
-    # 1. H1 / Title & Series Name
-    h1 = soup.find("h1")
-    if h1:
-        h1_txt = " ".join(h1.get_text(" ", strip=True).split())
-        c.title = h1_txt
-        m_issue = re.search(r"(.+?)\s+#?(\d+[a-zA-Z]?|\d+\.\d+|\d+|\[[^\]]+\])", h1_txt)
+    # Extract URL if present
+    web_url = default_url
+    clean_lines = []
+    for l in lines:
+        if l.startswith("http://") or l.startswith("https://"):
+            if not web_url: web_url = l
+        else:
+            clean_lines.append(l)
+
+    c.web = web_url
+
+    if clean_lines:
+        c.title = clean_lines[0]
+        m_issue = re.search(r"(.+?)\s+#?(\d+[a-zA-Z]?|\d+\.\d+|\d+|\[[^\]]+\])", c.title)
         if m_issue:
             c.series = m_issue.group(1).strip()
             c.number = m_issue.group(2).strip().lstrip("#")
         else:
-            c.series = h1_txt
+            c.series = c.title
 
-    page_txt = soup.get_text("\n", strip=True) if soup else text
+    page_txt = "\n".join(clean_lines)
 
-    if not c.title:
-        lines = [l.strip() for l in page_txt.split("\n") if l.strip()]
-        if lines:
-            c.title = lines[0]
-            m_ser = re.search(r"(.+?)\s+(\[[^\]]+\]|\d+)", c.title)
-            if m_ser:
-                c.series = m_ser.group(1).strip()
-                c.number = m_ser.group(2).strip()
-            else:
-                c.series = c.title
-
-    # 2. Publisher & Year (e.g. "Mirage, 1990 Series")
+    # Publisher & Year (e.g. "Mirage, 1990 Series")
     m_pub = re.search(r"([A-Za-z0-9\s]+),\s+(\d{4})\s+Series", page_txt)
     if m_pub:
-        c.publisher = m_pub.group(1).strip()
+        raw_pub = m_pub.group(1).strip().split("\n")[-1].strip()
+        c.publisher = raw_pub
         c.year = int(m_pub.group(2))
 
     m_date = re.search(r"\b(January|February|March|April|May|June|July|August|September|October|November|December|Summer|Winter|Spring|Fall)\s+(\d{4})\b", page_txt, re.I)
     if m_date:
-        if not c.year:
-            c.year = int(m_date.group(2))
-        month_name = m_date.group(1).lower()
-        if month_name in MONTH_MAP:
-            c.month = MONTH_MAP[month_name]
+        if not c.year: c.year = int(m_date.group(2))
+        m_name = m_date.group(1).lower()
+        if m_name in MONTH_MAP: c.month = MONTH_MAP[m_name]
 
-    # 3. Credits & Characters Parsing
-    for line in page_txt.split("\n"):
-        line = line.strip()
+    # Credits & Characters Parsing
+    for line in clean_lines:
         if line.startswith("Script:") or line.startswith("Writer:"):
             for val in re.split(r"[,;]+", line.split(":", 1)[1]):
-                clean = re.sub(r"\([^)]*\)", "", val).strip()
-                if clean and clean.lower() not in ("none", "?") and clean not in c.writers:
+                clean = re.sub(r"\s*\([^)]*\)", "", val).strip().strip("?")
+                if clean and clean.lower() not in ("none", "") and clean not in c.writers:
                     c.writers.append(clean)
+
         elif line.startswith("Pencils:") or line.startswith("Penciller:"):
             for val in re.split(r"[,;]+", line.split(":", 1)[1]):
-                clean = re.sub(r"\([^)]*\)", "", val).strip()
-                if clean and clean.lower() not in ("none", "?") and clean not in c.pencillers:
+                clean = re.sub(r"\s*\([^)]*\)", "", val).strip().strip("?")
+                if clean and clean.lower() not in ("none", "") and clean not in c.pencillers:
                     c.pencillers.append(clean)
+
         elif line.startswith("Inks:") or line.startswith("Inker:"):
             for val in re.split(r"[,;]+", line.split(":", 1)[1]):
-                clean = re.sub(r"\([^)]*\)", "", val).strip()
-                if clean and clean.lower() not in ("none", "?") and clean not in c.inkers:
+                clean = re.sub(r"\s*\([^)]*\)", "", val).strip().strip("?")
+                if clean and clean.lower() not in ("none", "") and clean not in c.inkers:
                     c.inkers.append(clean)
+
         elif line.startswith("Colors:") or line.startswith("Colorist:"):
             for val in re.split(r"[,;]+", line.split(":", 1)[1]):
-                clean = re.sub(r"\([^)]*\)", "", val).strip()
-                if clean and clean.lower() not in ("none", "?") and clean not in c.colorists:
+                clean = re.sub(r"\s*\([^)]*\)", "", val).strip().strip("?")
+                if clean and clean.lower() not in ("none", "") and clean not in c.colorists:
                     c.colorists.append(clean)
+
         elif line.startswith("Letters:") or line.startswith("Letterer:"):
             for val in re.split(r"[,;]+", line.split(":", 1)[1]):
-                clean = re.sub(r"\([^)]*\)", "", val).strip()
-                if clean and clean.lower() not in ("none", "?") and clean not in c.letterers:
+                clean = re.sub(r"\s*\([^)]*\)", "", val).strip().strip("?")
+                if clean and clean.lower() not in ("none", "") and clean not in c.letterers:
                     c.letterers.append(clean)
+
         elif line.startswith("Genre:"):
             c.genre = line.split(":", 1)[1].strip()
+
         elif line.startswith("Characters:"):
             for char in re.split(r"[;;\n]+", line.split(":", 1)[1]):
-                clean = re.sub(r"\([^)]*\)", "", char).strip()
-                if clean and clean.lower() not in ("none", "?") and len(clean) > 1 and clean not in c.characters:
+                clean = re.sub(r"\s*\([^)]*\)", "", char).strip()
+                if clean and clean.lower() not in ("none", "") and len(clean) > 1 and clean not in c.characters:
                     c.characters.append(clean)
 
     if not c.title and c.series:
@@ -151,11 +151,20 @@ def parse_gcp_html_text(text: str, url: str) -> Comic:
 
     return c
 
-def scrape_gcp_issue(url: str) -> Comic:
+def scrape_gcp_issue(url_or_text: str) -> Comic:
     """
-    Scrapes a Grand Comics Database (comics.org / GCP) issue page into a Comic object.
+    Scrapes a Grand Comics Database (comics.org / GCP) issue page or copied page layout text into a Comic.
     Never throws an unhandled error if Cloudflare or API rate limits block the request.
     """
+    input_str = url_or_text.strip()
+
+    # Check if input is multi-line page text or contains GCP layout headers
+    if len(input_str.split("\n")) > 2 or any(k in input_str for k in ["Pencils:", "Script:", "Inks:", "Characters:", "Table of Contents"]):
+        return parse_gcp_text_refined(input_str)
+
+    m_url = re.search(r"https?://[^\s]+", input_str)
+    url = m_url.group(0) if m_url else input_str
+
     c = Comic()
     c.web = url
     
@@ -191,31 +200,31 @@ def scrape_gcp_issue(url: str) -> Comic:
             writer = story.get("writer")
             if writer:
                 for w in re.split(r"[,;]+", writer):
-                    w_name = re.sub(r"\([^)]*\)", "", w).strip()
+                    w_name = re.sub(r"\s*\([^)]*\)", "", w).strip()
                     if w_name and w_name not in c.writers: c.writers.append(w_name)
 
             penciler = story.get("penciler")
             if penciler:
                 for p in re.split(r"[,;]+", penciler):
-                    p_name = re.sub(r"\([^)]*\)", "", p).strip()
+                    p_name = re.sub(r"\s*\([^)]*\)", "", p).strip()
                     if p_name and p_name not in c.pencillers: c.pencillers.append(p_name)
 
             inker = story.get("inker")
             if inker:
                 for i in re.split(r"[,;]+", inker):
-                    i_name = re.sub(r"\([^)]*\)", "", i).strip()
+                    i_name = re.sub(r"\s*\([^)]*\)", "", i).strip()
                     if i_name and i_name not in c.inkers: c.inkers.append(i_name)
 
             colorist = story.get("colorist")
             if colorist:
                 for col in re.split(r"[,;]+", colorist):
-                    col_name = re.sub(r"\([^)]*\)", "", col).strip()
+                    col_name = re.sub(r"\s*\([^)]*\)", "", col).strip()
                     if col_name and col_name not in c.colorists: c.colorists.append(col_name)
 
             chars = story.get("characters")
             if chars:
                 for ch in re.split(r"[;]+", chars):
-                    ch_name = re.sub(r"\([^)]*\)", "", ch).strip()
+                    ch_name = re.sub(r"\s*\([^)]*\)", "", ch).strip()
                     if ch_name and ch_name not in c.characters: c.characters.append(ch_name)
 
         if not c.title and c.series:
@@ -226,13 +235,17 @@ def scrape_gcp_issue(url: str) -> Comic:
     # 2. Try HTML Scraper with 5s timeout
     html_text = fetch_gcp_html(url, timeout=5)
     if html_text:
-        return parse_gcp_html_text(html_text, url)
+        return parse_gcp_text_refined(html_text, url)
 
-    # 3. Safe Fallback if Cloudflare / API rate-limits block direct HTTP access
+    # 3. If input is multi-line or contains copied text
+    if len(input_str.split("\n")) > 1:
+        return parse_gcp_text_refined(input_str, url)
+
+    # 4. Safe Fallback if Cloudflare / API rate-limits block direct HTTP access
     c.title = f"GCP Issue #{issue_id}"
     c.series = "Grand Comics Database Issue"
     c.publisher = "Grand Comics Database (GCP)"
-    c.summary = f"Metadata generated for GCP Issue #{issue_id} ({url}). Note: Direct scraping was blocked by Cloudflare anti-bot."
+    c.summary = f"Metadata generated for GCP Issue #{issue_id} ({url}). Note: Direct scraping was blocked by Cloudflare anti-bot. You can paste the copied page text into the URL box to extract full metadata."
     return c
 
 def scrape_gcp_volume(volume_url: str) -> tuple[str, dict[str, str], list[dict]]:

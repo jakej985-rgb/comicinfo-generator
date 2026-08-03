@@ -24,7 +24,7 @@
                     <p class="subtitle">Multi-Database Tagger for Comic Vine (CV) & Grand Comics Database (GCP)</p>
                 </div>
             </div>
-            <div class="badge">v3.0 • CV & GCP Databases Supported</div>
+            <div class="badge">v3.1 • CV & GCP Databases Supported</div>
         </header>
 
         <!-- Search Bar Section -->
@@ -90,15 +90,15 @@
                     <span class="help-text">Click <b>Browse File...</b> to select your comic file. <code>.cbr</code> files are automatically converted to <code>.cbz</code> (and original <code>.cbr</code> deleted).</span>
                 </div>
 
-                <!-- Input 2: Comic URL(s) Textarea with Provider Badge Indicator -->
+                <!-- Input 2: Comic URL(s) or Copied Page Text Textarea -->
                 <div class="form-group">
                     <label for="url">
-                        <span class="icon">🔗</span> Database Issue Link(s) <span id="provider-badge-single" class="badge-provider hidden">CV</span>
+                        <span class="icon">🔗</span> Database Link(s) or Copied GCP Page Text <span id="provider-badge-single" class="badge-provider hidden">CV</span>
                     </label>
                     <div class="input-wrapper">
-                        <textarea id="url" rows="3" placeholder="Paste 1 URL for single issue, or multiple URLs (1 per line) for TPB / Collected Editions:&#10;CV: https://comicvine.gamespot.com/angelus-1-volume-1/4000-433609/&#10;GCP: https://www.comics.org/issue/508570/" required></textarea>
+                        <textarea id="url" rows="4" placeholder="Paste 1 URL, multiple URLs (1 per line) for TPBs, OR copied GCP page text directly:&#10;CV: https://comicvine.gamespot.com/angelus-1-volume-1/4000-433609/&#10;GCP: https://www.comics.org/issue/720274/&#10;Or paste copied GCD page text directly!" required></textarea>
                     </div>
-                    <span class="help-text">Paste Comic Vine (CV) or Grand Comics Database (GCP) issue URLs! Paste multiple URLs (one per line) for TPBs.</span>
+                    <span class="help-text">Paste Comic Vine (CV) or GCP URLs, OR copy-paste GCP page text directly to bypass Cloudflare!</span>
                 </div>
 
                 <!-- Actions -->
