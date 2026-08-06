@@ -26,6 +26,9 @@ class Comic:
     characters: list[str] = field(default_factory=list)
     teams: list[str] = field(default_factory=list)
     story_arcs: list[str] = field(default_factory=list)
+    provider_name: str = ""
+    provider_id: str = ""
+    sha256: str = ""
 
 def merge_comics(comics: list[Comic]) -> Comic:
     """

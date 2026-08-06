@@ -1,8 +1,10 @@
 import re
 import urllib.parse
 import requests
+from typing import Optional, Tuple
 from bs4 import BeautifulSoup
 from models.comic import Comic
+from providers.base import BaseProvider
 
 try:
     import cloudscraper
@@ -64,11 +66,11 @@ def parse_html(html_text: str, url: str = "") -> Comic:
     """Parses Comic Vine issue HTML content into a Comic object."""
     soup = BeautifulSoup(html_text, "html.parser")
     
-    # Decompose edit form controls to prevent false positives
     for edit in soup.find_all(class_="wiki-item-edit"):
         edit.decompose()
 
     c = Comic()
+    c.provider_name = "CV"
     c.web = url
     
     # 1. Series Name & Issue Number from H1 links
@@ -90,17 +92,15 @@ def parse_html(html_text: str, url: str = "") -> Comic:
                 if not c.series: c.series = m.group(1).strip()
                 if not c.number: c.number = m.group(2).strip()
 
-    # 2. Issue Name / Title (e.g. "Part 3", "Part 1", "Wrath of the Lamb")
+    # 2. Issue Name / Title
     page_text = " ".join(soup.get_text(" ", strip=True).split())
 
-    # Strategy A: Extract "Name" field directly from "Issue details" block
     m_name = re.search(r"Issue details\s+Name\s+(.+?)\s+Name\s+Name of this issue", page_text)
     if m_name:
         val = m_name.group(1).strip()
         if val and val.lower() not in ("none", "name"):
             c.title = val
 
-    # Strategy B: Extract from og:title meta tag
     if not c.title:
         og_title = soup.find("meta", attrs={"property": "og:title"}) or soup.find("meta", attrs={"name": "twitter:title"})
         if og_title:
@@ -109,7 +109,6 @@ def parse_html(html_text: str, url: str = "") -> Comic:
             if m:
                 c.title = m.group(1).strip()
 
-    # Strategy C: Fallback to H1 text
     if not c.title and h1:
         h1_txt = " ".join(h1.get_text(" ", strip=True).split())
         m = re.search(r"#\d+[a-zA-Z]?\s*[:-]\s*(.+)", h1_txt)
@@ -246,13 +245,8 @@ def scrape_issue(url: str) -> Comic:
     return parse_html(html_content, url)
 
 def scrape_volume(volume_url: str, max_pages_limit: int = 50) -> tuple[str, dict[str, str], list[dict]]:
-    """
-    Scrapes a Comic Vine Volume/Series page (/4050-XXXXX/), fetching all paginated pages.
-    Returns (series_name, issue_map, issues_list).
-    """
-    # Clean query parameters from base URL
+    """Scrapes a Comic Vine Volume/Series page (/4050-XXXXX/)."""
     clean_url = re.sub(r"\?page=\d+.*$", "", volume_url).rstrip("/") + "/"
-
     html_content = fetch_html(clean_url)
     soup = BeautifulSoup(html_content, "html.parser")
 
@@ -261,7 +255,6 @@ def scrape_volume(volume_url: str, max_pages_limit: int = 50) -> tuple[str, dict
     if h1:
         series_name = h1.get_text(" ", strip=True).split("»")[0].strip()
 
-    # Detect max page count from pagination links
     max_page = 1
     for a in soup.find_all("a", href=re.compile(r"page=\d+")):
         m = re.search(r"page=(\d+)", a["href"])
@@ -297,10 +290,8 @@ def scrape_volume(volume_url: str, max_pages_limit: int = 50) -> tuple[str, dict
                         "url": full_url
                     })
 
-    # 1. Extract Page 1
     extract_issues_from_soup(soup)
 
-    # 2. Extract Pages 2..N
     pages_to_fetch = min(max_page, max_pages_limit)
     for page_idx in range(2, pages_to_fetch + 1):
         p_url = f"{clean_url}?page={page_idx}"
@@ -311,7 +302,6 @@ def scrape_volume(volume_url: str, max_pages_limit: int = 50) -> tuple[str, dict
         except Exception:
             pass
 
-    # Sort issues list numerically
     issues_list = sorted(
         issues_list,
         key=lambda x: int(re.sub(r"\D", "", x["number"])) if re.sub(r"\D", "", x["number"]) else 0
@@ -320,10 +310,7 @@ def scrape_volume(volume_url: str, max_pages_limit: int = 50) -> tuple[str, dict
     return series_name, issue_map, issues_list
 
 def search_comicvine(query: str, search_type: str = "all") -> list[dict]:
-    """
-    Searches Comic Vine for series volumes or single issues.
-    Returns list of search result dicts: title, url, image, type, year, count, description.
-    """
+    """Searches Comic Vine for series volumes or single issues."""
     clean_query = query.strip()
     if not clean_query:
         return []
@@ -375,3 +362,29 @@ def search_comicvine(query: str, search_type: str = "all") -> list[dict]:
             })
 
     return results
+
+class ComicVineProvider(BaseProvider):
+    """ComicVine Provider implementing BaseProvider interface."""
+    
+    def __init__(self, api_key: str = ""):
+        self.api_key = api_key
+
+    def get_name(self) -> str:
+        return "CV"
+
+    def search_series(self, query: str) -> list[dict]:
+        return search_comicvine(query, search_type="volume")
+
+    def search_issue(self, query: str) -> list[dict]:
+        return search_comicvine(query, search_type="issue")
+
+    def lookup_volume(self, volume_id: str) -> tuple[str, dict[str, str], list[dict]]:
+        url = volume_id if volume_id.startswith("http") else f"https://comicvine.gamespot.com/volume/4050-{volume_id}/"
+        return scrape_volume(url)
+
+    def lookup_issue(self, issue_id_or_url: str) -> Optional[Comic]:
+        url = issue_id_or_url if issue_id_or_url.startswith("http") else f"https://comicvine.gamespot.com/issue/4000-{issue_id_or_url}/"
+        try:
+            return scrape_issue(url)
+        except Exception:
+            return None

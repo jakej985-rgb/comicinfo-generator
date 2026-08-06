@@ -1,8 +1,10 @@
 import re
 import urllib.parse
 import requests
+from typing import Optional, Tuple
 from bs4 import BeautifulSoup
 from models.comic import Comic
+from providers.base import BaseProvider
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -84,6 +86,7 @@ def fetch_gcp_api_json(url: str, timeout: int = 2) -> dict:
 def parse_gcd_soup(soup: BeautifulSoup, url: str) -> Comic:
     """Parses BeautifulSoup object from GCD HTML page."""
     c = Comic()
+    c.provider_name = "GCP"
     c.web = url
 
     h1 = soup.find("h1")
@@ -119,6 +122,7 @@ def parse_gcp_text_refined(text: str, default_url: str = "") -> Comic:
             return c_soup
 
     c = Comic()
+    c.provider_name = "GCP"
     lines = [l.strip() for l in text.split("\n") if l.strip()]
 
     # Extract URL if present
@@ -143,7 +147,6 @@ def parse_gcp_text_refined(text: str, default_url: str = "") -> Comic:
 
     page_txt = "\n".join(clean_lines)
 
-    # Publisher & Year (e.g. "Mirage, 1990 Series")
     m_pub = re.search(r"([A-Za-z0-9\s]+),\s+(\d{4})\s+Series", page_txt)
     if m_pub:
         raw_pub = m_pub.group(1).strip().split("\n")[-1].strip()
@@ -156,7 +159,6 @@ def parse_gcp_text_refined(text: str, default_url: str = "") -> Comic:
         m_name = m_date.group(1).lower()
         if m_name in MONTH_MAP: c.month = MONTH_MAP[m_name]
 
-    # Credits & Characters Parsing
     for line in clean_lines:
         if line.startswith("Script:") or line.startswith("Writer:"):
             for val in re.split(r"[,;]+", line.split(":", 1)[1]):
@@ -203,13 +205,9 @@ def parse_gcp_text_refined(text: str, default_url: str = "") -> Comic:
     return c
 
 def scrape_gcp_issue(url_or_text: str) -> Comic:
-    """
-    Scrapes a Grand Comics Database (comics.org / GCP) issue page or copied page layout text into a Comic.
-    Uses HTTPS Wayback Machine archive fallback if Cloudflare blocks direct HTTP request.
-    """
+    """Scrapes a Grand Comics Database issue page or copied text into a Comic."""
     input_str = url_or_text.strip()
 
-    # Check if input is multi-line page text or contains GCP layout headers
     if len(input_str.split("\n")) > 2 or any(k in input_str for k in ["Pencils:", "Script:", "Inks:", "Characters:", "Table of Contents"]):
         return parse_gcp_text_refined(input_str)
 
@@ -217,13 +215,14 @@ def scrape_gcp_issue(url_or_text: str) -> Comic:
     url = m_url.group(0) if m_url else input_str
 
     c = Comic()
+    c.provider_name = "GCP"
     c.web = url
     
     m_issue = re.search(r"/issue/(\d+)", url)
     issue_id = m_issue.group(1) if m_issue else "1"
     c.number = issue_id
+    c.provider_id = issue_id
     
-    # 1. Try API first with 2s timeout
     api_data = fetch_gcp_api_json(f"https://www.comics.org/api/issue/{issue_id}/", timeout=2)
     if api_data and api_data.get("id"):
         c.number = str(api_data.get("number", "")).strip().lstrip("#")
@@ -283,7 +282,6 @@ def scrape_gcp_issue(url_or_text: str) -> Comic:
 
         return c
 
-    # 2. Try HTML Scraper (Direct or HTTPS Wayback Machine Cache)
     html_text = fetch_gcp_html(url, timeout=2)
     if html_text:
         res_c = parse_gcp_text_refined(html_text, url)
@@ -292,25 +290,20 @@ def scrape_gcp_issue(url_or_text: str) -> Comic:
                 res_c.summary = f"Scraped Series, Publisher & Date from archive. To include full creator credits & characters, copy-paste the GCP page text into the box!"
             return res_c
 
-    # 3. Safe Fallback
     c.title = f"GCP Issue #{issue_id}"
     c.series = "Grand Comics Database Issue"
     c.publisher = "Grand Comics Database (GCP)"
-    c.summary = f"Metadata generated for GCP Issue #{issue_id} ({url}). Note: Direct scraping was blocked by Cloudflare anti-bot. Copy-paste the GCP page text into the box to extract full creator credits & characters."
+    c.summary = f"Metadata generated for GCP Issue #{issue_id} ({url}). Note: Direct scraping was blocked by Cloudflare anti-bot."
     return c
 
 def scrape_gcp_volume(volume_url: str) -> tuple[str, dict[str, str], list[dict]]:
-    """
-    Scrapes a GCP Series/Volume page (https://www.comics.org/series/XXXXX/).
-    Returns (series_name, issue_map, issues_list).
-    """
+    """Scrapes a GCP Series/Volume page (https://www.comics.org/series/XXXXX/)."""
     m_series = re.search(r"/series/(\d+)", volume_url)
     if not m_series:
         raise ValueError(f"Invalid GCP Series URL: '{volume_url}'")
 
     series_id = m_series.group(1)
 
-    # 1. API Fetching with 2s timeout
     s_data = fetch_gcp_api_json(f"https://www.comics.org/api/series/{series_id}/", timeout=2)
     if s_data and s_data.get("name"):
         series_name = s_data.get("name", "")
@@ -331,7 +324,8 @@ def scrape_gcp_volume(volume_url: str) -> tuple[str, dict[str, str], list[dict]]
                     issues_list.append({
                         "number": num,
                         "label": f"Issue #{num}",
-                        "url": web_url
+                        "url": web_url,
+                        "id": iss_id
                     })
 
         issues_list = sorted(
@@ -340,7 +334,6 @@ def scrape_gcp_volume(volume_url: str) -> tuple[str, dict[str, str], list[dict]]
         )
         return series_name, issue_map, issues_list
 
-    # 2. HTML Scraper Fallback (Direct or Wayback)
     html_text = fetch_gcp_html(volume_url, timeout=2)
     soup = BeautifulSoup(html_text, "html.parser")
 
@@ -373,10 +366,7 @@ def scrape_gcp_volume(volume_url: str) -> tuple[str, dict[str, str], list[dict]]
     return series_name, issue_map, issues_list
 
 def search_gcp(query: str, search_type: str = "all") -> list[dict]:
-    """
-    Searches Grand Comics Database (GCP / comics.org) for series or issues.
-    Returns list of search result dicts.
-    """
+    """Searches Grand Comics Database for series or issues."""
     results = []
     clean_query = query.strip()
     if not clean_query:
@@ -384,7 +374,6 @@ def search_gcp(query: str, search_type: str = "all") -> list[dict]:
 
     encoded_query = urllib.parse.quote_plus(clean_query)
     
-    # 1. Search Series
     if search_type in ("all", "gcp_volume"):
         search_url = f"https://www.comics.org/search/advanced/process/?target=series&method=contains&series_name={encoded_query}"
         html_text = fetch_gcp_html(search_url, timeout=2)
@@ -418,7 +407,6 @@ def search_gcp(query: str, search_type: str = "all") -> list[dict]:
                         "description": txt[:160]
                     })
 
-    # 2. Search Issues
     if search_type in ("all", "gcp_issue"):
         search_url = f"https://www.comics.org/search/advanced/process/?target=issue&method=contains&issue_name={encoded_query}"
         html_text = fetch_gcp_html(search_url, timeout=2)
@@ -450,3 +438,26 @@ def search_gcp(query: str, search_type: str = "all") -> list[dict]:
                     })
 
     return results
+
+class GCPProvider(BaseProvider):
+    """Grand Comics Database Provider implementing BaseProvider interface."""
+
+    def get_name(self) -> str:
+        return "GCP"
+
+    def search_series(self, query: str) -> list[dict]:
+        return search_gcp(query, search_type="gcp_volume")
+
+    def search_issue(self, query: str) -> list[dict]:
+        return search_gcp(query, search_type="gcp_issue")
+
+    def lookup_volume(self, volume_id: str) -> tuple[str, dict[str, str], list[dict]]:
+        url = volume_id if volume_id.startswith("http") else f"https://www.comics.org/series/{volume_id}/"
+        return scrape_gcp_volume(url)
+
+    def lookup_issue(self, issue_id_or_url: str) -> Optional[Comic]:
+        url = issue_id_or_url if issue_id_or_url.startswith("http") else f"https://www.comics.org/issue/{issue_id_or_url}/"
+        try:
+            return scrape_gcp_issue(url)
+        except Exception:
+            return None
