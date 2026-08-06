@@ -6,7 +6,7 @@ from config import load_config, init_config
 class TestConfig(unittest.TestCase):
 
     def test_default_config(self):
-        cfg = load_config()
+        cfg = load_config(config_path="/nonexistent/default/config.yaml")
         self.assertEqual(cfg.kapowarr.url, "http://localhost:5656")
         self.assertEqual(cfg.automation.workers, 4)
         self.assertTrue(cfg.cache.enabled)
