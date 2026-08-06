@@ -1,6 +1,5 @@
-requests
-beautifulsoup4
-lxml
-cloudscraper
-curl_cffi
-
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+cloudscraper>=1.2.71
+curl-cffi>=0.7.0
