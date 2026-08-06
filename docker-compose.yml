@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  comicinfo-generator:
+    build: .
+    image: comicinfo-generator:v0.1
+    container_name: comicinfo-generator
+    ports:
+      - "5005:5005"
+    restart: unless-stopped
+    # Optional volume mounts for comic libraries:
+    # volumes:
+    #   - /path/to/your/comics:/comics

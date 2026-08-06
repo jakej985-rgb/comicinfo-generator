@@ -1,0 +1,14 @@
+.git
+.gitignore
+venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+cache/
+*.cbz
+*.cbr
+.DS_Store
+.antigravityignore
+Dockerfile
+docker-compose.yml
