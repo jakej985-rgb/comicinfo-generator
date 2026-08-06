@@ -1,310 +1,853 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com; img-src 'self' data: https:;">
-    <title>ComicInfo Generator & Tagger (CV & GCP)</title>
-    <!-- Modern Google Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ComicInfo Generator v2.0 - Automated Metadata Engine</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #0f172a;
+      --bg-card: rgba(30, 41, 59, 0.7);
+      --bg-card-hover: rgba(51, 65, 85, 0.8);
+      --border-card: rgba(255, 255, 255, 0.1);
+      --primary: #6366f1;
+      --primary-hover: #4f46e5;
+      --accent: #10b981;
+      --accent-gcp: #f59e0b;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --danger: #ef4444;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: var(--bg-dark);
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(16, 185, 129, 0.1) 0px, transparent 50%);
+      color: var(--text-main);
+      min-height: 100vh;
+      padding-bottom: 50px;
+    }
+
+    /* Navbar Header */
+    header {
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border-card);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      padding: 12px 24px;
+    }
+
+    .nav-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand-logo {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Outfit', sans-serif;
+      font-weight: 800;
+      font-size: 20px;
+      color: #fff;
+      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+    }
+    .brand-title {
+      font-family: 'Outfit', sans-serif;
+      font-weight: 700;
+      font-size: 20px;
+      background: linear-gradient(90deg, #fff, #94a3b8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .brand-badge {
+      background: rgba(99, 102, 241, 0.2);
+      border: 1px solid rgba(99, 102, 241, 0.4);
+      color: #818cf8;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-weight: 600;
+    }
+
+    /* Navigation Tabs */
+    .nav-tabs {
+      display: flex;
+      gap: 8px;
+      background: rgba(30, 41, 59, 0.6);
+      padding: 4px;
+      border-radius: 10px;
+      border: 1px solid var(--border-card);
+    }
+
+    .tab-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-weight: 500;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .tab-btn:hover {
+      color: var(--text-main);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .tab-btn.active {
+      background: var(--primary);
+      color: #fff;
+      font-weight: 600;
+      box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
+    }
+
+    /* App Container */
+    .main-container {
+      max-width: 1200px;
+      margin: 24px auto;
+      padding: 0 16px;
+    }
+
+    .tab-content {
+      display: none;
+    }
+    .tab-content.active {
+      display: block;
+      animation: fadeIn 0.3s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Glassmorphic Cards */
+    .card {
+      background: var(--bg-card);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-card);
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 24px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+    .card-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Form Controls */
+    .form-group {
+      margin-bottom: 18px;
+    }
+    .form-label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+    .form-control {
+      width: 100%;
+      padding: 10px 14px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid var(--border-card);
+      border-radius: 8px;
+      color: var(--text-main);
+      font-size: 14px;
+      outline: none;
+      transition: border 0.2s;
+    }
+    .form-control:focus {
+      border-color: var(--primary);
+    }
+    textarea.form-control {
+      resize: vertical;
+      min-height: 100px;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      color: var(--text-main);
+    }
+
+    /* Buttons */
+    .btn {
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .btn-primary {
+      background: var(--primary);
+      color: #fff;
+    }
+    .btn-primary:hover {
+      background: var(--primary-hover);
+      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+    }
+    .btn-success {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-success:hover {
+      background: #059669;
+    }
+    .btn-danger {
+      background: var(--danger);
+      color: #fff;
+    }
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--text-main);
+    }
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    /* Badges */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .badge-online { background: rgba(16, 185, 129, 0.2); border: 1px solid rgba(16, 185, 129, 0.4); color: #34d399; }
+    .badge-offline { background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.4); color: #f87171; }
+    .badge-cv { background: rgba(99, 102, 241, 0.2); border: 1px solid rgba(99, 102, 241, 0.4); color: #818cf8; }
+    .badge-gcp { background: rgba(245, 158, 11, 0.2); border: 1px solid rgba(245, 158, 11, 0.4); color: #fbbf24; }
+
+    /* Stat Cards Grid */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .stat-card {
+      background: rgba(30, 41, 59, 0.6);
+      border: 1px solid var(--border-card);
+      border-radius: 12px;
+      padding: 16px 20px;
+    }
+    .stat-val {
+      font-family: 'Outfit', sans-serif;
+      font-size: 28px;
+      font-weight: 800;
+      color: var(--primary);
+      margin-top: 4px;
+    }
+    .stat-label {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    /* Logs Container */
+    .log-box {
+      background: #090d16;
+      border: 1px solid var(--border-card);
+      border-radius: 10px;
+      padding: 14px;
+      font-family: monospace;
+      font-size: 13px;
+      color: #34d399;
+      height: 200px;
+      overflow-y: auto;
+      margin-top: 12px;
+    }
+
+    /* Search Results Grid */
+    .search-results-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 16px;
+      margin-top: 16px;
+    }
+    .search-item {
+      background: rgba(15, 23, 42, 0.7);
+      border: 1px solid var(--border-card);
+      border-radius: 12px;
+      padding: 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .search-item:hover {
+      border-color: var(--primary);
+      transform: translateY(-2px);
+    }
+
+    /* Dropzone */
+    .dropzone {
+      border: 2px dashed rgba(99, 102, 241, 0.4);
+      border-radius: 12px;
+      padding: 30px;
+      text-align: center;
+      background: rgba(99, 102, 241, 0.05);
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .dropzone:hover {
+      background: rgba(99, 102, 241, 0.1);
+    }
+  </style>
 </head>
 <body>
-    <div class="background-glow"></div>
-    
-    <div class="container">
-        <!-- Header -->
-        <header class="header">
-            <div class="logo-group">
-                <div class="logo-icon">📚</div>
-                <div>
-                    <h1>ComicInfo Generator</h1>
-                    <p class="subtitle">Multi-Database Tagger for Comic Vine (CV) & Grand Comics Database (GCP)</p>
-                </div>
-            </div>
-            <div class="badge">v3.1 • CV & GCP Databases Supported</div>
-        </header>
 
-        <!-- Search Bar Section -->
-        <section class="card search-card">
-            <form id="search-form">
-                <div class="form-group" style="margin-bottom: 0;">
-                    <label for="search-query">
-                        <span class="icon">🔍</span> Search Comic Databases (CV & GCP)
-                    </label>
-                    <div class="input-with-button">
-                        <input type="text" id="search-query" placeholder="Enter series or issue title (e.g. Bart Simpson, Spider-Man, Angelus, Batman)..." required />
-                        <select id="search-type" class="search-type-select">
-                            <option value="all">All Sources</option>
-                            <option value="cv_volume">CV Series</option>
-                            <option value="cv_issue">CV Issue</option>
-                            <option value="gcp_volume">GCP Series</option>
-                            <option value="gcp_issue">GCP Issue</option>
-                        </select>
-                        <button type="submit" id="btn-search" class="btn btn-primary" style="flex: initial; min-width: 130px;">
-                            <span class="btn-icon">🔍</span> Search
-                        </button>
-                    </div>
-                </div>
-            </form>
+  <!-- Top Header Navigation -->
+  <header>
+    <div class="nav-container">
+      <div class="brand">
+        <div class="brand-logo">C</div>
+        <div class="brand-title">ComicInfo Generator</div>
+        <div class="brand-badge">v2.0 Engine</div>
+      </div>
 
-            <!-- Search Results Container -->
-            <div id="search-results-container" class="search-results-wrapper hidden">
-                <div class="search-header">
-                    <h3 id="search-results-count">Search Results</h3>
-                    <button type="button" id="btn-clear-search" class="btn-sm btn-secondary">Clear Results</button>
-                </div>
-                <div id="search-results-grid" class="search-results-grid">
-                    <!-- Dynamic search result cards -->
-                </div>
-            </div>
-        </section>
+      <nav class="nav-tabs">
+        <button class="tab-btn active" onclick="switchTab('generator')">🏷️ Generator & Search</button>
+        <button class="tab-btn" onclick="switchTab('settings')">⚙️ Settings & Config</button>
+        <button class="tab-btn" onclick="switchTab('watcher')">👁️ Folder Watcher</button>
+        <button class="tab-btn" onclick="switchTab('stats')">📊 Cache & Stats</button>
+      </nav>
+    </div>
+  </header>
 
-        <!-- Mode Navigation Tabs -->
-        <div class="mode-tabs">
-            <button type="button" id="tab-single" class="tab-btn active">
-                <span class="tab-icon">📄</span> Single Issue / TPB File
-            </button>
-            <button type="button" id="tab-batch" class="tab-btn">
-                <span class="tab-icon">📁</span> Batch Series Folder
-            </button>
+  <main class="main-container">
+
+    <!-- TAB 1: GENERATOR & SEARCH -->
+    <div id="tab-generator" class="tab-content active">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">🔍 Search Comic Databases & Paste GCP Text</div>
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="flex: 2;">
+            <label class="form-label">Search Query</label>
+            <input type="text" id="search-query-input" class="form-control" placeholder="e.g. Teenage Mutant Ninja Turtles Adventures">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Database Provider Filter</label>
+            <select id="search-type-select" class="form-control">
+              <option value="all">🌐 All Sources (CV & GCP)</option>
+              <option value="cv_volume">Comic Vine Series (CV)</option>
+              <option value="cv_issue">Comic Vine Issue (CV)</option>
+              <option value="gcp_volume">Grand Comics Series (GCP)</option>
+              <option value="gcp_issue">Grand Comics Issue (GCP)</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="performSearch()">🔍 Search Database</button>
+
+        <div id="search-results-area" class="search-results-grid"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">📄 Comic File & Metadata Link</div>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Select Comic File (.cbz or .cbr)</label>
+          <div class="dropzone" id="file-dropzone" onclick="triggerFilePicker()">
+            📁 Click to Select File or Drag & Drop .cbz / .cbr here
+            <div id="selected-file-label" style="margin-top: 8px; font-weight: 600; color: var(--primary);"></div>
+          </div>
         </div>
 
-        <!-- Main Form Card (Single Issue Mode) -->
-        <main id="single-mode-card" class="card main-card">
-            <form id="tagger-form">
-                <!-- Input 1: Comic File Path with Browse Button -->
-                <div class="form-group">
-                    <label for="file_path">
-                        <span class="icon">📁</span> Comic Archive File Path <span class="badge-optional">CBZ or CBR</span>
-                    </label>
-                    <div class="input-with-button">
-                        <input type="text" id="file_path" placeholder="/home/user/Comics/Batman_001.cbz" required />
-                        <button type="button" id="btn-browse" class="btn btn-browse">
-                            <span class="btn-icon">📂</span> Browse File...
-                        </button>
-                        <input type="file" id="file-picker" accept=".cbz,.cbr" style="display: none;" />
-                    </div>
-                    <span class="help-text">Click <b>Browse File...</b> to select your comic file. <code>.cbr</code> files are automatically converted to <code>.cbz</code> (and original <code>.cbr</code> deleted).</span>
-                </div>
-
-                <!-- Input 2: Comic URL(s) or Copied Page Text Textarea -->
-                <div class="form-group">
-                    <label for="url">
-                        <span class="icon">🔗</span> Database Link(s) or Copied GCP Page Text <span id="provider-badge-single" class="badge-provider hidden">CV</span>
-                    </label>
-                    <div class="input-wrapper">
-                        <textarea id="url" rows="4" placeholder="Paste 1 URL, multiple URLs (1 per line) for TPBs, OR copied GCP page text directly:&#10;CV: https://comicvine.gamespot.com/angelus-1-volume-1/4000-433609/&#10;GCP: https://www.comics.org/issue/720274/&#10;Or paste copied GCD page text directly!" required></textarea>
-                    </div>
-                    <span class="help-text">Paste Comic Vine (CV) or GCP URLs, OR copy-paste GCP page text directly to bypass Cloudflare!</span>
-                </div>
-
-                <!-- Actions -->
-                <div class="button-group">
-                    <button type="button" id="btn-preview" class="btn btn-secondary">
-                        <span class="btn-icon">🔍</span> Preview Metadata
-                    </button>
-                    <button type="submit" id="btn-embed" class="btn btn-primary">
-                        <span class="btn-icon">⚡</span> Grab & Embed to Comic
-                    </button>
-                </div>
-            </form>
-        </main>
-
-        <!-- Main Form Card (Batch Series Folder Mode) -->
-        <main id="batch-mode-card" class="card main-card hidden">
-            <form id="batch-tagger-form">
-                <!-- Input 1: Comic Folder Path with Browse Directory Button -->
-                <div class="form-group">
-                    <label for="folder_path">
-                        <span class="icon">📂</span> Series Folder Directory <span class="badge-optional">Multiple CBR / CBZ</span>
-                    </label>
-                    <div class="input-with-button">
-                        <input type="text" id="folder_path" placeholder="/mnt/disk1/Comics/Angelus/Volume 01 (2011)" required />
-                        <button type="button" id="btn-browse-folder" class="btn btn-browse">
-                            <span class="btn-icon">📁</span> Browse Folder...
-                        </button>
-                    </div>
-                    <span class="help-text">Choose the folder containing all your issue files (`.cbz` or `.cbr`).</span>
-                </div>
-
-                <!-- Input 2: Series / Volume Root URL with Provider Badge Indicator -->
-                <div class="form-group">
-                    <label for="volume_url">
-                        <span class="icon">🔗</span> Series / Volume Link <span id="provider-badge-batch" class="badge-provider hidden">CV</span>
-                    </label>
-                    <div class="input-wrapper">
-                        <input type="url" id="volume_url" placeholder="CV: https://comicvine.gamespot.com/angelus/4050-69279/  OR  GCP: https://www.comics.org/series/43261/" required />
-                    </div>
-                    <span class="help-text">Paste main CV (`/4050-XXXXX/`) or GCP (`/series/XXXXX/`) volume link. All issue numbers will be auto-matched!</span>
-                </div>
-
-                <!-- Options -->
-                <div class="form-group-checkbox">
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="chk-delete-cbr" checked />
-                        <span>Remove original <code>.cbr</code> file after successful conversion to <code>.cbz</code></span>
-                    </label>
-                </div>
-
-                <!-- Batch Actions -->
-                <div class="button-group">
-                    <button type="button" id="btn-batch-preview" class="btn btn-secondary">
-                        <span class="btn-icon">🔍</span> Preview Folder & Matching
-                    </button>
-                    <button type="submit" id="btn-batch-embed" class="btn btn-primary">
-                        <span class="btn-icon">⚡</span> Start Batch Conversion & Tagging
-                    </button>
-                </div>
-            </form>
-        </main>
-
-        <!-- Status / Alert Box -->
-        <div id="status-box" class="status-box hidden">
-            <div class="status-icon" id="status-icon">ℹ️</div>
-            <div class="status-content">
-                <h4 id="status-title">Processing...</h4>
-                <p id="status-message">Connecting to provider...</p>
-            </div>
+        <div class="form-group">
+          <label class="form-label">Comic Database URL or Copied GCP Page Text</label>
+          <textarea id="url-text-input" class="form-control" placeholder="Paste ComicVine URL, GCP URL (https://www.comics.org/issue/720274/), or copied GCP issue page text..."></textarea>
         </div>
 
-        <!-- Single Metadata Result Card -->
-        <section id="result-card" class="card result-card hidden">
-            <div class="card-header">
-                <h2>Extracted Metadata Preview</h2>
-                <span class="status-badge" id="result-badge">Scraped Successfully</span>
-            </div>
+        <div style="display: flex; gap: 12px;">
+          <button class="btn btn-secondary" onclick="previewMetadata()">👁️ Preview Metadata</button>
+          <button class="btn btn-success" onclick="embedMetadata()">⚡ Embed to Comic File</button>
+        </div>
+      </div>
 
-            <div class="comic-meta-grid">
-                <div class="meta-item">
-                    <span class="meta-label">Series</span>
-                    <span class="meta-value" id="meta-series">-</span>
-                </div>
-                <div class="meta-item">
-                    <span class="meta-label">Issue Number</span>
-                    <span class="meta-value" id="meta-number">-</span>
-                </div>
-                <div class="meta-item">
-                    <span class="meta-label">Title</span>
-                    <span class="meta-value" id="meta-title">-</span>
-                </div>
-                <div class="meta-item">
-                    <span class="meta-label">Publisher</span>
-                    <span class="meta-value" id="meta-publisher">-</span>
-                </div>
-                <div class="meta-item">
-                    <span class="meta-label">Release Date</span>
-                    <span class="meta-value" id="meta-date">-</span>
-                </div>
-                <div class="meta-item">
-                    <span class="meta-label">Volume</span>
-                    <span class="meta-value" id="meta-volume">-</span>
-                </div>
-            </div>
-
-            <!-- Summary -->
-            <div class="meta-section">
-                <h3>Summary / Overview</h3>
-                <p id="meta-summary" class="summary-text">No summary extracted.</p>
-            </div>
-
-            <!-- Creator Credits -->
-            <div class="meta-section">
-                <h3>Creator Credits</h3>
-                <div id="credits-container" class="credits-grid"></div>
-            </div>
-
-            <!-- Characters -->
-            <div class="meta-section">
-                <h3>Characters Featured</h3>
-                <div id="characters-container" class="credits-grid"></div>
-            </div>
-
-            <!-- Teams -->
-            <div class="meta-section">
-                <h3>Teams Featured</h3>
-                <div id="teams-container" class="credits-grid"></div>
-            </div>
-
-            <!-- Story Arcs -->
-            <div class="meta-section">
-                <h3>Story Arcs</h3>
-                <div id="story-arcs-container" class="credits-grid"></div>
-            </div>
-        </section>
-
-        <!-- Batch Results & Live Execution Card -->
-        <section id="batch-result-card" class="card result-card hidden">
-            <div class="card-header">
-                <h2>Batch Folder Execution & Live Log</h2>
-                <span class="status-badge" id="batch-result-badge">Ready to Start</span>
-            </div>
-
-            <!-- Progress Bar -->
-            <div class="progress-section">
-                <div class="progress-header">
-                    <span id="progress-text">Processing: 0 / 0 files</span>
-                    <span id="progress-percent" class="progress-percent">0%</span>
-                </div>
-                <div class="progress-track">
-                    <div id="progress-fill" class="progress-fill" style="width: 0%;"></div>
-                </div>
-            </div>
-
-            <!-- Detailed Terminal Execution Log Box -->
-            <div class="meta-section">
-                <h3>Detailed Execution Log</h3>
-                <div id="batch-log-box" class="terminal-log-box">
-                    <span class="log-line text-muted">[System] Ready to begin batch processing.</span>
-                </div>
-            </div>
-
-            <!-- Matched Preview Table -->
-            <div class="meta-section">
-                <h3>Matched Issues Preview & Multi-Issue Collected Edition Selector</h3>
-                <div id="batch-preview-table-wrapper" class="table-wrapper">
-                    <table class="preview-table">
-                        <thead>
-                            <tr>
-                                <th>File Name</th>
-                                <th>Issue #</th>
-                                <th>Action</th>
-                                <th>Database Link / Select</th>
-                                <th>Status</th>
-                                <th>Inspect</th>
-                            </tr>
-                        </thead>
-                        <tbody id="batch-preview-tbody">
-                            <!-- Dynamic Preview Rows -->
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </section>
+      <!-- Preview Output Card -->
+      <div id="preview-card" class="card" style="display: none;">
+        <div class="card-header">
+          <div class="card-title">✨ Extracted Metadata Preview</div>
+          <div id="preview-provider-badge"></div>
+        </div>
+        <div id="preview-body"></div>
+      </div>
     </div>
 
-    <!-- Multi-Issue Modal Popup -->
-    <div id="multi-issue-modal" class="modal-backdrop hidden">
-        <div class="modal-content card">
-            <div class="modal-header">
-                <h3 id="modal-title">🧩 Select Multiple Issues for Collected Edition</h3>
-                <button type="button" id="modal-close" class="modal-close-btn">&times;</button>
-            </div>
-            <p id="modal-subtitle" class="help-text">Check all single issues contained inside this TPB/Collected file:</p>
-            
-            <div id="modal-issue-list" class="modal-issue-list">
-                <!-- Checkbox options generated dynamically -->
-            </div>
-
-            <div class="modal-footer">
-                <button type="button" id="modal-cancel-btn" class="btn btn-secondary">Cancel</button>
-                <button type="button" id="modal-save-btn" class="btn btn-primary">Save Multi-Issue Selection</button>
-            </div>
+    <!-- TAB 2: SETTINGS & CONFIG -->
+    <div id="tab-settings" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">⚙️ Global Application Configuration (~/.comicinfo/config.yaml)</div>
+          <button class="btn btn-secondary" onclick="testProviderConnections()">🔌 Test Connections</button>
         </div>
+
+        <div id="connection-status-bar" style="margin-bottom: 20px; display: flex; gap: 12px;"></div>
+
+        <form id="config-form" onsubmit="saveConfiguration(event)">
+          <h3 style="font-size: 15px; color: var(--primary); margin-bottom: 12px;">Kapowarr Preferred Provider</h3>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Kapowarr Server URL</label>
+              <input type="text" id="cfg-kapowarr-url" class="form-control" placeholder="http://192.168.12.156:5656">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Kapowarr API Key</label>
+              <input type="password" id="cfg-kapowarr-key" class="form-control" placeholder="e2e903b3774c1878...">
+            </div>
+          </div>
+
+          <h3 style="font-size: 15px; color: var(--primary); margin-top: 12px; margin-bottom: 12px;">ComicVine Fallback Provider</h3>
+          <div class="form-group">
+            <label class="form-label">ComicVine API Key</label>
+            <input type="password" id="cfg-comicvine-key" class="form-control" placeholder="API Key for direct API searches">
+          </div>
+
+          <h3 style="font-size: 15px; color: var(--primary); margin-top: 12px; margin-bottom: 12px;">Automation & Output Options</h3>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Parallel Worker Threads</label>
+              <input type="number" id="cfg-workers" class="form-control" min="1" max="16" value="4">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Default Watch Folder Path</label>
+              <input type="text" id="cfg-watch-folder" class="form-control" placeholder="/mnt/disk1/Comics">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="cfg-overwrite"> Overwrite existing valid ComicInfo.xml files in archives
+            </label>
+          </div>
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="cfg-delete-cbr" checked> Automatically delete original .cbr after converting to .cbz
+            </label>
+          </div>
+
+          <button type="submit" class="btn btn-primary" style="margin-top: 12px;">💾 Save Configuration</button>
+        </form>
+      </div>
     </div>
 
-    <script src="app.js"></script>
+    <!-- TAB 3: FOLDER WATCHER & BATCH MODE -->
+    <div id="tab-watcher" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">👁️ Continuous Library Folder Watcher</div>
+          <div id="watcher-status-badge" class="badge badge-offline">Offline</div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Target Library Directory Path</label>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="watcher-folder-input" class="form-control" placeholder="/mnt/disk1/Comics">
+            <button class="btn btn-secondary" onclick="browseWatcherFolder()">📂 Browse</button>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 12px;">
+          <button id="btn-start-watcher" class="btn btn-success" onclick="startWatcher()">▶️ Start Watcher Daemon</button>
+          <button id="btn-stop-watcher" class="btn btn-danger" onclick="stopWatcher()" style="display: none;">🛑 Stop Watcher</button>
+        </div>
+
+        <h3 style="font-size: 14px; font-weight: 600; color: var(--text-muted); margin-top: 20px;">Live Watcher Event Stream</h3>
+        <div id="watcher-log-box" class="log-box">[System] Folder Watcher initialized. Ready to monitor.</div>
+      </div>
+    </div>
+
+    <!-- TAB 4: CACHE & STATS -->
+    <div id="tab-stats" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">📊 SQLite Database & Cache Statistics</div>
+          <button class="btn btn-secondary" onclick="loadCacheStats()">🔄 Refresh Stats</button>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Processed Files Tracked</div>
+            <div class="stat-val" id="stat-files-tracked">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Issues Cached</div>
+            <div class="stat-val" id="stat-issues-cached">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Series Cached</div>
+            <div class="stat-val" id="stat-series-cached">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Searches Cached</div>
+            <div class="stat-val" id="stat-searches-cached">0</div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Database File Location</label>
+          <div id="stat-db-path" style="font-family: monospace; font-size: 13px; color: var(--accent);">~/.comicinfo/cache.db</div>
+        </div>
+
+        <button class="btn btn-danger" onclick="clearCacheDatabase()">🗑️ Clear SQLite Cache</button>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    let selectedFilePath = "";
+
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+      
+      event.target.classList.add('active');
+      document.getElementById('tab-' + tabId).classList.add('active');
+
+      if (tabId === 'settings') loadConfiguration();
+      if (tabId === 'stats') loadCacheStats();
+      if (tabId === 'watcher') checkWatcherStatus();
+    }
+
+    // --- Search Provider ---
+    async function performSearch() {
+      const q = document.getElementById('search-query-input').value.trim();
+      const type = document.getElementById('search-type-select').value;
+      if (!q) return alert("Please enter a search query.");
+
+      const area = document.getElementById('search-results-area');
+      area.innerHTML = "<div style='color: var(--text-muted); font-size: 14px;'>Searching database providers...</div>";
+
+      try {
+        const res = await fetch('/api/search', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({query: q, type: type})
+        });
+        const data = await res.json();
+        if (data.results && data.results.length > 0) {
+          area.innerHTML = data.results.map(r => `
+            <div class="search-item" onclick="selectSearchResult('${r.url}')">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <span class="badge ${r.provider === 'GCP' ? 'badge-gcp' : 'badge-cv'}">${r.provider} • ${r.type_label}</span>
+                <span style="font-size: 12px; color: var(--text-muted);">${r.year || ''}</span>
+              </div>
+              <div style="font-weight: 700; font-size: 15px; color: #fff;">${r.title}</div>
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">${r.description || ''}</div>
+            </div>
+          `).join('');
+        } else {
+          area.innerHTML = "<div style='color: var(--danger); font-size: 14px;'>No results found.</div>";
+        }
+      } catch (e) {
+        area.innerHTML = `<div style='color: var(--danger);'>Error: ${e}</div>`;
+      }
+    }
+
+    function selectSearchResult(url) {
+      document.getElementById('url-text-input').value = url;
+      window.scrollTo({top: 400, behavior: 'smooth'});
+    }
+
+    function triggerFilePicker() {
+      fetch('/api/browse-file', {method: 'POST'})
+        .then(r => r.json())
+        .then(d => {
+          if (d.file_path) {
+            selectedFilePath = d.file_path;
+            document.getElementById('selected-file-label').innerText = "Selected: " + d.file_path;
+          }
+        });
+    }
+
+    async function previewMetadata() {
+      const urlTxt = document.getElementById('url-text-input').value.trim();
+      if (!urlTxt) return alert("Please enter a URL or paste GCP page text.");
+
+      const card = document.getElementById('preview-card');
+      const body = document.getElementById('preview-body');
+      card.style.display = 'block';
+      body.innerHTML = "Loading metadata preview...";
+
+      try {
+        const res = await fetch('/api/scrape', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({url: urlTxt})
+        });
+        const data = await res.json();
+        if (data.success) {
+          const c = data.comic;
+          body.innerHTML = `
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 14px;">
+              <div><strong>Series:</strong> ${c.series}</div>
+              <div><strong>Issue Number:</strong> #${c.number}</div>
+              <div><strong>Title:</strong> ${c.title}</div>
+              <div><strong>Publisher:</strong> ${c.publisher}</div>
+              <div><strong>Year:</strong> ${c.year}</div>
+              <div><strong>Format:</strong> ${c.format}</div>
+            </div>
+            <div style="margin-top: 12px;"><strong>Writers:</strong> ${(c.writers || []).join(', ') || 'None'}</div>
+            <div style="margin-top: 4px;"><strong>Pencillers:</strong> ${(c.pencillers || []).join(', ') || 'None'}</div>
+            <div style="margin-top: 4px;"><strong>Characters:</strong> ${(c.characters || []).join(', ') || 'None'}</div>
+            <div style="margin-top: 12px;"><strong>Summary:</strong> <br><span style="color: var(--text-muted);">${c.summary || 'No summary available.'}</span></div>
+          `;
+        } else {
+          body.innerHTML = `<div style="color: var(--danger);">${data.error}</div>`;
+        }
+      } catch (e) {
+        body.innerHTML = `<div style="color: var(--danger);">${e}</div>`;
+      }
+    }
+
+    async function embedMetadata() {
+      const urlTxt = document.getElementById('url-text-input').value.trim();
+      if (!urlTxt) return alert("Please enter URL or GCP page text.");
+      if (!selectedFilePath) return alert("Please select a comic archive file.");
+
+      try {
+        const res = await fetch('/api/embed', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({url: urlTxt, file_path: selectedFilePath})
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert("✅ " + data.message);
+        } else {
+          alert("❌ Error: " + data.error);
+        }
+      } catch (e) {
+        alert("❌ Error: " + e);
+      }
+    }
+
+    // --- Configuration Editor ---
+    async function loadConfiguration() {
+      try {
+        const res = await fetch('/api/config');
+        const data = await res.json();
+        if (data.success) {
+          const cfg = data.config;
+          document.getElementById('cfg-kapowarr-url').value = cfg.kapowarr.url || '';
+          document.getElementById('cfg-kapowarr-key').value = cfg.kapowarr.api_key || '';
+          document.getElementById('cfg-comicvine-key').value = cfg.comicvine.api_key || '';
+          document.getElementById('cfg-workers').value = cfg.automation.workers || 4;
+          document.getElementById('cfg-watch-folder').value = cfg.automation.watch_folder || '';
+          document.getElementById('cfg-overwrite').checked = !!cfg.output.overwrite;
+          document.getElementById('cfg-delete-cbr').checked = !!cfg.output.delete_cbr;
+        }
+      } catch (e) {}
+    }
+
+    async function saveConfiguration(e) {
+      e.preventDefault();
+      const cfgObj = {
+        kapowarr: {
+          url: document.getElementById('cfg-kapowarr-url').value.trim(),
+          api_key: document.getElementById('cfg-kapowarr-key').value.trim()
+        },
+        comicvine: {
+          api_key: document.getElementById('cfg-comicvine-key').value.trim()
+        },
+        automation: {
+          workers: parseInt(document.getElementById('cfg-workers').value) || 4,
+          watch_folder: document.getElementById('cfg-watch-folder').value.trim()
+        },
+        output: {
+          overwrite: document.getElementById('cfg-overwrite').checked,
+          delete_cbr: document.getElementById('cfg-delete-cbr').checked
+        }
+      };
+
+      try {
+        const res = await fetch('/api/config', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({config: cfgObj})
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert("✅ Configuration saved successfully!");
+          testProviderConnections();
+        }
+      } catch (e) {
+        alert("❌ Failed to save config: " + e);
+      }
+    }
+
+    async function testProviderConnections() {
+      const statusBar = document.getElementById('connection-status-bar');
+      statusBar.innerHTML = "Testing provider connections...";
+
+      try {
+        const res = await fetch('/api/provider/test', {method: 'POST'});
+        const data = await res.json();
+        if (data.success) {
+          statusBar.innerHTML = `
+            <span class="badge ${data.kapowarr.online ? 'badge-online' : 'badge-offline'}">
+              Kapowarr (${data.kapowarr.url}): ${data.kapowarr.online ? '✅ Online' : '❌ Offline'}
+            </span>
+            <span class="badge badge-cv">ComicVine: ✅ Ready</span>
+            <span class="badge badge-gcp">Grand Comics DB: ✅ Ready</span>
+          `;
+        }
+      } catch (e) {
+        statusBar.innerHTML = `<span class="badge badge-offline">Error testing providers: ${e}</span>`;
+      }
+    }
+
+    // --- Watcher ---
+    async function checkWatcherStatus() {
+      try {
+        const res = await fetch('/api/watch/status');
+        const data = await res.json();
+        const badge = document.getElementById('watcher-status-badge');
+        const startBtn = document.getElementById('btn-start-watcher');
+        const stopBtn = document.getElementById('btn-stop-watcher');
+
+        if (data.is_active) {
+          badge.className = 'badge badge-online';
+          badge.innerText = 'Active Watching';
+          startBtn.style.display = 'none';
+          stopBtn.style.display = 'inline-flex';
+          document.getElementById('watcher-folder-input').value = data.watch_folder;
+        } else {
+          badge.className = 'badge badge-offline';
+          badge.innerText = 'Inactive';
+          startBtn.style.display = 'inline-flex';
+          stopBtn.style.display = 'none';
+        }
+      } catch (e) {}
+    }
+
+    async function browseWatcherFolder() {
+      fetch('/api/browse-folder', {method: 'POST'})
+        .then(r => r.json())
+        .then(d => {
+          if (d.folder_path) document.getElementById('watcher-folder-input').value = d.folder_path;
+        });
+    }
+
+    async function startWatcher() {
+      const folder = document.getElementById('watcher-folder-input').value.trim();
+      try {
+        const res = await fetch('/api/watch/start', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({folder_path: folder})
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert("✅ " + data.message);
+          checkWatcherStatus();
+        } else {
+          alert("❌ Error: " + data.error);
+        }
+      } catch (e) {
+        alert("❌ Error: " + e);
+      }
+    }
+
+    async function stopWatcher() {
+      try {
+        const res = await fetch('/api/watch/stop', {method: 'POST'});
+        const data = await res.json();
+        if (data.success) {
+          alert("✅ Watcher stopped.");
+          checkWatcherStatus();
+        }
+      } catch (e) {}
+    }
+
+    // --- Cache Stats ---
+    async function loadCacheStats() {
+      try {
+        const res = await fetch('/api/cache/stats');
+        const data = await res.json();
+        if (data.success) {
+          const s = data.stats;
+          document.getElementById('stat-files-tracked').innerText = s.processed_files_tracked || 0;
+          document.getElementById('stat-issues-cached').innerText = s.issues_cached || 0;
+          document.getElementById('stat-series-cached').innerText = s.series_cached || 0;
+          document.getElementById('stat-searches-cached').innerText = s.searches_cached || 0;
+          document.getElementById('stat-db-path').innerText = s.db_path || '';
+        }
+      } catch (e) {}
+    }
+
+    async function clearCacheDatabase() {
+      if (!confirm("Are you sure you want to clear the SQLite cache database?")) return;
+      try {
+        const res = await fetch('/api/cache/clear', {method: 'POST'});
+        const data = await res.json();
+        if (data.success) {
+          alert("✅ Cache cleared.");
+          loadCacheStats();
+        }
+      } catch (e) {}
+    }
+  </script>
 </body>
 </html>

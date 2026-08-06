@@ -7,7 +7,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import yaml
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from typing import Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 repo_dir = os.path.dirname(os.path.abspath(__file__))
@@ -15,14 +17,23 @@ if repo_dir not in sys.path:
     sys.path.insert(0, repo_dir)
 
 from models.comic import Comic, merge_comics
-from providers.comicvine import scrape_issue as scrape_cv_issue, scrape_volume as scrape_cv_volume, search_comicvine
-from providers.gcp import scrape_gcp_issue, scrape_gcp_volume, search_gcp
+from config import load_config, init_config, DEFAULT_CONFIG_PATH
+from cache.db import CacheManager
+from providers.kapowarr import KapowarrProvider
+from providers.comicvine import scrape_issue as scrape_cv_issue, scrape_volume as scrape_cv_volume, search_comicvine, ComicVineProvider
+from providers.gcp import scrape_gcp_issue, scrape_gcp_volume, search_gcp, GCPProvider
 from writers.archive import embed_comicinfo_in_cbz
 from writers.comicinfo import write_xml, generate_xml_bytes
 from converters.cbr_to_cbz import convert_cbr_to_cbz
+from automation.watcher import LibraryWatcher
+from automation.queue import ProcessingQueue
 
 PORT = 5005
 STATIC_DIR = os.path.join(repo_dir, "static")
+
+# Global Watcher state for Web UI
+global_watcher: Optional[LibraryWatcher] = None
+global_watcher_folder: str = ""
 
 def comic_to_dict(c: Comic) -> dict:
     return {
@@ -60,19 +71,16 @@ def detect_provider(url: str) -> str:
     return "CV"
 
 def scrape_single_url(url_or_text: str) -> Comic:
-    """Routes single issue scraping based on provider URL or GCP text layout."""
     if detect_provider(url_or_text) == "GCP":
         return scrape_gcp_issue(url_or_text)
     return scrape_cv_issue(url_or_text)
 
 def scrape_any_volume(url: str) -> tuple[str, dict[str, str], list[dict]]:
-    """Routes volume scraping based on provider URL (CV vs GCP)."""
     if detect_provider(url) == "GCP":
         return scrape_gcp_volume(url)
     return scrape_cv_volume(url)
 
 def fetch_and_merge_urls(url_val) -> Comic:
-    """Accepts a single URL string, GCP page text layout, list of URLs, or multi-line string and scrapes/merges them."""
     if isinstance(url_val, str) and (any(k in url_val for k in ["Pencils:", "Script:", "Characters:", "Table of Contents"]) or ("comics.org" in url_val and len(url_val.split("\n")) > 2)):
         return scrape_gcp_issue(url_val)
 
@@ -102,18 +110,7 @@ def fetch_and_merge_urls(url_val) -> Comic:
     return merge_comics(comics)
 
 def search_all_providers(query: str, search_type: str = "all") -> list[dict]:
-    """
-    Unified search handler for Comic Vine (CV) and Grand Comics Database (GCP).
-    Filter options:
-    - 'all': All Sources
-    - 'cv_volume': CV Series
-    - 'cv_issue': CV Issue
-    - 'gcp_volume': GCP Series
-    - 'gcp_issue': GCP Issue
-    """
     results = []
-
-    # 1. Comic Vine (CV) Searches
     if search_type in ("all", "cv_volume", "cv_issue"):
         cv_type = "all"
         if search_type == "cv_volume": cv_type = "volume"
@@ -130,7 +127,6 @@ def search_all_providers(query: str, search_type: str = "all") -> list[dict]:
                 r["type_label"] = "CV Issue"
             results.append(r)
 
-    # 2. Grand Comics Database (GCP) Searches
     if search_type in ("all", "gcp_volume", "gcp_issue"):
         gcp_results = search_gcp(query, search_type)
         for r in gcp_results:
@@ -140,112 +136,76 @@ def search_all_providers(query: str, search_type: str = "all") -> list[dict]:
     return results
 
 def extract_issue_num_from_filename(filename: str) -> str:
-    """Extracts issue number from a comic archive filename using accurate hierarchy."""
     fname = re.sub(r"\.(cbz|cbr|zip|rar)$", "", filename, flags=re.I)
-    
-    # 1. Match explicit 'Issue 002', 'Issue #002', 'Issue 2'
     m = re.search(r"\bissue\s*#?\s*0*(\d+[a-zA-Z]?|\d+\.\d+|\d+)", fname, re.I)
     if m:
         return m.group(1)
 
-    # 2. Match explicit '#02' or '#2'
-    m = re.search(r"#0*(\d+[a-zA-Z]?|\d+\.\d+|\d+)", fname)
+    m = re.search(r"#\s*0*(\d+[a-zA-Z]?|\d+\.\d+|\d+)", fname)
     if m:
         return m.group(1)
 
-    # 3. Match 'Volume XX Issue YY' or 'Volume XX 002' or 'Vol XX - 02'
-    m = re.search(r"(?:vol|volume)\s*\d+[\s\-_]+(?:issue\s*#?)?0*(\d+[a-zA-Z]?|\d+\.\d+|\d+)", fname, re.I)
+    m = re.search(r"\bv(\d+)\b", fname, re.I)
     if m:
-        return m.group(1)
+        fname = fname.replace(m.group(0), "")
 
-    # 4. Match 'Vol 001' or 'Volume 001' ONLY if single volume number
-    m = re.search(r"(?:vol|volume)\s*0*(\d+)", fname, re.I)
+    m = re.search(r"\b(19\d\d|20\d\d)\b", fname)
     if m:
-        return m.group(1)
+        fname = fname.replace(m.group(0), "")
 
-    # 5. Trailing standalone issue numbers (e.g. 'Bart Simpson 002' or 'Comic 23')
-    m = re.search(r"\b0*(\d+)\b", fname)
+    m = re.search(r"0*(\d+)\b", fname)
     if m:
         return m.group(1)
 
     return ""
 
-def get_active_display_env():
-    """Detects active X11 DISPLAY and XAUTHORITY from active desktop processes."""
-    env = dict(os.environ)
-    if "DISPLAY" not in env or not env["DISPLAY"]:
-        for d in [":0", ":0.0", ":1"]:
-            env["DISPLAY"] = d
-            break
-    if "XAUTHORITY" not in env or not env["XAUTHORITY"]:
-        env["XAUTHORITY"] = os.path.expanduser("~/.Xauthority")
-    return env
-
 def open_native_file_picker() -> str:
-    """Opens a native OS file dialog using zenity or kdialog."""
-    env = get_active_display_env()
-
-    zenity = shutil.which("zenity")
-    if zenity:
-        try:
-            res = subprocess.run([
-                zenity, "--file-selection",
-                "--title=Select Comic Archive (.cbz, .cbr)",
-                "--file-filter=Comic Archives (*.cbz *.cbr) | *.cbz *.cbr *.zip *.rar"
-            ], capture_output=True, text=True, timeout=60, env=env)
+    try:
+        zenity_path = shutil.which("zenity")
+        if zenity_path:
+            res = subprocess.run(
+                [zenity_path, "--file-selection", "--title=Select Comic Archive (.cbz or .cbr)", "--file-filter=Comic Archives (*.cbz *.cbr) | *.cbz *.cbr"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300
+            )
             if res.returncode == 0 and res.stdout.strip():
                 return res.stdout.strip()
-        except Exception as e:
-            sys.stderr.write(f"Zenity file picker notice: {e}\n")
 
-    kdialog = shutil.which("kdialog")
-    if kdialog:
-        try:
-            res = subprocess.run([
-                kdialog, "--getopenfilename", os.path.expanduser("~"),
-                "*.cbz *.cbr|Comic Archives (*.cbz *.cbr)"
-            ], capture_output=True, text=True, timeout=60, env=env)
+        kdialog_path = shutil.which("kdialog")
+        if kdialog_path:
+            res = subprocess.run(
+                [kdialog_path, "--getopenfilename", os.path.expanduser("~"), "*.cbz *.cbr|Comic Archives (*.cbz *.cbr)"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300
+            )
             if res.returncode == 0 and res.stdout.strip():
                 return res.stdout.strip()
-        except Exception as e:
-            sys.stderr.write(f"Kdialog file picker notice: {e}\n")
-
+    except Exception:
+        pass
     return ""
 
 def open_native_folder_picker() -> str:
-    """Opens a native OS directory dialog using zenity or kdialog."""
-    env = get_active_display_env()
-
-    zenity = shutil.which("zenity")
-    if zenity:
-        try:
-            res = subprocess.run([
-                zenity, "--file-selection", "--directory",
-                "--title=Select Comic Series Folder"
-            ], capture_output=True, text=True, timeout=60, env=env)
+    try:
+        zenity_path = shutil.which("zenity")
+        if zenity_path:
+            res = subprocess.run(
+                [zenity_path, "--file-selection", "--directory", "--title=Select Comics Folder Directory"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300
+            )
             if res.returncode == 0 and res.stdout.strip():
                 return res.stdout.strip()
-        except Exception as e:
-            sys.stderr.write(f"Zenity folder picker notice: {e}\n")
 
-    kdialog = shutil.which("kdialog")
-    if kdialog:
-        try:
-            res = subprocess.run([
-                kdialog, "--getexistingdirectory", os.path.expanduser("~")
-            ], capture_output=True, text=True, timeout=60, env=env)
+        kdialog_path = shutil.which("kdialog")
+        if kdialog_path:
+            res = subprocess.run(
+                [kdialog_path, "--getexistingdirectory", os.path.expanduser("~")],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300
+            )
             if res.returncode == 0 and res.stdout.strip():
                 return res.stdout.strip()
-        except Exception as e:
-            sys.stderr.write(f"Kdialog folder picker notice: {e}\n")
-
+    except Exception:
+        pass
     return ""
 
 def find_file_path(path_str: str) -> str:
-    """Searches for a file path or filename across common directories and mounted drives."""
-    if not path_str:
-        return ""
-    path_str = path_str.strip("'\"").strip()
     if os.path.exists(path_str):
         return path_str
 
@@ -282,6 +242,7 @@ class ComicServerHandler(BaseHTTPRequestHandler):
         self._set_headers(200)
 
     def do_GET(self):
+        global global_watcher, global_watcher_folder
         parsed = urlparse(self.path)
         path = parsed.path
         if path in ("/", "/index.html"):
@@ -293,6 +254,37 @@ class ComicServerHandler(BaseHTTPRequestHandler):
         elif path == "/app.js":
             file_path = os.path.join(STATIC_DIR, "app.js")
             content_type = "application/javascript; charset=utf-8"
+        elif path == "/api/config":
+            cfg = load_config()
+            self._set_headers(200)
+            self.wfile.write(json.dumps({
+                "success": True,
+                "config": {
+                    "comicvine": {"api_key": cfg.comicvine.api_key},
+                    "kapowarr": {"url": cfg.kapowarr.url, "api_key": cfg.kapowarr.api_key},
+                    "automation": {"mode": cfg.automation.mode, "workers": cfg.automation.workers, "watch_folder": cfg.automation.watch_folder},
+                    "cache": {"enabled": cfg.cache.enabled, "db_path": cfg.cache.db_path},
+                    "output": {"embed_xml": cfg.output.embed_xml, "overwrite": cfg.output.overwrite, "delete_cbr": cfg.output.delete_cbr},
+                    "logging": {"level": cfg.logging.level, "log_file": cfg.logging.log_file}
+                }
+            }).encode("utf-8"))
+            return
+        elif path == "/api/watch/status":
+            is_active = global_watcher is not None and global_watcher.observer is not None and global_watcher.observer.is_alive()
+            self._set_headers(200)
+            self.wfile.write(json.dumps({
+                "success": True,
+                "is_active": is_active,
+                "watch_folder": global_watcher_folder
+            }).encode("utf-8"))
+            return
+        elif path == "/api/cache/stats":
+            cfg = load_config()
+            cache_mgr = CacheManager(cfg.cache.db_path)
+            stats = cache_mgr.get_stats()
+            self._set_headers(200)
+            self.wfile.write(json.dumps({"success": True, "stats": stats}).encode("utf-8"))
+            return
         else:
             self._set_headers(404, "text/plain")
             self.wfile.write(b"404 Not Found")
@@ -307,6 +299,7 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"404 File Not Found")
 
     def do_POST(self):
+        global global_watcher, global_watcher_folder
         parsed = urlparse(self.path)
 
         if parsed.path == "/api/browse-file":
@@ -360,7 +353,82 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             except Exception:
                 fields = {}
 
-        if parsed.path == "/api/search":
+        if parsed.path == "/api/config":
+            try:
+                new_cfg_data = fields.get("config", {})
+                init_config(DEFAULT_CONFIG_PATH)
+                with open(os.path.expanduser(DEFAULT_CONFIG_PATH), "w", encoding="utf-8") as f:
+                    yaml.dump(new_cfg_data, f, default_flow_style=False)
+                
+                self._set_headers(200)
+                self.wfile.write(json.dumps({"success": True, "message": "Configuration saved successfully."}).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"error": f"Failed to save config: {e}"}).encode("utf-8"))
+
+        elif parsed.path == "/api/provider/test":
+            cfg = load_config()
+            kap = KapowarrProvider(url=cfg.kapowarr.url, api_key=cfg.kapowarr.api_key)
+            cv = ComicVineProvider(api_key=cfg.comicvine.api_key)
+            gcp = GCPProvider()
+
+            self._set_headers(200)
+            self.wfile.write(json.dumps({
+                "success": True,
+                "kapowarr": {"name": "Kapowarr", "url": cfg.kapowarr.url, "online": kap.test_connection()},
+                "comicvine": {"name": "ComicVine", "ready": True},
+                "gcp": {"name": "Grand Comics Database", "ready": True}
+            }).encode("utf-8"))
+
+        elif parsed.path == "/api/watch/start":
+            folder = fields.get("folder_path", "").strip()
+            if not folder:
+                cfg = load_config()
+                folder = cfg.automation.watch_folder or os.getcwd()
+
+            folder_abs = os.path.abspath(folder)
+            if not os.path.exists(folder_abs):
+                os.makedirs(folder_abs, exist_ok=True)
+
+            try:
+                if global_watcher:
+                    global_watcher.stop()
+                
+                cfg = load_config()
+                global_watcher = LibraryWatcher(cfg)
+                global_watcher.start_watching(folder_abs)
+                global_watcher_folder = folder_abs
+
+                self._set_headers(200)
+                self.wfile.write(json.dumps({"success": True, "message": f"Started watching '{folder_abs}'", "watch_folder": folder_abs}).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"error": f"Failed to start watcher: {e}"}).encode("utf-8"))
+
+        elif parsed.path == "/api/watch/stop":
+            try:
+                if global_watcher:
+                    global_watcher.stop()
+                    global_watcher = None
+                global_watcher_folder = ""
+                self._set_headers(200)
+                self.wfile.write(json.dumps({"success": True, "message": "Folder Watcher stopped."}).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"error": f"Failed to stop watcher: {e}"}).encode("utf-8"))
+
+        elif parsed.path == "/api/cache/clear":
+            try:
+                cfg = load_config()
+                cache_mgr = CacheManager(cfg.cache.db_path)
+                cache_mgr.clear()
+                self._set_headers(200)
+                self.wfile.write(json.dumps({"success": True, "message": "Cache cleared."}).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"error": f"Failed to clear cache: {e}"}).encode("utf-8"))
+
+        elif parsed.path == "/api/search":
             query = fields.get("query", "").strip()
             search_type = fields.get("type", "all").strip()
 
