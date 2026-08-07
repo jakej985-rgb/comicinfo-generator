@@ -427,6 +427,33 @@
           <button class="btn btn-secondary" onclick="previewMetadata()">👁️ Preview Metadata</button>
           <button class="btn btn-success" onclick="embedMetadata()">⚡ Embed to Comic File</button>
         </div>
+      <!-- Batch Folder Tagging Card -->
+      <div id="batch-folder-card" class="card">
+        <div class="card-header">
+          <div class="card-title">📁 Series Folder Batch Tagging</div>
+          <span class="badge badge-cv">Batch Folder Mode</span>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group" style="flex: 2;">
+            <label class="form-label">Series Folder Directory</label>
+            <div style="display: flex; gap: 8px;">
+              <input type="text" id="batch-folder-path-input" class="form-control" placeholder="e.g. /mnt/disk1/Comics/Fugitoid">
+              <button class="btn btn-secondary" onclick="browseBatchFolder()">📂 Browse</button>
+            </div>
+          </div>
+          <div class="form-group" style="flex: 2;">
+            <label class="form-label">Series Database / Kapowarr Volume URL</label>
+            <input type="text" id="batch-volume-url-input" class="form-control" placeholder="e.g. https://comicvine.gamespot.com/volume/4050-20294/">
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 12px;">
+          <button class="btn btn-primary" onclick="previewBatchFolder()">🔍 Preview & Auto-Match Files</button>
+          <button class="btn btn-success" id="btn-run-batch-embed" onclick="runBatchEmbed()" style="display: none;">⚡ Embed ComicInfo.xml to All Files</button>
+        </div>
+
+        <div id="batch-results-area" style="margin-top: 18px; display: none;"></div>
       </div>
 
       <!-- Preview Output Card -->
@@ -442,9 +469,20 @@
     <!-- TAB: KAPOWARR LIBRARY STATUS -->
     <div id="tab-kapowarr" class="tab-content">
       <div class="card">
-        <div class="card-header">
+        <div class="card-header" style="flex-wrap: wrap; gap: 12px;">
           <div class="card-title">⚡ Kapowarr Library Status & ComicInfo.xml Inspector</div>
-          <div style="display: flex; gap: 10px; align-items: center;">
+          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <select id="kapowarr-filter-select" class="form-control" style="width: auto; padding: 6px 12px; font-size: 13px;" onchange="filterKapowarrLibrary()">
+              <option value="all">📁 All Series</option>
+              <option value="missing">⚠️ Missing Tags</option>
+              <option value="tagged">✅ 100% Tagged</option>
+              <option value="mixed">🔀 Mixed (Partial)</option>
+            </select>
+            <select id="kapowarr-sort-select" class="form-control" style="width: auto; padding: 6px 12px; font-size: 13px;" onchange="filterKapowarrLibrary()">
+              <option value="id">Sort: ID</option>
+              <option value="name">Sort: Title (A-Z)</option>
+              <option value="missing_desc">Sort: Most Missing Tags</option>
+            </select>
             <div id="kapowarr-server-badge" class="badge badge-offline">Kapowarr Offline</div>
             <button class="btn btn-secondary" onclick="loadKapowarrLibrary()">🔄 Refresh Library</button>
           </div>
@@ -597,7 +635,9 @@
       if (tabId === 'kapowarr') loadKapowarrLibrary();
     }
 
-    // --- Kapowarr Library Status ---
+    // --- Kapowarr Library Status & Filtering ---
+    let kapowarrLibraryItems = [];
+
     async function loadKapowarrLibrary() {
       const area = document.getElementById('kapowarr-library-area');
       const serverBadge = document.getElementById('kapowarr-server-badge');
@@ -615,57 +655,220 @@
           serverBadge.innerText = 'Kapowarr Offline';
         }
 
-        if (data.items && data.items.length > 0) {
-          area.innerHTML = `
-            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px;">
-              ${data.items.map(item => `
-                <div class="stat-card" style="border-left: 4px solid ${item.is_complete ? 'var(--accent)' : (item.has_missing ? 'var(--danger)' : 'var(--accent-gcp)')};">
-                  <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
-                    <div>
-                      <div style="font-weight: 700; font-size: 16px; color: #fff;">${item.title} ${item.year ? '(' + item.year + ')' : ''}</div>
-                      <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Kapowarr Vol ID: #${item.id} ${item.cv_id ? '• CV: ' + item.cv_id : ''}</div>
-                    </div>
-                    <span class="badge ${item.is_complete ? 'badge-online' : (item.has_missing ? 'badge-offline' : 'badge-gcp')}">
-                      ${item.is_complete ? '✅ 100% Tagged' : (item.has_missing ? '⚠️ Missing Tags' : 'Unscanned')}
-                    </span>
-                  </div>
-
-                  <div style="font-size: 13px; color: var(--text-muted); margin-top: 8px;">
-                    📁 Path: <code style="color: var(--text-main); font-size: 12px;">${item.folder_path || 'Folder not configured in Kapowarr'}</code>
-                  </div>
-
-                  <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 12px; font-size: 13px;">
-                    <div>
-                      <strong style="color: var(--text-main);">${item.tagged_count}</strong> tagged / 
-                      <strong style="color: ${item.missing_count > 0 ? 'var(--danger)' : 'var(--text-muted)'};">${item.missing_count} missing</strong>
-                    </div>
-                    <button class="btn btn-primary" style="padding: 4px 10px; font-size: 12px;" onclick="useVolumeForBatch('${item.cv_url || item.url}', '${item.folder_path}')">
-                      ⚡ Batch Tag Series
-                    </button>
-                  </div>
-                </div>
-              `).join('')}
-            </div>
-          `;
-        } else {
-          area.innerHTML = `
-            <div style="padding: 20px; text-align: center; background: rgba(30, 41, 59, 0.4); border-radius: 12px; color: var(--text-muted);">
-              No series monitored in Kapowarr or Kapowarr server is offline. Please check your Kapowarr Server URL & API Key in Settings & Config.
-            </div>
-          `;
-        }
+        kapowarrLibraryItems = data.items || [];
+        filterKapowarrLibrary();
       } catch (e) {
         area.innerHTML = `<div style="color: var(--danger);">Failed to load Kapowarr library: ${e}</div>`;
       }
     }
 
+    function filterKapowarrLibrary() {
+      const area = document.getElementById('kapowarr-library-area');
+      const filterVal = document.getElementById('kapowarr-filter-select') ? document.getElementById('kapowarr-filter-select').value : 'all';
+      const sortVal = document.getElementById('kapowarr-sort-select') ? document.getElementById('kapowarr-sort-select').value : 'id';
+      const items = kapowarrLibraryItems || [];
+
+      let filtered = items.filter(item => {
+        if (filterVal === 'missing') return item.missing_count > 0;
+        if (filterVal === 'tagged') return item.is_complete;
+        if (filterVal === 'mixed') return item.tagged_count > 0 && item.missing_count > 0;
+        return true; // 'all'
+      });
+
+      if (sortVal === 'name') {
+        filtered.sort((a, b) => a.title.localeCompare(b.title));
+      } else if (sortVal === 'missing_desc') {
+        filtered.sort((a, b) => b.missing_count - a.missing_count);
+      } else {
+        filtered.sort((a, b) => parseInt(a.id || 0) - parseInt(b.id || 0));
+      }
+
+      if (filtered.length > 0) {
+        area.innerHTML = `
+          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px;">
+            ${filtered.map(item => `
+              <div class="stat-card" style="border-left: 4px solid ${item.is_complete ? 'var(--accent)' : (item.missing_count > 0 ? 'var(--danger)' : 'var(--accent-gcp)')};">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                  <div>
+                    <div style="font-weight: 700; font-size: 16px; color: #fff;">${item.title} ${item.year ? '(' + item.year + ')' : ''}</div>
+                    <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Kapowarr Vol ID: #${item.id} ${item.cv_id ? '• CV: ' + item.cv_id : ''}</div>
+                  </div>
+                  <span class="badge ${item.is_complete ? 'badge-online' : (item.has_missing ? 'badge-offline' : 'badge-gcp')}">
+                    ${item.is_complete ? '✅ 100% Tagged' : (item.has_missing ? '⚠️ Missing Tags' : 'Unscanned')}
+                  </span>
+                </div>
+
+                <div style="font-size: 13px; color: var(--text-muted); margin-top: 8px;">
+                  📁 Path: <code style="color: var(--text-main); font-size: 12px;">${item.folder_path || 'Folder not configured in Kapowarr'}</code>
+                </div>
+
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 12px; font-size: 13px;">
+                  <div>
+                    <strong style="color: var(--text-main);">${item.tagged_count}</strong> tagged / 
+                    <strong style="color: ${item.missing_count > 0 ? 'var(--danger)' : 'var(--text-muted)'};">${item.missing_count} missing</strong>
+                  </div>
+                  <button class="btn btn-primary" style="padding: 4px 10px; font-size: 12px;" onclick="useVolumeForBatch('${item.cv_url || item.url}', '${item.folder_path ? item.folder_path.replace(/\\/g, '\\\\').replace(/'/g, "\\'") : ''}')">
+                    ⚡ Batch Tag Series
+                  </button>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        `;
+      } else {
+        area.innerHTML = `
+          <div style="padding: 20px; text-align: center; background: rgba(30, 41, 59, 0.4); border-radius: 12px; color: var(--text-muted);">
+            No series matching filter '${filterVal}'.
+          </div>
+        `;
+      }
+    }
+
     function useVolumeForBatch(url, folderPath) {
       if (folderPath) {
+        document.getElementById('batch-folder-path-input').value = folderPath;
         document.getElementById('watcher-folder-input').value = folderPath;
       }
-      document.getElementById('url-text-input').value = url;
+      if (url) {
+        document.getElementById('batch-volume-url-input').value = url;
+        document.getElementById('url-text-input').value = url;
+      }
+
+      // Switch to generator tab (first tab)
       document.querySelectorAll('.tab-btn')[0].click();
-      window.scrollTo({top: 400, behavior: 'smooth'});
+
+      setTimeout(() => {
+        const targetCard = document.getElementById('batch-folder-card');
+        if (targetCard) {
+          targetCard.scrollIntoView({ behavior: 'smooth' });
+        }
+        if (folderPath && url) {
+          previewBatchFolder();
+        }
+      }, 100);
+    }
+
+    // --- Batch Folder Actions ---
+    let currentBatchItems = [];
+
+    async function previewBatchFolder() {
+      const folderPath = document.getElementById('batch-folder-path-input').value.trim();
+      const volumeUrl = document.getElementById('batch-volume-url-input').value.trim();
+      const area = document.getElementById('batch-results-area');
+      const embedBtn = document.getElementById('btn-run-batch-embed');
+
+      if (!folderPath || !volumeUrl) {
+        return alert("Please provide both the Series Folder Directory and the Volume URL.");
+      }
+
+      area.style.display = 'block';
+      area.innerHTML = "<div style='color: var(--text-muted); font-size: 14px;'>Scraping volume issue list & scanning local folder...</div>";
+      embedBtn.style.display = 'none';
+
+      try {
+        const res = await fetch('/api/batch-preview', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ url: volumeUrl, folder_path: folderPath })
+        });
+        const data = await res.json();
+
+        if (data.error) {
+          area.innerHTML = `<div style='color: var(--danger); font-size: 14px;'>Error: ${data.error}</div>`;
+          return;
+        }
+
+        currentBatchItems = data.items || [];
+        embedBtn.style.display = 'inline-block';
+
+        area.innerHTML = `
+          <div style="margin-bottom: 12px; font-weight: 600; color: var(--accent);">
+            Matched ${data.matched_count} of ${data.total_files} file(s) for series '${data.series_name}' [${data.provider || 'Database'}]
+          </div>
+          <div style="max-height: 350px; overflow-y: auto; border: 1px solid var(--border-card); border-radius: 8px; padding: 8px;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+              <thead>
+                <tr style="border-bottom: 1px solid var(--border-card); text-align: left; color: var(--text-muted);">
+                  <th style="padding: 6px;">File Name</th>
+                  <th style="padding: 6px;">Extracted #</th>
+                  <th style="padding: 6px;">Action / Match Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${currentBatchItems.map(item => `
+                  <tr style="border-bottom: 1px dashed rgba(255,255,255,0.08);">
+                    <td style="padding: 6px; font-weight: 600;">${item.filename}</td>
+                    <td style="padding: 6px;">#${item.issue_number}</td>
+                    <td style="padding: 6px;">
+                      <span class="badge ${item.matched_url ? 'badge-online' : 'badge-offline'}">
+                        ${item.matched_url ? 'READY TO EMBED' : 'UNMATCHED'}
+                      </span>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      } catch (e) {
+        area.innerHTML = `<div style='color: var(--danger); font-size: 14px;'>Error: ${e}</div>`;
+      }
+    }
+
+    async function runBatchEmbed() {
+      const folderPath = document.getElementById('batch-folder-path-input').value.trim();
+      const volumeUrl = document.getElementById('batch-volume-url-input').value.trim();
+      const area = document.getElementById('batch-results-area');
+
+      if (!currentBatchItems || currentBatchItems.length === 0) {
+        return alert("Please preview the batch folder first.");
+      }
+
+      if (!confirm(`Are you sure you want to embed ComicInfo.xml into ${currentBatchItems.length} file(s) in '${folderPath}'?`)) {
+        return;
+      }
+
+      area.innerHTML = "<div style='color: var(--text-muted); font-size: 14px;'>Tagging batch files in parallel... Please wait...</div>";
+
+      try {
+        const res = await fetch('/api/batch-embed', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            url: volumeUrl,
+            folder_path: folderPath,
+            items: currentBatchItems
+          })
+        });
+        const data = await res.json();
+
+        if (data.error) {
+          area.innerHTML = `<div style='color: var(--danger); font-size: 14px;'>Error: ${data.error}</div>`;
+          return;
+        }
+
+        area.innerHTML = `
+          <div style="padding: 16px; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 12px; color: #34d399;">
+            ✅ Successfully embedded metadata into ${data.processed_count || currentBatchItems.length} file(s)!
+          </div>
+        `;
+
+        loadKapowarrLibrary();
+      } catch (e) {
+        area.innerHTML = `<div style='color: var(--danger); font-size: 14px;'>Error: ${e}</div>`;
+      }
+    }
+
+    async function browseBatchFolder() {
+      try {
+        const res = await fetch('/api/browse-folder', { method: 'POST' });
+        const data = await res.json();
+        if (data && data.success && data.folder_path) {
+          document.getElementById('batch-folder-path-input').value = data.folder_path;
+        }
+      } catch (e) {
+        console.log("Folder browse notice:", e);
+      }
     }
 
     // --- Search Provider ---
