@@ -365,11 +365,11 @@
       </div>
 
       <nav class="nav-tabs">
-        <button class="tab-btn active" onclick="switchTab('generator', this)">🏷️ Generator & Search</button>
-        <button class="tab-btn" onclick="switchTab('kapowarr', this)">⚡ Kapowarr Library</button>
-        <button class="tab-btn" onclick="switchTab('settings', this)">⚙️ Settings & Config</button>
-        <button class="tab-btn" onclick="switchTab('watcher', this)">👁️ Folder Watcher</button>
-        <button class="tab-btn" onclick="switchTab('stats', this)">📊 Cache & Stats</button>
+        <button class="tab-btn active" data-tab="generator" onclick="switchTab('generator')">🏷️ Generator & Search</button>
+        <button class="tab-btn" data-tab="kapowarr" onclick="switchTab('kapowarr')">⚡ Kapowarr Library</button>
+        <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')">⚙️ Settings & Config</button>
+        <button class="tab-btn" data-tab="watcher" onclick="switchTab('watcher')">👁️ Folder Watcher</button>
+        <button class="tab-btn" data-tab="stats" onclick="switchTab('stats')">📊 Cache & Stats</button>
       </nav>
     </div>
   </header>
@@ -427,6 +427,8 @@
           <button class="btn btn-secondary" onclick="previewMetadata()">👁️ Preview Metadata</button>
           <button class="btn btn-success" onclick="embedMetadata()">⚡ Embed to Comic File</button>
         </div>
+      </div>
+
       <!-- Batch Folder Tagging Card -->
       <div id="batch-folder-card" class="card">
         <div class="card-header">
@@ -622,30 +624,28 @@
   <script>
     let selectedFilePath = "";
 
-    function switchTab(tabId, btnElem = null) {
-      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-      document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-      
-      if (btnElem) {
-        btnElem.classList.add('active');
-      } else {
-        const btns = document.querySelectorAll('.tab-btn');
-        btns.forEach(b => {
-          if (b.getAttribute('onclick') && b.getAttribute('onclick').includes(`'${tabId}'`)) {
-            b.classList.add('active');
-          }
-        });
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+
+      const targetContent = document.getElementById('tab-' + tabId);
+      if (targetContent) {
+        targetContent.classList.add('active');
       }
 
-      const targetTab = document.getElementById('tab-' + tabId);
-      if (targetTab) {
-        targetTab.classList.add('active');
+      const targetBtn = document.querySelector(`.tab-btn[data-tab="${tabId}"]`);
+      if (targetBtn) {
+        targetBtn.classList.add('active');
       }
 
-      if (tabId === 'settings') loadConfiguration();
-      if (tabId === 'stats') loadCacheStats();
-      if (tabId === 'watcher') checkWatcherStatus();
-      if (tabId === 'kapowarr') loadKapowarrLibrary();
+      try {
+        if (tabId === 'settings') loadConfiguration();
+        else if (tabId === 'stats') loadCacheStats();
+        else if (tabId === 'watcher') checkWatcherStatus();
+        else if (tabId === 'kapowarr') loadKapowarrLibrary();
+      } catch (e) {
+        console.error("Tab handler error:", e);
+      }
     }
 
     // --- Kapowarr Library Status & Filtering ---
@@ -747,9 +747,8 @@
         document.getElementById('url-text-input').value = url;
       }
 
-      // Switch to generator tab (first tab)
-      const firstTabBtn = document.querySelectorAll('.tab-btn')[0];
-      switchTab('generator', firstTabBtn);
+      // Switch to generator tab
+      switchTab('generator');
 
       setTimeout(() => {
         const targetCard = document.getElementById('batch-folder-card');
