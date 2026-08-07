@@ -704,9 +704,9 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
 
         elif parsed.path == "/api/batch-embed":
-            volume_url = fields.get("url") or fields.get("volume_url") or ""
+            volume_url = fields.get("url") or fields.get("urls") or ""
             folder_path_input = fields.get("folder_path", "").strip()
-            items = fields.get("items", [])
+            items = fields.get("items") or []
 
             if not folder_path_input or not os.path.exists(folder_path_input):
                 self._set_headers(400)
@@ -716,49 +716,70 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             cfg = load_config()
             delete_old_cbr = cfg.output.delete_cbr
 
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+
+            total_items = len(items)
             processed_count = 0
             errors = []
 
-            try:
-                for item in items:
-                    fname = item.get("filename")
-                    matched_url = item.get("matched_url")
-                    matched_urls = item.get("matched_urls") or ([matched_url] if matched_url else [])
+            for idx, item in enumerate(items):
+                fname = item.get("filename")
+                matched_url = item.get("matched_url")
+                matched_urls = item.get("matched_urls") or ([matched_url] if matched_url else [])
 
-                    if not fname or not matched_urls:
-                        continue
+                if not fname or not matched_urls:
+                    chunk = json.dumps({"current": idx + 1, "total": total_items, "file": fname or "Unknown", "status": "skipped", "message": f"Skipped '{fname}': No matched database URL."}) + "\n"
+                    self.wfile.write(chunk.encode("utf-8"))
+                    self.wfile.flush()
+                    continue
 
-                    full_file_path = os.path.join(folder_path_input, fname)
-                    if not os.path.exists(full_file_path):
-                        continue
+                full_file_path = os.path.join(folder_path_input, fname)
+                if not os.path.exists(full_file_path):
+                    chunk = json.dumps({"current": idx + 1, "total": total_items, "file": fname, "status": "error", "message": f"File '{fname}' not found on disk."}) + "\n"
+                    self.wfile.write(chunk.encode("utf-8"))
+                    self.wfile.flush()
+                    continue
 
-                    target_archive = full_file_path
-                    if full_file_path.lower().endswith(".cbr"):
-                        try:
-                            target_archive = convert_cbr_to_cbz(full_file_path, delete_original=delete_old_cbr)
-                        except Exception as ce:
-                            errors.append(f"CBR conversion error for '{fname}': {ce}")
-                            continue
-
+                target_archive = full_file_path
+                if full_file_path.lower().endswith(".cbr"):
                     try:
-                        comic = fetch_and_merge_urls(matched_urls if len(matched_urls) > 1 else matched_urls[0])
-                        embed_comicinfo_in_cbz(target_archive, comic)
-                        processed_count += 1
-                    except Exception as ie:
-                        errors.append(f"Embedding error for '{fname}': {ie}")
+                        target_archive = convert_cbr_to_cbz(full_file_path, delete_original=delete_old_cbr)
+                    except Exception as ce:
+                        err_msg = f"CBR conversion error for '{fname}': {ce}"
+                        errors.append(err_msg)
+                        chunk = json.dumps({"current": idx + 1, "total": total_items, "file": fname, "status": "error", "message": err_msg}) + "\n"
+                        self.wfile.write(chunk.encode("utf-8"))
+                        self.wfile.flush()
+                        continue
 
-                self._set_headers(200)
-                self.wfile.write(json.dumps({
-                    "success": True,
-                    "folder_path": folder_path_input,
-                    "processed_count": processed_count,
-                    "errors": errors,
-                    "message": f"Successfully embedded ComicInfo.xml into {processed_count} file(s) in '{folder_path_input}'."
-                }).encode("utf-8"))
-            except Exception as e:
-                self._set_headers(500)
-                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+                try:
+                    comic = fetch_and_merge_urls(matched_urls if len(matched_urls) > 1 else matched_urls[0])
+                    embed_comicinfo_in_cbz(target_archive, comic)
+                    processed_count += 1
+                    msg = f"✅ Embedded ComicInfo.xml into '{os.path.basename(target_archive)}' ({comic.series} #{comic.number})"
+                    chunk = json.dumps({"current": idx + 1, "total": total_items, "file": fname, "status": "success", "message": msg, "comic": comic_to_dict(comic)}) + "\n"
+                    self.wfile.write(chunk.encode("utf-8"))
+                    self.wfile.flush()
+                except Exception as ie:
+                    err_msg = f"Embedding error for '{fname}': {ie}"
+                    errors.append(err_msg)
+                    chunk = json.dumps({"current": idx + 1, "total": total_items, "file": fname, "status": "error", "message": err_msg}) + "\n"
+                    self.wfile.write(chunk.encode("utf-8"))
+                    self.wfile.flush()
 
+            final_chunk = json.dumps({
+                "done": True,
+                "processed_count": processed_count,
+                "total_count": total_items,
+                "errors": errors,
+                "message": f"Batch process complete! Embedded metadata into {processed_count} of {total_items} file(s)."
+            }) + "\n"
+            self.wfile.write(final_chunk.encode("utf-8"))
+            self.wfile.flush()
+            return
 
         elif parsed.path == "/api/embed-custom":
             file_path_input = fields.get("file_path", "").strip()
