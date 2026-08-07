@@ -10,6 +10,8 @@ venv/
 env/
 ENV/
 .venv
+.env
+
 
 # IDE & OS
 .idea/
