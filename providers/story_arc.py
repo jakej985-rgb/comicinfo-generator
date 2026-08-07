@@ -4,6 +4,8 @@ import urllib.parse
 import zipfile
 import requests
 from bs4 import BeautifulSoup
+from config import load_config
+from providers.kapowarr import KapowarrProvider
 
 try:
     import cloudscraper
@@ -15,6 +17,23 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
 }
+
+MARVEL_ZOMBIES_PRESET_TEXT = """Marvel Zombies: Dead Days #1
+Marvel Zombies vs. Army of Darkness #1-5
+Marvel Zombies: Evil Evolution #1
+Marvel Apes #1-4
+Ultimate Fantastic Four #21-23
+Marvel Zombies #1-5
+Ultimate Fantastic Four #30-32
+Black Panther #28-30
+Marvel Zombies 2 #1-5
+Marvel Zombies Return #1-5
+Marvel Zombies 3 #1-4
+Marvel Zombies 4 #1-4
+Deadpool: Merc with a Mouth #1-13
+Marvel Zombies 5 #1-5
+Marvel Zombies Supreme #1-5
+Marvel Zombies Destroy #1-5"""
 
 def search_story_arcs(query: str, api_key: str = "") -> list[dict]:
     """Searches ComicVine for Story Arcs via API or Web Scraper."""
@@ -131,17 +150,7 @@ def get_story_arc_details(arc_url: str, watch_folder: str = "") -> dict:
                         "file_path": ""
                     })
 
-        # Cross-reference with disk library
-        if not watch_folder:
-            watch_folder = "/mnt/disk1/Comics"
-
-        if watch_folder and os.path.exists(watch_folder):
-            for iss in issues:
-                res = _check_disk_for_issue(watch_folder, iss["series"], iss["number"])
-                if res["found"]:
-                    iss["is_found"] = True
-                    iss["is_tagged"] = res["tagged"]
-                    iss["file_path"] = res["path"]
+        _cross_reference_issues(issues, watch_folder=watch_folder)
 
         found_count = sum(1 for i in issues if i["is_found"])
         tagged_count = sum(1 for i in issues if i["is_tagged"])
@@ -161,48 +170,8 @@ def get_story_arc_details(arc_url: str, watch_folder: str = "") -> dict:
     except Exception as e:
         return {"error": f"Error loading story arc: {e}"}
 
-def _check_disk_for_issue(watch_folder: str, series: str, number: str) -> dict:
-    if not series or not number:
-        return {"found": False, "path": "", "tagged": False}
-
-    clean_ser = series.lower().replace("-", " ").replace(":", "")
-    for root, dirs, files in os.walk(watch_folder):
-        for f in files:
-            if f.lower().endswith((".cbz", ".cbr")):
-                clean_f = f.lower().replace("-", " ").replace(":", "")
-                if clean_ser in clean_f or series.lower() in root.lower():
-                    m = re.search(r"(?:#|\b0*|v\d+[-_\s]*)(?: shadow| )?(?:" + re.escape(number) + r")\b", f, re.IGNORECASE)
-                    if m or f"#{number}" in f or f"issue {number}" in f.lower() or f" {number}.cbz" in f.lower():
-                        full_p = os.path.join(root, f)
-                        is_tagged = False
-                        if f.lower().endswith(".cbz"):
-                            try:
-                                with zipfile.ZipFile(full_p, 'r') as zf:
-                                    is_tagged = "comicinfo.xml" in [n.lower() for n in zf.namelist()]
-                            except Exception:
-                                pass
-                        return {"found": True, "path": full_p, "tagged": is_tagged}
-    return {"found": False, "path": "", "tagged": False}
-
-MARVEL_ZOMBIES_PRESET_TEXT = """Marvel Zombies: Dead Days #1
-Marvel Zombies vs. Army of Darkness #1-5
-Marvel Zombies: Evil Evolution #1
-Marvel Apes #1-4
-Ultimate Fantastic Four #21-23
-Marvel Zombies #1-5
-Ultimate Fantastic Four #30-32
-Black Panther #28-30
-Marvel Zombies 2 #1-5
-Marvel Zombies Return #1-5
-Marvel Zombies 3 #1-4
-Marvel Zombies 4 #1-4
-Deadpool: Merc with a Mouth #1-13
-Marvel Zombies 5 #1-5
-Marvel Zombies Supreme #1-5
-Marvel Zombies Destroy #1-5"""
-
 def parse_custom_chronological_reading_order(text: str, arc_name: str = "Chronological Story Arc Crossover", watch_folder: str = "") -> dict:
-    """Expands multi-series range lists (e.g. Ultimate Fantastic Four #21-23) into issue entries and checks disk."""
+    """Expands multi-series range lists into issue entries and checks disk and Kapowarr."""
     lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
     expanded = []
 
@@ -250,39 +219,11 @@ def parse_custom_chronological_reading_order(text: str, arc_name: str = "Chronol
                     "file_path": ""
                 })
 
-    if not watch_folder:
-        watch_folder = "/mnt/disk1/Comics"
+    _cross_reference_issues(expanded, watch_folder=watch_folder)
 
-    file_cache = []
-    if watch_folder and os.path.exists(watch_folder):
-        for root, dirs, files in os.walk(watch_folder):
-            for f in files:
-                if f.lower().endswith((".cbz", ".cbr")):
-                    file_cache.append((root, f, os.path.join(root, f)))
-
-    found_count = 0
-    tagged_count = 0
-
-    for item in expanded:
-        ser = item["series"]
-        num = item["number"]
-        clean_ser = ser.lower().replace("-", " ").replace(":", "")
-
-        for root, f, full_p in file_cache:
-            clean_f = f.lower().replace("-", " ").replace(":", "")
-            if clean_ser in clean_f or ser.lower() in root.lower():
-                if f"#{num}" in f or f"issue {num}" in f.lower() or f" {num}.cbz" in f.lower() or f"0{num}.cbz" in f.lower() or f"{num}." in f:
-                    item["is_found"] = True
-                    item["file_path"] = full_p
-                    if f.lower().endswith(".cbz"):
-                        try:
-                            with zipfile.ZipFile(full_p, 'r') as zf:
-                                item["is_tagged"] = "comicinfo.xml" in [n.lower() for n in zf.namelist()]
-                        except Exception:
-                            pass
-                    break
-        if item["is_found"]: found_count += 1
-        if item["is_tagged"]: tagged_count += 1
+    found_count = sum(1 for i in expanded if i["is_found"])
+    tagged_count = sum(1 for i in expanded if i["is_tagged"])
+    missing_count = len(expanded) - found_count
 
     return {
         "title": arc_name,
@@ -292,6 +233,111 @@ def parse_custom_chronological_reading_order(text: str, arc_name: str = "Chronol
         "total_issues": len(expanded),
         "found_count": found_count,
         "tagged_count": tagged_count,
-        "missing_count": len(expanded) - found_count,
+        "missing_count": missing_count,
         "issues": expanded
     }
+
+def _cross_reference_issues(issues_list: list[dict], watch_folder: str = "") -> None:
+    """Indexes local watch_folder AND Kapowarr monitored volume directories for issue matching."""
+    cfg = load_config()
+    if not watch_folder:
+        watch_folder = cfg.automation.watch_folder or "/mnt/disk1/Comics"
+
+    # Query Kapowarr volume folder paths
+    search_folders = set()
+    if watch_folder and os.path.exists(watch_folder):
+        search_folders.add(watch_folder)
+
+    if cfg.kapowarr.url:
+        try:
+            kap = KapowarrProvider(url=cfg.kapowarr.url, api_key=cfg.kapowarr.api_key)
+            vols = kap.search_series("")
+            for v in vols:
+                # Fetch detailed volume folder path
+                v_id = v.get("id")
+                r = requests.get(f"{cfg.kapowarr.url.rstrip('/')}/api/volumes/{v_id}", headers=kap._get_headers(), params=kap._get_params(), timeout=3)
+                if r.status_code == 200:
+                    v_info = r.json()
+                    if isinstance(v_info, dict):
+                        v_data = v_info.get("result", v_info)
+                        f_p = v_data.get("folder") or v_data.get("path")
+                        if f_p and os.path.exists(f_p):
+                            search_folders.add(f_p)
+        except Exception:
+            pass
+
+    # Build file index
+    file_index = []
+    for s_dir in search_folders:
+        for root, dirs, files in os.walk(s_dir):
+            for f in files:
+                if f.lower().endswith((".cbz", ".cbr")):
+                    file_index.append((root, f, os.path.join(root, f)))
+
+    for item in issues_list:
+        ser = item.get("series", "")
+        num = item.get("number", "")
+
+        try:
+            target_n = int(re.search(r"(\d+)", str(num)).group(1))
+        except Exception:
+            target_n = None
+
+        item["is_found"] = False
+        item["is_tagged"] = False
+        item["file_path"] = ""
+
+        for root, f, full_p in file_index:
+            if _is_exact_series_match(ser, f, root) and target_n is not None:
+                patterns = [
+                    r"issue\s*0*(" + str(target_n) + r")\b",
+                    r"#\s*0*(" + str(target_n) + r")\b",
+                    r"\b0*(" + str(target_n) + r")\.(?:cbz|cbr)$",
+                    r"vol(?:ume)?\s*\d+\s+issue\s+0*(" + str(target_n) + r")\b",
+                    r"v\d+\s+0*(" + str(target_n) + r")\b",
+                    r"[-_\s]0*(" + str(target_n) + r")[-_\s\.]"
+                ]
+                matched = False
+                for pat in patterns:
+                    if re.search(pat, f, re.IGNORECASE):
+                        matched = True
+                        break
+                if matched:
+                    item["is_found"] = True
+                    item["file_path"] = full_p
+                    if f.lower().endswith(".cbz"):
+                        try:
+                            with zipfile.ZipFile(full_p, 'r') as zf:
+                                item["is_tagged"] = "comicinfo.xml" in [n.lower() for n in zf.namelist()]
+                        except Exception:
+                            pass
+                    break
+
+def _is_exact_series_match(target_series: str, file_name: str, folder_path: str) -> bool:
+    clean_target = target_series.lower().replace("-", " ").replace(":", "").strip()
+    clean_f = file_name.lower().replace("-", " ").replace(":", "").strip()
+    clean_folder = folder_path.lower().replace("-", " ").replace(":", "").strip()
+    full_path_clean = (clean_folder + " " + clean_f).strip()
+
+    target_words = [w for w in clean_target.split() if len(w) > 0]
+    if not target_words:
+        return False
+
+    main_words = [w for w in target_words if w not in ("the", "a", "an", "of", "and")]
+    if not all(w in full_path_clean for w in main_words):
+        return False
+
+    m_digit = re.search(r"(\d+)$", clean_target)
+    if m_digit:
+        digit = m_digit.group(1)
+        base = clean_target[:m_digit.start()].strip()
+        base_words = [w for w in base.split() if w not in ("the", "a", "an", "of", "and")]
+        if not all(w in full_path_clean for w in base_words):
+            return False
+        digit_match = (f" {digit} " in full_path_clean or f" 0{digit} " in full_path_clean or 
+                       f"volume 0{digit}" in full_path_clean or f"volume {digit}" in full_path_clean or
+                       f"v0{digit}" in full_path_clean or f"v{digit}" in full_path_clean or
+                       f"{base} {digit}" in full_path_clean or f"{base} 0{digit}" in full_path_clean)
+        return digit_match
+
+    return True
