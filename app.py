@@ -64,19 +64,44 @@ def comic_to_dict(c: Comic) -> dict:
     }
 
 def detect_provider(url: str) -> str:
-    """Returns 'GCP' if comics.org URL or GCP text layout, otherwise 'CV'."""
+    """Returns 'Kapowarr' if Kapowarr URL/ID, 'GCP' if comics.org or GCP layout, otherwise 'CV'."""
     url_lower = url.lower()
+    try:
+        cfg = load_config()
+        kap_base = cfg.kapowarr.url.lower().rstrip("/") if cfg.kapowarr.url else ""
+        if kap_base and kap_base in url_lower:
+            return "Kapowarr"
+    except Exception:
+        pass
     if "comics.org" in url_lower or any(k in url for k in ["Pencils:", "Script:", "Characters:", "Table of Contents"]):
         return "GCP"
     return "CV"
 
 def scrape_single_url(url_or_text: str) -> Comic:
-    if detect_provider(url_or_text) == "GCP":
+    prov = detect_provider(url_or_text)
+    if prov == "Kapowarr":
+        try:
+            cfg = load_config()
+            kap = KapowarrProvider(url=cfg.kapowarr.url, api_key=cfg.kapowarr.api_key)
+            c = kap.lookup_issue(url_or_text)
+            if c:
+                return c
+        except Exception:
+            pass
+    elif prov == "GCP":
         return scrape_gcp_issue(url_or_text)
     return scrape_cv_issue(url_or_text)
 
 def scrape_any_volume(url: str) -> tuple[str, dict[str, str], list[dict]]:
-    if detect_provider(url) == "GCP":
+    prov = detect_provider(url)
+    if prov == "Kapowarr":
+        try:
+            cfg = load_config()
+            kap = KapowarrProvider(url=cfg.kapowarr.url, api_key=cfg.kapowarr.api_key)
+            return kap.lookup_volume(url)
+        except Exception:
+            pass
+    elif prov == "GCP":
         return scrape_gcp_volume(url)
     return scrape_cv_volume(url)
 
@@ -109,9 +134,33 @@ def fetch_and_merge_urls(url_val) -> Comic:
     comics = [scrape_single_url(u) for u in urls]
     return merge_comics(comics)
 
-def search_all_providers(query: str, search_type: str = "all") -> list[dict]:
+def search_all_providers(query: str, search_type: str = "all") -> tuple[list[dict], bool]:
     results = []
-    if search_type in ("all", "cv_volume", "cv_issue"):
+    kapowarr_active = False
+
+    # 1. Kapowarr Library Search
+    try:
+        cfg = load_config()
+        if cfg.kapowarr.url and cfg.kapowarr.api_key:
+            kap = KapowarrProvider(url=cfg.kapowarr.url, api_key=cfg.kapowarr.api_key)
+            if kap.test_connection():
+                kapowarr_active = True
+                if search_type in ("all", "kapowarr", "kapowarr_volume", "kapowarr_issue"):
+                    if search_type in ("all", "kapowarr", "kapowarr_volume"):
+                        kap_vols = kap.search_series(query)
+                        for r in kap_vols:
+                            r["provider"] = "Kapowarr"
+                            results.append(r)
+                    if search_type in ("all", "kapowarr", "kapowarr_issue"):
+                        kap_issues = kap.search_issue(query)
+                        for r in kap_issues:
+                            r["provider"] = "Kapowarr"
+                            results.append(r)
+    except Exception:
+        pass
+
+    # 2. Comic Vine Search
+    if search_type in ("all", "scrapers", "cv_volume", "cv_issue"):
         cv_type = "all"
         if search_type == "cv_volume": cv_type = "volume"
         elif search_type == "cv_issue": cv_type = "issue"
@@ -127,13 +176,15 @@ def search_all_providers(query: str, search_type: str = "all") -> list[dict]:
                 r["type_label"] = "CV Issue"
             results.append(r)
 
-    if search_type in ("all", "gcp_volume", "gcp_issue"):
+    # 3. Grand Comics Database Search
+    if search_type in ("all", "scrapers", "gcp_volume", "gcp_issue"):
         gcp_results = search_gcp(query, search_type)
         for r in gcp_results:
             r["provider"] = "GCP"
             results.append(r)
 
-    return results
+    return results, kapowarr_active
+
 
 def extract_issue_num_from_filename(filename: str) -> str:
     fname = re.sub(r"\.(cbz|cbr|zip|rar)$", "", filename, flags=re.I)
@@ -268,6 +319,22 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                     "logging": {"level": cfg.logging.level, "log_file": cfg.logging.log_file}
                 }
             }).encode("utf-8"))
+            return
+        elif path == "/api/kapowarr/library":
+            try:
+                cfg = load_config()
+                kap = KapowarrProvider(url=cfg.kapowarr.url, api_key=cfg.kapowarr.api_key)
+                items = kap.get_library_status(watch_folder=cfg.automation.watch_folder)
+                self._set_headers(200)
+                self.wfile.write(json.dumps({
+                    "success": True,
+                    "online": kap.test_connection(),
+                    "count": len(items),
+                    "items": items
+                }).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
             return
         elif path == "/api/watch/status":
             is_active = global_watcher is not None and global_watcher.observer is not None and global_watcher.observer.is_alive()
@@ -438,12 +505,13 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                results = search_all_providers(query, search_type)
+                results, kapowarr_active = search_all_providers(query, search_type)
                 self._set_headers(200)
                 self.wfile.write(json.dumps({
                     "success": True,
                     "query": query,
                     "count": len(results),
+                    "kapowarr_active": kapowarr_active,
                     "results": results
                 }).encode("utf-8"))
             except Exception as e:

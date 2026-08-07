@@ -1,3 +1,5 @@
+import os
+import zipfile
 import requests
 import re
 import urllib.parse
@@ -215,3 +217,75 @@ class KapowarrProvider(BaseProvider):
                 pass
 
         return None
+
+    def get_library_status(self, watch_folder: str = "") -> list[dict]:
+        """Fetches Kapowarr library volumes and checks disk for ComicInfo.xml presence."""
+        library_items = []
+        if not self.url:
+            return library_items
+
+        try:
+            r = requests.get(f"{self.url}/api/volumes", headers=self._get_headers(), params=self._get_params(), timeout=6)
+            if r.status_code == 200:
+                resp_json = r.json()
+                data = resp_json.get("result", resp_json) if isinstance(resp_json, dict) else resp_json
+                series_list = data if isinstance(data, list) else []
+
+                for s in series_list:
+                    s_id = str(s.get("id", ""))
+                    s_name = s.get("name") or s.get("title", "")
+                    s_year = str(s.get("year", ""))
+                    cv_id = str(s.get("comicvine_id", "") or s.get("cv_id", ""))
+                    folder_path = s.get("folder") or s.get("path") or ""
+
+                    if not folder_path and watch_folder:
+                        candidate = os.path.join(watch_folder, s_name)
+                        if os.path.exists(candidate):
+                            folder_path = candidate
+
+                    total_files = 0
+                    tagged_count = 0
+                    missing_count = 0
+
+                    if folder_path and os.path.exists(folder_path) and os.path.isdir(folder_path):
+                        for root, _, files in os.walk(folder_path):
+                            for f in files:
+                                if f.lower().endswith((".cbz", ".cbr")):
+                                    total_files += 1
+                                    full_f = os.path.join(root, f)
+                                    if f.lower().endswith(".cbz"):
+                                        try:
+                                            with zipfile.ZipFile(full_f, 'r') as zf:
+                                                names = [name.lower() for name in zf.namelist()]
+                                                if "comicinfo.xml" in names:
+                                                    tagged_count += 1
+                                                else:
+                                                    missing_count += 1
+                                        except Exception:
+                                            missing_count += 1
+                                    else:
+                                        missing_count += 1
+                    else:
+                        missing_count = s.get("issue_count", 0)
+
+                    library_items.append({
+                        "id": s_id,
+                        "title": s_name,
+                        "year": s_year,
+                        "cv_id": cv_id,
+                        "url": f"{self.url}/volume/{s_id}",
+                        "cv_url": f"https://comicvine.gamespot.com/volume/4050-{cv_id}/" if cv_id else "",
+                        "folder_path": folder_path,
+                        "issue_count": s.get("issue_count", 0),
+                        "total_files": total_files,
+                        "tagged_count": tagged_count,
+                        "missing_count": missing_count,
+                        "has_missing": missing_count > 0,
+                        "is_complete": tagged_count > 0 and missing_count == 0,
+                        "status_label": f"{tagged_count}/{total_files} Tagged ({missing_count} Missing)" if total_files > 0 else f"Folder Not Scanned ({s.get('issue_count', 0)} issues)"
+                    })
+        except Exception:
+            pass
+
+        return library_items
+

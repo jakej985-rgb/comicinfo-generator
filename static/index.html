@@ -274,6 +274,8 @@
     .badge-offline { background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.4); color: #f87171; }
     .badge-cv { background: rgba(99, 102, 241, 0.2); border: 1px solid rgba(99, 102, 241, 0.4); color: #818cf8; }
     .badge-gcp { background: rgba(245, 158, 11, 0.2); border: 1px solid rgba(245, 158, 11, 0.4); color: #fbbf24; }
+    .badge-kapowarr { background: rgba(168, 85, 247, 0.2); border: 1px solid rgba(168, 85, 247, 0.4); color: #c084fc; }
+
 
     /* Stat Cards Grid */
     .stats-grid {
@@ -364,6 +366,7 @@
 
       <nav class="nav-tabs">
         <button class="tab-btn active" onclick="switchTab('generator')">🏷️ Generator & Search</button>
+        <button class="tab-btn" onclick="switchTab('kapowarr')">⚡ Kapowarr Library</button>
         <button class="tab-btn" onclick="switchTab('settings')">⚙️ Settings & Config</button>
         <button class="tab-btn" onclick="switchTab('watcher')">👁️ Folder Watcher</button>
         <button class="tab-btn" onclick="switchTab('stats')">📊 Cache & Stats</button>
@@ -387,7 +390,9 @@
           <div class="form-group">
             <label class="form-label">Database Provider Filter</label>
             <select id="search-type-select" class="form-control">
-              <option value="all">🌐 All Sources (CV & GCP)</option>
+              <option value="all">🌐 All Sources (Kapowarr, CV & GCP)</option>
+              <option value="kapowarr">⚡ Kapowarr Library</option>
+              <option value="scrapers">🔍 Web Scrapers (CV & GCP)</option>
               <option value="cv_volume">Comic Vine Series (CV)</option>
               <option value="cv_issue">Comic Vine Issue (CV)</option>
               <option value="gcp_volume">Grand Comics Series (GCP)</option>
@@ -431,6 +436,27 @@
           <div id="preview-provider-badge"></div>
         </div>
         <div id="preview-body"></div>
+      </div>
+    </div>
+
+    <!-- TAB: KAPOWARR LIBRARY STATUS -->
+    <div id="tab-kapowarr" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">⚡ Kapowarr Library Status & ComicInfo.xml Inspector</div>
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <div id="kapowarr-server-badge" class="badge badge-offline">Kapowarr Offline</div>
+            <button class="btn btn-secondary" onclick="loadKapowarrLibrary()">🔄 Refresh Library</button>
+          </div>
+        </div>
+
+        <div style="margin-bottom: 18px; font-size: 14px; color: var(--text-muted);">
+          Scans all monitored comic series on your Kapowarr server and verifies whether valid <code style="color: var(--primary);">ComicInfo.xml</code> files exist inside comic archives on disk.
+        </div>
+
+        <div id="kapowarr-library-area">
+          <div style="color: var(--text-muted); font-size: 14px;">Loading Kapowarr library series...</div>
+        </div>
       </div>
     </div>
 
@@ -568,16 +594,93 @@
       if (tabId === 'settings') loadConfiguration();
       if (tabId === 'stats') loadCacheStats();
       if (tabId === 'watcher') checkWatcherStatus();
+      if (tabId === 'kapowarr') loadKapowarrLibrary();
+    }
+
+    // --- Kapowarr Library Status ---
+    async function loadKapowarrLibrary() {
+      const area = document.getElementById('kapowarr-library-area');
+      const serverBadge = document.getElementById('kapowarr-server-badge');
+      area.innerHTML = "<div style='color: var(--text-muted); font-size: 14px;'>Connecting to Kapowarr server and scanning library folders...</div>";
+
+      try {
+        const res = await fetch('/api/kapowarr/library');
+        const data = await res.json();
+
+        if (data.online) {
+          serverBadge.className = 'badge badge-online';
+          serverBadge.innerText = 'Kapowarr Online';
+        } else {
+          serverBadge.className = 'badge badge-offline';
+          serverBadge.innerText = 'Kapowarr Offline';
+        }
+
+        if (data.items && data.items.length > 0) {
+          area.innerHTML = `
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px;">
+              ${data.items.map(item => `
+                <div class="stat-card" style="border-left: 4px solid ${item.is_complete ? 'var(--accent)' : (item.has_missing ? 'var(--danger)' : 'var(--accent-gcp)')};">
+                  <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                    <div>
+                      <div style="font-weight: 700; font-size: 16px; color: #fff;">${item.title} ${item.year ? '(' + item.year + ')' : ''}</div>
+                      <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Kapowarr Vol ID: #${item.id} ${item.cv_id ? '• CV: ' + item.cv_id : ''}</div>
+                    </div>
+                    <span class="badge ${item.is_complete ? 'badge-online' : (item.has_missing ? 'badge-offline' : 'badge-gcp')}">
+                      ${item.is_complete ? '✅ 100% Tagged' : (item.has_missing ? '⚠️ Missing Tags' : 'Unscanned')}
+                    </span>
+                  </div>
+
+                  <div style="font-size: 13px; color: var(--text-muted); margin-top: 8px;">
+                    📁 Path: <code style="color: var(--text-main); font-size: 12px;">${item.folder_path || 'Folder not configured in Kapowarr'}</code>
+                  </div>
+
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 12px; font-size: 13px;">
+                    <div>
+                      <strong style="color: var(--text-main);">${item.tagged_count}</strong> tagged / 
+                      <strong style="color: ${item.missing_count > 0 ? 'var(--danger)' : 'var(--text-muted)'};">${item.missing_count} missing</strong>
+                    </div>
+                    <button class="btn btn-primary" style="padding: 4px 10px; font-size: 12px;" onclick="useVolumeForBatch('${item.cv_url || item.url}', '${item.folder_path}')">
+                      ⚡ Batch Tag Series
+                    </button>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          `;
+        } else {
+          area.innerHTML = `
+            <div style="padding: 20px; text-align: center; background: rgba(30, 41, 59, 0.4); border-radius: 12px; color: var(--text-muted);">
+              No series monitored in Kapowarr or Kapowarr server is offline. Please check your Kapowarr Server URL & API Key in Settings & Config.
+            </div>
+          `;
+        }
+      } catch (e) {
+        area.innerHTML = `<div style="color: var(--danger);">Failed to load Kapowarr library: ${e}</div>`;
+      }
+    }
+
+    function useVolumeForBatch(url, folderPath) {
+      if (folderPath) {
+        document.getElementById('watcher-folder-input').value = folderPath;
+      }
+      document.getElementById('url-text-input').value = url;
+      document.querySelectorAll('.tab-btn')[0].click();
+      window.scrollTo({top: 400, behavior: 'smooth'});
     }
 
     // --- Search Provider ---
-    async function performSearch() {
+    async function performSearch(forceScrapers = false) {
       const q = document.getElementById('search-query-input').value.trim();
-      const type = document.getElementById('search-type-select').value;
+      let type = document.getElementById('search-type-select').value;
+      if (forceScrapers) {
+        type = 'scrapers';
+        document.getElementById('search-type-select').value = 'scrapers';
+      }
+
       if (!q) return alert("Please enter a search query.");
 
       const area = document.getElementById('search-results-area');
-      area.innerHTML = "<div style='color: var(--text-muted); font-size: 14px;'>Searching database providers...</div>";
+      area.innerHTML = "<div style='grid-column: 1/-1; color: var(--text-muted); font-size: 14px;'>Searching database & library providers...</div>";
 
       try {
         const res = await fetch('/api/search', {
@@ -587,21 +690,48 @@
         });
         const data = await res.json();
         if (data.results && data.results.length > 0) {
-          area.innerHTML = data.results.map(r => `
-            <div class="search-item" onclick="selectSearchResult('${r.url}')">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <span class="badge ${r.provider === 'GCP' ? 'badge-gcp' : 'badge-cv'}">${r.provider} • ${r.type_label}</span>
-                <span style="font-size: 12px; color: var(--text-muted);">${r.year || ''}</span>
+          let html = data.results.map(r => {
+            let badgeClass = 'badge-cv';
+            if (r.provider === 'GCP') badgeClass = 'badge-gcp';
+            if (r.provider === 'Kapowarr') badgeClass = 'badge-kapowarr';
+
+            return `
+              <div class="search-item" onclick="selectSearchResult('${r.url}')">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                  <span class="badge ${badgeClass}">${r.provider} • ${r.type_label}</span>
+                  <span style="font-size: 12px; color: var(--text-muted);">${r.year || ''}</span>
+                </div>
+                <div style="font-weight: 700; font-size: 15px; color: #fff;">${r.title}</div>
+                <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">${r.description || ''}</div>
               </div>
-              <div style="font-weight: 700; font-size: 15px; color: #fff;">${r.title}</div>
-              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">${r.description || ''}</div>
+            `;
+          }).join('');
+
+          // Append "Don't see your comic?" fallback banner button
+          html += `
+            <div style="grid-column: 1 / -1; margin-top: 16px; padding: 14px; background: rgba(30, 41, 59, 0.6); border: 1px dashed var(--border-card); border-radius: 12px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+              <div style="font-size: 13px; color: var(--text-muted);">
+                ❓ Don't see your comic in search results? Search Comic Vine & Grand Comics Database web scrapers directly.
+              </div>
+              <button class="btn btn-secondary" onclick="performSearch(true)">
+                🔍 Search Scrapers (Comic Vine & GCP)
+              </button>
             </div>
-          `).join('');
+          `;
+
+          area.innerHTML = html;
         } else {
-          area.innerHTML = "<div style='color: var(--danger); font-size: 14px;'>No results found.</div>";
+          area.innerHTML = `
+            <div style="grid-column: 1/-1; padding: 20px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 12px; text-align: center;">
+              <div style="color: var(--danger); font-weight: 600; font-size: 15px; margin-bottom: 12px;">No matching comics found.</div>
+              <button class="btn btn-primary" onclick="performSearch(true)">
+                🔍 Deep Search Comic Vine & GCP Scrapers
+              </button>
+            </div>
+          `;
         }
       } catch (e) {
-        area.innerHTML = `<div style='color: var(--danger);'>Error: ${e}</div>`;
+        area.innerHTML = `<div style='grid-column: 1/-1; color: var(--danger);'>Error: ${e}</div>`;
       }
     }
 

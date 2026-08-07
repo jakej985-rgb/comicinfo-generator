@@ -191,8 +191,23 @@ document.addEventListener('DOMContentLoaded', () => {
         searchResultsCount.textContent = `Search Results for '${query}' (${results.length})`;
 
         if (results.length === 0) {
-            searchResultsGrid.innerHTML = '<p class="help-text">No results found. Try a different title or search filter.</p>';
+            searchResultsGrid.innerHTML = `
+                <div style="grid-column: 1 / -1; padding: 20px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 12px; text-align: center;">
+                    <p class="help-text" style="color: var(--danger); font-weight: 600; margin-bottom: 12px;">No results found for '${query}'.</p>
+                    <button type="button" class="btn-use-url btn-search-fallback" style="margin: 0 auto; display: inline-flex; padding: 8px 16px; font-weight: 600; background: var(--primary);">
+                        🔍 Deep Search Comic Vine & GCP Scrapers
+                    </button>
+                </div>
+            `;
             searchResultsContainer.classList.remove('hidden');
+
+            const fallbackBtn = searchResultsGrid.querySelector('.btn-search-fallback');
+            if (fallbackBtn) {
+                fallbackBtn.addEventListener('click', () => {
+                    searchTypeSelect.value = 'scrapers';
+                    searchForm.dispatchEvent(new Event('submit'));
+                });
+            }
             return;
         }
 
@@ -203,7 +218,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const placeholderImg = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="60" height="85" viewBox="0 0 60 85"><rect width="60" height="85" fill="%23040810"/><text x="50%" y="50%" fill="%2394a3b8" dominant-baseline="middle" text-anchor="middle" font-size="20">📚</text></svg>';
             const imgSrc = item.image || placeholderImg;
             
-            const provider = item.provider || (item.url.includes('comics.org') ? 'GCP' : 'CV');
+            const provider = item.provider || (item.url.includes('comics.org') ? 'GCP' : (item.url.includes('5656') || item.url.includes('kapowarr') ? 'Kapowarr' : 'CV'));
             const provClass = provider.toLowerCase();
             const isVolume = item.type.includes('volume') || item.type.includes('series');
 
@@ -229,6 +244,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
             `;
             searchResultsGrid.appendChild(card);
+        });
+
+        // Append Fallback Banner Button below results
+        const fallbackBanner = document.createElement('div');
+        fallbackBanner.style.cssText = 'grid-column: 1 / -1; margin-top: 16px; padding: 14px; background: rgba(30, 41, 59, 0.6); border: 1px dashed rgba(255, 255, 255, 0.15); border-radius: 12px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;';
+        fallbackBanner.innerHTML = `
+            <div style="font-size: 13px; color: #94a3b8; font-weight: 500;">
+                ❓ Don't see your comic in search results? Deep search Comic Vine & Grand Comics Database web scrapers directly.
+            </div>
+            <button type="button" class="btn-use-url btn-search-fallback" style="padding: 6px 14px; font-size: 13px;">
+                🔍 Search Scrapers (Comic Vine & GCP)
+            </button>
+        `;
+        searchResultsGrid.appendChild(fallbackBanner);
+
+        fallbackBanner.querySelector('.btn-search-fallback').addEventListener('click', () => {
+            searchTypeSelect.value = 'scrapers';
+            searchForm.dispatchEvent(new Event('submit'));
         });
 
         // Search Action Click Handlers
