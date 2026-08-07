@@ -622,6 +622,63 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 self._set_headers(500)
                 self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
 
+        elif parsed.path == "/api/batch-embed":
+            volume_url = fields.get("url") or fields.get("volume_url") or ""
+            folder_path_input = fields.get("folder_path", "").strip()
+            items = fields.get("items", [])
+
+            if not folder_path_input or not os.path.exists(folder_path_input):
+                self._set_headers(400)
+                self.wfile.write(json.dumps({"error": f"Folder directory '{folder_path_input}' not found."}).encode("utf-8"))
+                return
+
+            cfg = load_config()
+            delete_old_cbr = cfg.output.delete_cbr
+
+            processed_count = 0
+            errors = []
+
+            try:
+                for item in items:
+                    fname = item.get("filename")
+                    matched_url = item.get("matched_url")
+                    matched_urls = item.get("matched_urls") or ([matched_url] if matched_url else [])
+
+                    if not fname or not matched_urls:
+                        continue
+
+                    full_file_path = os.path.join(folder_path_input, fname)
+                    if not os.path.exists(full_file_path):
+                        continue
+
+                    target_archive = full_file_path
+                    if full_file_path.lower().endswith(".cbr"):
+                        try:
+                            target_archive = convert_cbr_to_cbz(full_file_path, delete_original=delete_old_cbr)
+                        except Exception as ce:
+                            errors.append(f"CBR conversion error for '{fname}': {ce}")
+                            continue
+
+                    try:
+                        comic = fetch_and_merge_urls(matched_urls if len(matched_urls) > 1 else matched_urls[0])
+                        embed_comicinfo_in_cbz(target_archive, comic)
+                        processed_count += 1
+                    except Exception as ie:
+                        errors.append(f"Embedding error for '{fname}': {ie}")
+
+                self._set_headers(200)
+                self.wfile.write(json.dumps({
+                    "success": True,
+                    "folder_path": folder_path_input,
+                    "processed_count": processed_count,
+                    "errors": errors,
+                    "message": f"Successfully embedded ComicInfo.xml into {processed_count} file(s) in '{folder_path_input}'."
+                }).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+
+
         elif parsed.path == "/api/embed":
             url_val = fields.get("urls") or fields.get("url") or ""
             file_path_input = fields.get("file_path", "").strip()
