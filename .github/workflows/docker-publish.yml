@@ -2,7 +2,7 @@ name: Build and Publish Docker Image
 
 on:
   push:
-    branches: [ "v0.1", "main", "page" ]
+    branches: [ "v0.1", "main" ]
     tags: [ "v*" ]
   release:
     types: [published]
@@ -34,15 +34,12 @@ jobs:
           labels: |
             org.opencontainers.image.title=ComicInfo Generator & Tagger
             org.opencontainers.image.description=A web application and CLI tool to automatically scrape comic metadata from Comic Vine and GCP, convert .cbr to .cbz, and embed ComicInfo.xml metadata files.
-            org.opencontainers.image.vendor=jakej985-rgb
           annotations: |
             org.opencontainers.image.title=ComicInfo Generator & Tagger
             org.opencontainers.image.description=A web application and CLI tool to automatically scrape comic metadata from Comic Vine and GCP, convert .cbr to .cbz, and embed ComicInfo.xml metadata files.
           tags: |
-            type=ref,event=branch
-            type=ref,event=tag
-            type=raw,value=v0.1
-            type=raw,value=latest
+            type=raw,value=v0.1,enable=${{ github.ref == 'refs/heads/v0.1' || github.ref == 'refs/tags/v0.1' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/v0.1' || github.ref == 'refs/tags/v0.1' || github.ref == 'refs/heads/main' }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
