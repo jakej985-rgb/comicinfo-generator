@@ -562,10 +562,18 @@
             </div>
             <div class="form-group">
               <label class="form-label">Default Watch Folder Path</label>
-              <input type="text" id="cfg-watch-folder" class="form-control" placeholder="/mnt/disk1/Comics">
+              <div style="display: flex; gap: 8px;">
+                <input type="text" id="cfg-watch-folder" class="form-control" placeholder="/mnt/disk1/Comics">
+                <button type="button" class="btn btn-secondary" onclick="browseWatchFolderInSettings()">📂 Browse</button>
+              </div>
             </div>
           </div>
 
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="cfg-prefer-kapowarr"> Prefer Kapowarr library entries over local watch folder scanner (Default OFF)
+            </label>
+          </div>
           <div class="form-group">
             <label class="checkbox-label">
               <input type="checkbox" id="cfg-overwrite"> Overwrite existing valid ComicInfo.xml files in archives
@@ -586,8 +594,14 @@
     <div id="tab-watcher" class="tab-content">
       <div class="card">
         <div class="card-header">
-          <div class="card-title">👁️ Continuous Library Folder Watcher</div>
-          <div id="watcher-status-badge" class="badge badge-offline">Offline</div>
+          <div class="card-title">👁️ Continuous Library Folder Watcher Daemon</div>
+          <div style="display: flex; gap: 12px; align-items: center;">
+            <div id="watcher-status-badge" class="badge badge-offline">🔴 Inactive</div>
+            <label class="checkbox-label" style="font-weight: 600; font-size: 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; background: rgba(15,23,42,0.6); padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border-card);">
+              <input type="checkbox" id="watcher-toggle-checkbox" onchange="toggleWatcherDaemon(this)">
+              <span>Daemon ON / OFF</span>
+            </label>
+          </div>
         </div>
 
         <div class="form-group">
@@ -1192,10 +1206,22 @@
           document.getElementById('cfg-comicvine-key').value = cfg.comicvine.api_key || '';
           document.getElementById('cfg-workers').value = cfg.automation.workers || 4;
           document.getElementById('cfg-watch-folder').value = cfg.automation.watch_folder || '';
+          document.getElementById('cfg-prefer-kapowarr').checked = !!cfg.automation.prefer_kapowarr;
           document.getElementById('cfg-overwrite').checked = !!cfg.output.overwrite;
           document.getElementById('cfg-delete-cbr').checked = !!cfg.output.delete_cbr;
         }
       } catch (e) {}
+    }
+
+    async function browseWatchFolderInSettings() {
+      fetch('/api/browse-folder', {method: 'POST'})
+        .then(r => r.json())
+        .then(d => {
+          if (d.folder_path) {
+            document.getElementById('cfg-watch-folder').value = d.folder_path;
+            document.getElementById('watcher-folder-input').value = d.folder_path;
+          }
+        });
     }
 
     async function saveConfiguration(e) {
@@ -1210,7 +1236,8 @@
         },
         automation: {
           workers: parseInt(document.getElementById('cfg-workers').value) || 4,
-          watch_folder: document.getElementById('cfg-watch-folder').value.trim()
+          watch_folder: document.getElementById('cfg-watch-folder').value.trim(),
+          prefer_kapowarr: document.getElementById('cfg-prefer-kapowarr').checked
         },
         output: {
           overwrite: document.getElementById('cfg-overwrite').checked,
@@ -1263,20 +1290,31 @@
         const badge = document.getElementById('watcher-status-badge');
         const startBtn = document.getElementById('btn-start-watcher');
         const stopBtn = document.getElementById('btn-stop-watcher');
+        const toggleBox = document.getElementById('watcher-toggle-checkbox');
 
         if (data.is_active) {
           badge.className = 'badge badge-online';
-          badge.innerText = 'Active Watching';
-          startBtn.style.display = 'none';
-          stopBtn.style.display = 'inline-flex';
+          badge.innerText = '🟢 Daemon Active';
+          if (startBtn) startBtn.style.display = 'none';
+          if (stopBtn) stopBtn.style.display = 'inline-flex';
+          if (toggleBox) toggleBox.checked = true;
           document.getElementById('watcher-folder-input').value = data.watch_folder;
         } else {
           badge.className = 'badge badge-offline';
-          badge.innerText = 'Inactive';
-          startBtn.style.display = 'inline-flex';
-          stopBtn.style.display = 'none';
+          badge.innerText = '🔴 Daemon Inactive';
+          if (startBtn) startBtn.style.display = 'inline-flex';
+          if (stopBtn) stopBtn.style.display = 'none';
+          if (toggleBox) toggleBox.checked = false;
         }
       } catch (e) {}
+    }
+
+    function toggleWatcherDaemon(checkbox) {
+      if (checkbox.checked) {
+        startWatcher();
+      } else {
+        stopWatcher();
+      }
     }
 
     async function browseWatcherFolder() {
@@ -1650,7 +1688,7 @@
 
         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 16px;">
           <button type="button" class="btn btn-secondary" onclick="closeEditorModal()">Cancel</button>
-          <button type="submit" class="btn btn-primary">⚡ Save & Embed to File</button>
+          <button type="button" class="btn btn-primary" onclick="saveCustomMetadata(event)">⚡ Save & Embed to File</button>
         </div>
       </form>
     </div>

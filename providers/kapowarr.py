@@ -218,9 +218,10 @@ class KapowarrProvider(BaseProvider):
 
         return None
 
-    def get_library_status(self, watch_folder: str = "") -> list[dict]:
+    def get_library_status(self, watch_folder: str = "", prefer_kapowarr: bool = False) -> list[dict]:
         """Fetches Kapowarr library volumes AND scans local watch_folder for all comic series."""
-        library_items = []
+        kapowarr_items = []
+        local_items = []
         existing_paths = set()
 
         # 1. Fetch from Kapowarr API if configured
@@ -272,7 +273,7 @@ class KapowarrProvider(BaseProvider):
                         else:
                             missing_count = s.get("issue_count", 0)
 
-                        library_items.append({
+                        kapowarr_items.append({
                             "id": s_id,
                             "title": s_name,
                             "year": s_year,
@@ -286,6 +287,7 @@ class KapowarrProvider(BaseProvider):
                             "missing_count": missing_count,
                             "has_missing": missing_count > 0,
                             "is_complete": tagged_count > 0 and missing_count == 0,
+                            "source": "kapowarr",
                             "status_label": f"{tagged_count}/{total_files} Tagged ({missing_count} Missing)" if total_files > 0 else f"Folder Not Scanned ({s.get('issue_count', 0)} issues)"
                         })
             except Exception:
@@ -333,7 +335,7 @@ class KapowarrProvider(BaseProvider):
                     else:
                         missing_count += 1
 
-                library_items.append({
+                local_items.append({
                     "id": f"local_{local_idx}",
                     "title": series_title,
                     "year": "",
@@ -347,9 +349,13 @@ class KapowarrProvider(BaseProvider):
                     "missing_count": missing_count,
                     "has_missing": missing_count > 0,
                     "is_complete": tagged_count > 0 and missing_count == 0,
+                    "source": "local",
                     "status_label": f"{tagged_count}/{total_files} Tagged ({missing_count} Missing)"
                 })
                 local_idx += 1
 
-        return library_items
+        if prefer_kapowarr:
+            return kapowarr_items + local_items
+        else:
+            return local_items + kapowarr_items
 

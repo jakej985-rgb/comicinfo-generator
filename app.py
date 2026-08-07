@@ -350,7 +350,7 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 "config": {
                     "comicvine": {"api_key": cfg.comicvine.api_key},
                     "kapowarr": {"url": cfg.kapowarr.url, "api_key": cfg.kapowarr.api_key},
-                    "automation": {"mode": cfg.automation.mode, "workers": cfg.automation.workers, "watch_folder": cfg.automation.watch_folder},
+                    "automation": {"mode": cfg.automation.mode, "workers": cfg.automation.workers, "watch_folder": cfg.automation.watch_folder, "prefer_kapowarr": cfg.automation.prefer_kapowarr},
                     "cache": {"enabled": cfg.cache.enabled, "db_path": cfg.cache.db_path},
                     "output": {"embed_xml": cfg.output.embed_xml, "overwrite": cfg.output.overwrite, "delete_cbr": cfg.output.delete_cbr},
                     "logging": {"level": cfg.logging.level, "log_file": cfg.logging.log_file}
@@ -361,9 +361,9 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             try:
                 cfg = load_config()
                 kap = KapowarrProvider(url=cfg.kapowarr.url, api_key=cfg.kapowarr.api_key)
-                items = kap.get_library_status(watch_folder=cfg.automation.watch_folder)
+                items = kap.get_library_status(watch_folder=cfg.automation.watch_folder, prefer_kapowarr=cfg.automation.prefer_kapowarr)
                 self._set_headers(200)
-                self.wfile.write(json.dumps({"online": kap.is_configured(), "items": items}).encode("utf-8"))
+                self.wfile.write(json.dumps({"online": kap.test_connection(), "items": items}).encode("utf-8"))
             except Exception as e:
                 self._set_headers(500)
                 self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
@@ -769,7 +769,7 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"error": "Target comic file path is required."}).encode("utf-8"))
                 return
 
-            real_file_path = find_file_path(file_path_input)
+            real_file_path = file_path_input if os.path.exists(file_path_input) else find_file_path(file_path_input)
             if not real_file_path or not os.path.exists(real_file_path):
                 self._set_headers(404)
                 self.wfile.write(json.dumps({"error": f"File '{file_path_input}' not found."}).encode("utf-8"))
