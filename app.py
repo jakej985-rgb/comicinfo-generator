@@ -838,6 +838,19 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
             return
 
+        elif parsed.path == "/api/story-arc/fix-device-metadata":
+            story_arc_name = fields.get("story_arc_name") or fields.get("arc_name") or fields.get("title") or "Story Arc"
+            issues_list = fields.get("issues", [])
+            try:
+                from providers.story_arc import fix_story_arcs_on_device
+                res = fix_story_arcs_on_device(issues_list, story_arc_name=story_arc_name)
+                self._set_headers(200)
+                self.wfile.write(json.dumps(res).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+            return
+
         elif parsed.path == "/api/embed-custom":
             file_path_input = fields.get("file_path", "").strip()
             comic_data = fields.get("comic") or fields.get("metadata") or {}

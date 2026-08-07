@@ -700,11 +700,28 @@
           </div>
 
           <div id="custom-list-drawer" style="display: none; margin-top: 12px;">
-            <label class="form-label">Paste Chronological Crossover List (Auto-expands ranges like Ultimate Fantastic Four #21-23, Black Panther #28-30)</label>
-            <textarea id="custom-list-textarea" class="form-control" rows="8" placeholder="Marvel Zombies: Dead Days #1&#10;Marvel Zombies vs. Army of Darkness #1-5&#10;Marvel Zombies: Evil Evolution #1&#10;Marvel Apes #1-4&#10;Ultimate Fantastic Four #21-23&#10;Marvel Zombies #1-5&#10;Ultimate Fantastic Four #30-32&#10;Black Panther #28-30&#10;Marvel Zombies 2 #1-5&#10;Marvel Zombies Return #1-5&#10;Marvel Zombies 3 #1-4&#10;Marvel Zombies 4 #1-4&#10;Deadpool: Merc with a Mouth #1-13&#10;Marvel Zombies 5 #1-5&#10;Marvel Zombies Supreme #1-5&#10;Marvel Zombies Destroy #1-5"></textarea>
-            <div style="margin-top: 8px; display: flex; justify-content: flex-end;">
+            <div id="modify-mode-banner" style="display: none; background: linear-gradient(135deg, rgba(16,185,129,0.15), rgba(5,150,105,0.1)); border: 1px solid #10b981; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px; color: #34d399;">
+              ✏️ <strong>Modify Mode</strong> — This is the reading order from the loaded arc. Edit freely: reorder lines, remove collected/duplicate issues, add tie-ins. One entry per line.
+            </div>
+            <div style="display: flex; gap: 12px; align-items: flex-end; margin-bottom: 10px; flex-wrap: wrap;">
+              <div style="flex: 1; min-width: 200px;">
+                <label class="form-label" style="margin-bottom: 4px;">Arc / Saga Name</label>
+                <input type="text" id="custom-arc-name-input" class="form-control" style="height: 38px;" placeholder="e.g. Marvel Zombies Full Saga, Civil War Reading Order..." value="">
+              </div>
+              <div style="flex-shrink: 0;">
+                <button type="button" class="btn btn-secondary" style="height: 38px; font-size: 13px;" onclick="clearCustomListDrawer()">
+                  🗑️ Clear
+                </button>
+              </div>
+            </div>
+            <label class="form-label">Reading Order List (Auto-expands ranges like <em>Ultimate Fantastic Four #21-23</em>, <em>Black Panther #28-30</em>). One series + issue per line.</label>
+            <textarea id="custom-list-textarea" class="form-control" rows="10" placeholder="Marvel Zombies: Dead Days #1&#10;Marvel Zombies vs. Army of Darkness #1-5&#10;Marvel Zombies: Evil Evolution #1&#10;Marvel Apes #1-4&#10;Ultimate Fantastic Four #21-23&#10;Marvel Zombies #1-5&#10;Ultimate Fantastic Four #30-32&#10;Black Panther #28-30&#10;Marvel Zombies 2 #1-5&#10;Marvel Zombies Return #1-5&#10;Marvel Zombies 3 #1-4&#10;Marvel Zombies 4 #1-4&#10;Deadpool: Merc with a Mouth #1-13&#10;Marvel Zombies 5 #1-5&#10;Marvel Zombies Supreme #1-5&#10;Marvel Zombies Destroy #1-5"></textarea>
+            <div style="margin-top: 8px; display: flex; justify-content: flex-end; gap: 8px;">
+              <button type="button" class="btn btn-secondary" onclick="toggleCustomListDrawer()" style="font-size: 13px;">
+                ✖ Close
+              </button>
               <button type="button" class="btn btn-primary" onclick="parseAndLoadCustomCrossoverList()">
-                ⚡ Expand & Track Full Crossover Reading Order
+                ⚡ Expand &amp; Track Reading Order
               </button>
             </div>
           </div>
@@ -1815,12 +1832,21 @@
       const text = document.getElementById('custom-list-textarea').value.trim();
       if (!text) return alert("Please enter or paste a reading order list.");
 
+      const arcNameEl = document.getElementById('custom-arc-name-input');
+      const arcName = (arcNameEl && arcNameEl.value.trim()) ? arcNameEl.value.trim() : "Custom Chronological Crossover Saga";
+
       const card = document.getElementById('story-arc-detail-card');
       const banner = document.getElementById('story-arc-header-banner');
       const tableArea = document.getElementById('story-arc-issues-table-area');
 
+      // Close modify mode banner + hide drawer
+      const modifyBanner = document.getElementById('modify-mode-banner');
+      if (modifyBanner) modifyBanner.style.display = 'none';
+      const drawer = document.getElementById('custom-list-drawer');
+      if (drawer) drawer.style.display = 'none';
+
       card.style.display = 'block';
-      banner.innerHTML = "<div style='color: var(--text-muted); padding: 12px;'>Expanding crossover issue ranges and cross-referencing disk library...</div>";
+      banner.innerHTML = `<div style='color: var(--text-muted); padding: 12px;'>Expanding "${arcName}" reading order and cross-referencing disk library...</div>`;
       tableArea.innerHTML = "";
       card.scrollIntoView({ behavior: 'smooth' });
 
@@ -1828,7 +1854,7 @@
         const res = await fetch('/api/story-arc/parse-custom', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ text: text, title: "Custom Chronological Crossover Saga" })
+          body: JSON.stringify({ text: text, title: arcName })
         });
         const data = await res.json();
         if (data.success && data.data) {
@@ -1837,6 +1863,41 @@
       } catch (e) {
         banner.innerHTML = `<div style="color: var(--danger); padding: 12px;">Error: ${e}</div>`;
       }
+    }
+
+    function openModifyReadingOrder() {
+      if (!currentStoryArcData || !currentStoryArcData.issues) return;
+
+      // Build editable plain-text reading order from current arc issues
+      const lines = currentStoryArcData.issues.map(iss => {
+        const series = iss.series || '';
+        const num = iss.number || '1';
+        return `${series} #${num}`;
+      });
+
+      const textarea = document.getElementById('custom-list-textarea');
+      const arcNameEl = document.getElementById('custom-arc-name-input');
+      const drawer = document.getElementById('custom-list-drawer');
+      const modifyBanner = document.getElementById('modify-mode-banner');
+
+      // Pre-populate with current arc
+      textarea.value = lines.join('\n');
+      if (arcNameEl) arcNameEl.value = currentStoryArcData.title || '';
+      if (modifyBanner) modifyBanner.style.display = 'block';
+
+      // Open drawer and scroll to it
+      drawer.style.display = 'block';
+      drawer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      textarea.focus();
+    }
+
+    function clearCustomListDrawer() {
+      const textarea = document.getElementById('custom-list-textarea');
+      const arcNameEl = document.getElementById('custom-arc-name-input');
+      const modifyBanner = document.getElementById('modify-mode-banner');
+      if (textarea) textarea.value = '';
+      if (arcNameEl) arcNameEl.value = '';
+      if (modifyBanner) modifyBanner.style.display = 'none';
     }
 
     async function loadStoryArcDetail(arcUrl) {
@@ -1877,18 +1938,29 @@
               <div style="display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap;">
                 <span class="badge badge-gcp">Total Issues: ${arc.total_issues}</span>
                 <span class="badge badge-online">On Disk: ${arc.found_count} / ${arc.total_issues}</span>
-                <span class="badge badge-cv">Tagged: ${arc.tagged_count}</span>
+                <span class="badge badge-cv">XML Tagged: ${arc.tagged_count}</span>
+                <span class="badge ${arc.arc_tagged_count === arc.found_count && arc.found_count > 0 ? 'badge-online' : 'badge-offline'}">
+                  Arc Tagged: ${arc.arc_tagged_count} / ${arc.found_count}
+                </span>
                 ${arc.missing_count > 0 ? `<span class="badge badge-offline">Missing: ${arc.missing_count}</span>` : `<span class="badge badge-online">100% Complete</span>`}
               </div>
             </div>
           </div>
-          <div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end;">
+            <button class="btn btn-secondary" style="font-size: 13px;" onclick="openModifyReadingOrder()">
+              ✏️ Modify Reading Order
+            </button>
+            ${arc.found_count > 0 ? `
+              <button class="btn btn-secondary" style="background: linear-gradient(135deg, #10b981, #059669); color: #fff; font-weight: 700;" onclick="fixStoryArcMetadataOnDevice()">
+                🏷️ Tag / Fix StoryArc Metadata on Device (${arc.found_count} Files)
+              </button>
+            ` : ''}
             ${arc.missing_count > 0 ? `
               <button class="btn btn-primary" onclick="requestAllMissingStoryArcIssues()">
                 ⚡ Request All ${arc.missing_count} Missing Issues on Kapowarr
               </button>
             ` : `
-              <div style="color: #34d399; font-weight: 700;">✅ All issues in library!</div>
+              <div style="color: #34d399; font-weight: 700; align-self: center;">✅ All issues in library!</div>
             `}
           </div>
         </div>
@@ -1901,7 +1973,8 @@
               <th style="padding: 10px;"># Order</th>
               <th style="padding: 10px;">Series / Issue Title</th>
               <th style="padding: 10px;">Database Link</th>
-              <th style="padding: 10px;">Library Status</th>
+              <th style="padding: 10px;">File Status</th>
+              <th style="padding: 10px;">StoryArc Metadata Tag</th>
               <th style="padding: 10px; text-align: right;">Actions</th>
             </tr>
           </thead>
@@ -1916,6 +1989,13 @@
           statusBadge = '<span class="badge badge-cv">📁 File Found</span>';
         }
 
+        let arcTagBadge = '<span style="color: var(--text-muted); font-size: 12px;">—</span>';
+        if (iss.has_matching_arc) {
+          arcTagBadge = `<span class="badge badge-online" title="ComicInfo.xml contains <StoryArc>${iss.story_arc_tag}</StoryArc>">✅ ${iss.story_arc_tag} ${iss.story_arc_num ? '#' + iss.story_arc_num : ''}</span>`;
+        } else if (iss.is_found) {
+          arcTagBadge = `<span class="badge badge-offline" title="ComicInfo.xml is missing <StoryArc> tag">⚠️ Missing Arc Tag ${iss.story_arc_tag ? `("${iss.story_arc_tag}")` : ''}</span>`;
+        }
+
         tableHtml += `
           <tr style="border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 14px;">
             <td style="padding: 10px; color: var(--accent); font-weight: 700;">${idx + 1}</td>
@@ -1927,6 +2007,7 @@
               ${iss.url ? `<a href="${iss.url}" target="_blank" style="color: var(--primary); font-size: 13px; text-decoration: none;">🌐 ComicVine Link</a>` : '<span style="color: var(--text-muted); font-size: 12px;">Crossover Tie-In</span>'}
             </td>
             <td style="padding: 10px;">${statusBadge}</td>
+            <td style="padding: 10px;">${arcTagBadge}</td>
             <td style="padding: 10px; text-align: right;">
               <div style="display: flex; gap: 8px; justify-content: flex-end;" id="arc-issue-actions-${idx}">
                 ${!iss.is_found ? `
@@ -1946,6 +2027,42 @@
 
       tableHtml += `</tbody></table>`;
       tableArea.innerHTML = tableHtml;
+    }
+
+    async function fixStoryArcMetadataOnDevice() {
+      if (!currentStoryArcData || !currentStoryArcData.issues) return;
+      const foundIssues = currentStoryArcData.issues.filter(i => i.is_found && i.file_path);
+      if (foundIssues.length === 0) return alert("No comic files found on device to update.");
+
+      const arcName = currentStoryArcData.title || "Marvel Zombies";
+      if (!confirm(`Are you sure you want to write <StoryArc>${arcName}</StoryArc> and reading order numbers into ComicInfo.xml for all ${foundIssues.length} file(s) on your device?`)) return;
+
+      const banner = document.getElementById('story-arc-header-banner');
+      banner.innerHTML = `<div style='color: var(--accent); padding: 12px;'>Writing <StoryArc>${arcName}</StoryArc> metadata tags into ${foundIssues.length} local CBZ files...</div>`;
+
+      try {
+        const res = await fetch('/api/story-arc/fix-device-metadata', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            story_arc_name: arcName,
+            issues: currentStoryArcData.issues
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert(`✅ ${data.message || 'Updated StoryArc metadata on device!'}`);
+          if (currentStoryArcData.url) {
+            loadStoryArcDetail(currentStoryArcData.url);
+          } else {
+            loadPresetStoryArc('marvel_zombies');
+          }
+        } else {
+          alert(`❌ Error: ${data.error || 'Failed to update StoryArc metadata'}`);
+        }
+      } catch (e) {
+        alert(`❌ Error: ${e}`);
+      }
     }
 
     async function requestIssueOnKapowarr(idx) {

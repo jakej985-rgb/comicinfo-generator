@@ -21,7 +21,10 @@ def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
             )
         raise ValueError(f"File '{archive_path}' is not a valid ZIP archive.")
 
-    xml_data = generate_xml_bytes(comic)
+    if isinstance(comic, bytes):
+        xml_data = comic
+    else:
+        xml_data = generate_xml_bytes(comic)
     dir_name = os.path.dirname(os.path.abspath(archive_path))
     
     # Create temp zip file in the same directory for atomic replace

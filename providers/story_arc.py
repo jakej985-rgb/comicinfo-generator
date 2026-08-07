@@ -3,9 +3,11 @@ import re
 import urllib.parse
 import zipfile
 import requests
+import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 from config import load_config
 from providers.kapowarr import KapowarrProvider
+from writers.archive import embed_comicinfo_in_cbz
 
 try:
     import cloudscraper
@@ -147,13 +149,17 @@ def get_story_arc_details(arc_url: str, watch_folder: str = "") -> dict:
                         "cv_issue_id": cv_issue_id,
                         "is_found": False,
                         "is_tagged": False,
+                        "story_arc_tag": "",
+                        "story_arc_num": "",
+                        "has_matching_arc": False,
                         "file_path": ""
                     })
 
-        _cross_reference_issues(issues, watch_folder=watch_folder)
+        _cross_reference_issues(issues, story_arc_name=arc_title, watch_folder=watch_folder)
 
         found_count = sum(1 for i in issues if i["is_found"])
         tagged_count = sum(1 for i in issues if i["is_tagged"])
+        arc_tagged_count = sum(1 for i in issues if i["has_matching_arc"])
         missing_count = len(issues) - found_count
 
         return {
@@ -164,6 +170,7 @@ def get_story_arc_details(arc_url: str, watch_folder: str = "") -> dict:
             "total_issues": len(issues),
             "found_count": found_count,
             "tagged_count": tagged_count,
+            "arc_tagged_count": arc_tagged_count,
             "missing_count": missing_count,
             "issues": issues
         }
@@ -190,6 +197,9 @@ def parse_custom_chronological_reading_order(text: str, arc_name: str = "Chronol
                     "cv_issue_id": "",
                     "is_found": False,
                     "is_tagged": False,
+                    "story_arc_tag": "",
+                    "story_arc_num": "",
+                    "has_matching_arc": False,
                     "file_path": ""
                 })
         else:
@@ -205,6 +215,9 @@ def parse_custom_chronological_reading_order(text: str, arc_name: str = "Chronol
                     "cv_issue_id": "",
                     "is_found": False,
                     "is_tagged": False,
+                    "story_arc_tag": "",
+                    "story_arc_num": "",
+                    "has_matching_arc": False,
                     "file_path": ""
                 })
             else:
@@ -216,13 +229,17 @@ def parse_custom_chronological_reading_order(text: str, arc_name: str = "Chronol
                     "cv_issue_id": "",
                     "is_found": False,
                     "is_tagged": False,
+                    "story_arc_tag": "",
+                    "story_arc_num": "",
+                    "has_matching_arc": False,
                     "file_path": ""
                 })
 
-    _cross_reference_issues(expanded, watch_folder=watch_folder)
+    _cross_reference_issues(expanded, story_arc_name=arc_name, watch_folder=watch_folder)
 
     found_count = sum(1 for i in expanded if i["is_found"])
     tagged_count = sum(1 for i in expanded if i["is_tagged"])
+    arc_tagged_count = sum(1 for i in expanded if i["has_matching_arc"])
     missing_count = len(expanded) - found_count
 
     return {
@@ -233,11 +250,12 @@ def parse_custom_chronological_reading_order(text: str, arc_name: str = "Chronol
         "total_issues": len(expanded),
         "found_count": found_count,
         "tagged_count": tagged_count,
+        "arc_tagged_count": arc_tagged_count,
         "missing_count": missing_count,
         "issues": expanded
     }
 
-def _cross_reference_issues(issues_list: list[dict], watch_folder: str = "") -> None:
+def _cross_reference_issues(issues_list: list[dict], story_arc_name: str = "", watch_folder: str = "") -> None:
     """Indexes local watch_folder AND Kapowarr monitored volume directories for issue matching."""
     cfg = load_config()
     if not watch_folder:
@@ -253,7 +271,6 @@ def _cross_reference_issues(issues_list: list[dict], watch_folder: str = "") -> 
             kap = KapowarrProvider(url=cfg.kapowarr.url, api_key=cfg.kapowarr.api_key)
             vols = kap.search_series("")
             for v in vols:
-                # Fetch detailed volume folder path
                 v_id = v.get("id")
                 r = requests.get(f"{cfg.kapowarr.url.rstrip('/')}/api/volumes/{v_id}", headers=kap._get_headers(), params=kap._get_params(), timeout=3)
                 if r.status_code == 200:
@@ -274,7 +291,7 @@ def _cross_reference_issues(issues_list: list[dict], watch_folder: str = "") -> 
                 if f.lower().endswith((".cbz", ".cbr")):
                     file_index.append((root, f, os.path.join(root, f)))
 
-    for item in issues_list:
+    for idx, item in enumerate(issues_list):
         ser = item.get("series", "")
         num = item.get("number", "")
 
@@ -285,6 +302,9 @@ def _cross_reference_issues(issues_list: list[dict], watch_folder: str = "") -> 
 
         item["is_found"] = False
         item["is_tagged"] = False
+        item["story_arc_tag"] = ""
+        item["story_arc_num"] = ""
+        item["has_matching_arc"] = False
         item["file_path"] = ""
 
         for root, f, full_p in file_index:
@@ -306,12 +326,92 @@ def _cross_reference_issues(issues_list: list[dict], watch_folder: str = "") -> 
                     item["is_found"] = True
                     item["file_path"] = full_p
                     if f.lower().endswith(".cbz"):
-                        try:
-                            with zipfile.ZipFile(full_p, 'r') as zf:
-                                item["is_tagged"] = "comicinfo.xml" in [n.lower() for n in zf.namelist()]
-                        except Exception:
-                            pass
+                        story_arc_tag, story_arc_num, is_xml_present = _read_story_arc_from_cbz(full_p)
+                        item["is_tagged"] = is_xml_present
+                        item["story_arc_tag"] = story_arc_tag
+                        item["story_arc_num"] = story_arc_num
+                        clean_arc_name = _clean_arc_name(story_arc_name)
+                        item["has_matching_arc"] = bool(clean_arc_name and clean_arc_name in story_arc_tag.lower())
                     break
+
+def _clean_arc_name(raw: str) -> str:
+    if not raw:
+        return ""
+    m = re.search(r'"([^"]+)"', raw)
+    if m:
+        return m.group(1).lower().strip()
+    clean = re.sub(r"\(.*?\)", "", raw).lower().strip()
+    return clean
+
+def _read_story_arc_from_cbz(file_path: str) -> tuple[str, str, bool]:
+    """Reads <StoryArc> and <StoryArcNumber> from ComicInfo.xml inside a .cbz archive."""
+    try:
+        with zipfile.ZipFile(file_path, 'r') as zf:
+            names = [n.lower() for n in zf.namelist()]
+            if "comicinfo.xml" in names:
+                for n in zf.namelist():
+                    if n.lower() == "comicinfo.xml":
+                        xml_bytes = zf.read(n)
+                        root = ET.fromstring(xml_bytes)
+                        arc = root.findtext("StoryArc") or root.findtext("Storyarc") or ""
+                        num = root.findtext("StoryArcNumber") or ""
+                        return arc.strip(), num.strip(), True
+    except Exception:
+        pass
+    return "", "", False
+
+def fix_story_arcs_on_device(issues_list: list[dict], story_arc_name: str) -> dict:
+    """Updates <StoryArc> and <StoryArcNumber> in ComicInfo.xml for all issues found on device."""
+    clean_arc = _clean_arc_name(story_arc_name) or story_arc_name.strip()
+    updated_count = 0
+    errors = []
+
+    for idx, iss in enumerate(issues_list):
+        full_p = iss.get("file_path", "")
+        if iss.get("is_found") and full_p and os.path.exists(full_p) and full_p.lower().endswith(".cbz"):
+            order_num = str(idx + 1)
+            try:
+                # Read existing XML or create new
+                existing_xml_bytes = None
+                with zipfile.ZipFile(full_p, 'r') as zf:
+                    for n in zf.namelist():
+                        if n.lower() == "comicinfo.xml":
+                            existing_xml_bytes = zf.read(n)
+                            break
+
+                if existing_xml_bytes:
+                    root = ET.fromstring(existing_xml_bytes)
+                else:
+                    root = ET.Element("ComicInfo")
+                    fname = os.path.basename(full_p)
+                    ET.SubElement(root, "Title").text = iss.get("title") or fname
+                    ET.SubElement(root, "Series").text = iss.get("series") or ""
+                    ET.SubElement(root, "Number").text = iss.get("number") or "1"
+
+                # Update StoryArc
+                arc_elem = root.find("StoryArc") or root.find("Storyarc")
+                if arc_elem is None:
+                    arc_elem = ET.SubElement(root, "StoryArc")
+                arc_elem.text = clean_arc.title() if clean_arc == "marvel zombies" else story_arc_name
+
+                # Update StoryArcNumber
+                num_elem = root.find("StoryArcNumber")
+                if num_elem is None:
+                    num_elem = ET.SubElement(root, "StoryArcNumber")
+                num_elem.text = order_num
+
+                new_xml_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+                embed_comicinfo_in_cbz(full_p, new_xml_bytes)
+                updated_count += 1
+            except Exception as e:
+                errors.append(f"{os.path.basename(full_p)}: {e}")
+
+    return {
+        "success": True,
+        "updated_count": updated_count,
+        "errors": errors,
+        "message": f"Successfully updated <StoryArc> metadata in {updated_count} local comic file(s) on device!"
+    }
 
 def _is_exact_series_match(target_series: str, file_name: str, folder_path: str) -> bool:
     clean_target = target_series.lower().replace("-", " ").replace(":", "").strip()
