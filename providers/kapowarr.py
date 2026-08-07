@@ -219,73 +219,137 @@ class KapowarrProvider(BaseProvider):
         return None
 
     def get_library_status(self, watch_folder: str = "") -> list[dict]:
-        """Fetches Kapowarr library volumes and checks disk for ComicInfo.xml presence."""
+        """Fetches Kapowarr library volumes AND scans local watch_folder for all comic series."""
         library_items = []
-        if not self.url:
-            return library_items
+        existing_paths = set()
 
-        try:
-            r = requests.get(f"{self.url}/api/volumes", headers=self._get_headers(), params=self._get_params(), timeout=6)
-            if r.status_code == 200:
-                resp_json = r.json()
-                data = resp_json.get("result", resp_json) if isinstance(resp_json, dict) else resp_json
-                series_list = data if isinstance(data, list) else []
+        # 1. Fetch from Kapowarr API if configured
+        if self.url:
+            try:
+                r = requests.get(f"{self.url}/api/volumes", headers=self._get_headers(), params=self._get_params(), timeout=6)
+                if r.status_code == 200:
+                    resp_json = r.json()
+                    data = resp_json.get("result", resp_json) if isinstance(resp_json, dict) else resp_json
+                    series_list = data if isinstance(data, list) else []
 
-                for s in series_list:
-                    s_id = str(s.get("id", ""))
-                    s_name = s.get("name") or s.get("title", "")
-                    s_year = str(s.get("year", ""))
-                    cv_id = str(s.get("comicvine_id", "") or s.get("cv_id", ""))
-                    folder_path = s.get("folder") or s.get("path") or ""
+                    for s in series_list:
+                        s_id = str(s.get("id", ""))
+                        s_name = s.get("name") or s.get("title", "")
+                        s_year = str(s.get("year", ""))
+                        cv_id = str(s.get("comicvine_id", "") or s.get("cv_id", ""))
+                        folder_path = s.get("folder") or s.get("path") or ""
 
-                    if not folder_path and watch_folder:
-                        candidate = os.path.join(watch_folder, s_name)
-                        if os.path.exists(candidate):
-                            folder_path = candidate
+                        if not folder_path and watch_folder:
+                            candidate = os.path.join(watch_folder, s_name)
+                            if os.path.exists(candidate):
+                                folder_path = candidate
 
-                    total_files = 0
-                    tagged_count = 0
-                    missing_count = 0
+                        if folder_path:
+                            existing_paths.add(os.path.realpath(folder_path))
 
-                    if folder_path and os.path.exists(folder_path) and os.path.isdir(folder_path):
-                        for root, _, files in os.walk(folder_path):
-                            for f in files:
-                                if f.lower().endswith((".cbz", ".cbr")):
-                                    total_files += 1
-                                    full_f = os.path.join(root, f)
-                                    if f.lower().endswith(".cbz"):
-                                        try:
-                                            with zipfile.ZipFile(full_f, 'r') as zf:
-                                                names = [name.lower() for name in zf.namelist()]
-                                                if "comicinfo.xml" in names:
-                                                    tagged_count += 1
-                                                else:
-                                                    missing_count += 1
-                                        except Exception:
+                        total_files = 0
+                        tagged_count = 0
+                        missing_count = 0
+
+                        if folder_path and os.path.exists(folder_path) and os.path.isdir(folder_path):
+                            for root, _, files in os.walk(folder_path):
+                                for f in files:
+                                    if f.lower().endswith((".cbz", ".cbr")):
+                                        total_files += 1
+                                        full_f = os.path.join(root, f)
+                                        if f.lower().endswith(".cbz"):
+                                            try:
+                                                with zipfile.ZipFile(full_f, 'r') as zf:
+                                                    names = [name.lower() for name in zf.namelist()]
+                                                    if "comicinfo.xml" in names:
+                                                        tagged_count += 1
+                                                    else:
+                                                        missing_count += 1
+                                            except Exception:
+                                                missing_count += 1
+                                        else:
                                             missing_count += 1
-                                    else:
-                                        missing_count += 1
-                    else:
-                        missing_count = s.get("issue_count", 0)
+                        else:
+                            missing_count = s.get("issue_count", 0)
 
-                    library_items.append({
-                        "id": s_id,
-                        "title": s_name,
-                        "year": s_year,
-                        "cv_id": cv_id,
-                        "url": f"{self.url}/volume/{s_id}",
-                        "cv_url": f"https://comicvine.gamespot.com/volume/4050-{cv_id}/" if cv_id else "",
-                        "folder_path": folder_path,
-                        "issue_count": s.get("issue_count", 0),
-                        "total_files": total_files,
-                        "tagged_count": tagged_count,
-                        "missing_count": missing_count,
-                        "has_missing": missing_count > 0,
-                        "is_complete": tagged_count > 0 and missing_count == 0,
-                        "status_label": f"{tagged_count}/{total_files} Tagged ({missing_count} Missing)" if total_files > 0 else f"Folder Not Scanned ({s.get('issue_count', 0)} issues)"
-                    })
-        except Exception:
-            pass
+                        library_items.append({
+                            "id": s_id,
+                            "title": s_name,
+                            "year": s_year,
+                            "cv_id": cv_id,
+                            "url": f"{self.url}/volume/{s_id}",
+                            "cv_url": f"https://comicvine.gamespot.com/volume/4050-{cv_id}/" if cv_id else "",
+                            "folder_path": folder_path,
+                            "issue_count": s.get("issue_count", 0),
+                            "total_files": total_files,
+                            "tagged_count": tagged_count,
+                            "missing_count": missing_count,
+                            "has_missing": missing_count > 0,
+                            "is_complete": tagged_count > 0 and missing_count == 0,
+                            "status_label": f"{tagged_count}/{total_files} Tagged ({missing_count} Missing)" if total_files > 0 else f"Folder Not Scanned ({s.get('issue_count', 0)} issues)"
+                        })
+            except Exception:
+                pass
+
+        # 2. Discover local series directories in watch_folder
+        if not watch_folder:
+            watch_folder = "/mnt/disk1/Comics"
+
+        if watch_folder and os.path.exists(watch_folder):
+            local_idx = 1
+            for root, dirs, files in os.walk(watch_folder):
+                cbz_cbr_files = [f for f in files if f.lower().endswith((".cbz", ".cbr"))]
+                if not cbz_cbr_files:
+                    continue
+
+                real_root = os.path.realpath(root)
+                if real_root in existing_paths:
+                    continue
+                existing_paths.add(real_root)
+
+                rel_path = os.path.relpath(root, watch_folder)
+                parts = rel_path.split(os.sep)
+                series_title = parts[0]
+                if len(parts) > 1 and "volume" in parts[1].lower():
+                    series_title = f"{parts[0]} - {parts[1]}"
+                elif len(parts) > 1:
+                    series_title = f"{parts[0]} ({parts[1]})"
+
+                total_files = len(cbz_cbr_files)
+                tagged_count = 0
+                missing_count = 0
+
+                for f in cbz_cbr_files:
+                    full_f = os.path.join(root, f)
+                    if f.lower().endswith(".cbz"):
+                        try:
+                            with zipfile.ZipFile(full_f, 'r') as zf:
+                                if "comicinfo.xml" in [n.lower() for n in zf.namelist()]:
+                                    tagged_count += 1
+                                else:
+                                    missing_count += 1
+                        except Exception:
+                            missing_count += 1
+                    else:
+                        missing_count += 1
+
+                library_items.append({
+                    "id": f"local_{local_idx}",
+                    "title": series_title,
+                    "year": "",
+                    "cv_id": "",
+                    "url": "",
+                    "cv_url": "",
+                    "folder_path": root,
+                    "issue_count": total_files,
+                    "total_files": total_files,
+                    "tagged_count": tagged_count,
+                    "missing_count": missing_count,
+                    "has_missing": missing_count > 0,
+                    "is_complete": tagged_count > 0 and missing_count == 0,
+                    "status_label": f"{tagged_count}/{total_files} Tagged ({missing_count} Missing)"
+                })
+                local_idx += 1
 
         return library_items
 

@@ -351,6 +351,31 @@
     .dropzone:hover {
       background: rgba(99, 102, 241, 0.1);
     }
+
+    /* Modals & Centering */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(12px);
+      z-index: 2000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 24px;
+      overflow-y: auto;
+    }
+    .modal-card {
+      background: var(--bg-card);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--border-card);
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
+      margin: auto;
+      max-height: 88vh;
+      overflow-y: auto;
+    }
   </style>
 </head>
 <body>
