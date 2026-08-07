@@ -1,5 +1,11 @@
 FROM python:3.11-slim
 
+LABEL org.opencontainers.image.title="ComicInfo Generator & Tagger"
+LABEL org.opencontainers.image.description="A web app and CLI tool to scrape comic metadata from Comic Vine and GCP, convert .cbr to .cbz, and embed ComicInfo.xml metadata files."
+LABEL org.opencontainers.image.url="https://github.com/jakej985-rgb/comicinfo-generator"
+LABEL org.opencontainers.image.source="https://github.com/jakej985-rgb/comicinfo-generator"
+LABEL org.opencontainers.image.licenses="MIT"
+
 # Install system utilities for archive extraction (RAR/CBR, ZIP/CBZ)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     unar \
