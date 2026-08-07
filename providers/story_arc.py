@@ -360,57 +360,149 @@ def _read_story_arc_from_cbz(file_path: str) -> tuple[str, str, bool]:
         pass
     return "", "", False
 
+def _parse_arc_list(text: str) -> list[str]:
+    """Splits a comma/semicolon separated <StoryArc> value into a list."""
+    if not text:
+        return []
+    return [s.strip() for s in re.split(r"[,;]", text) if s.strip()]
+
+def _parse_num_list(text: str) -> list[str]:
+    """Splits a comma/semicolon separated <StoryArcNumber> value into a list."""
+    if not text:
+        return []
+    return [s.strip() for s in re.split(r"[,;]", text) if s.strip()]
+
 def fix_story_arcs_on_device(issues_list: list[dict], story_arc_name: str) -> dict:
-    """Updates <StoryArc> and <StoryArcNumber> in ComicInfo.xml for all issues found on device."""
-    clean_arc = _clean_arc_name(story_arc_name) or story_arc_name.strip()
+    """Additively writes <StoryArc> and <StoryArcNumber> into ComicInfo.xml for all found files.
+    If the file already has other story arcs they are preserved; only this arc's entry is added/updated."""
+    arc_name = story_arc_name.strip()
     updated_count = 0
     errors = []
 
     for idx, iss in enumerate(issues_list):
         full_p = iss.get("file_path", "")
-        if iss.get("is_found") and full_p and os.path.exists(full_p) and full_p.lower().endswith(".cbz"):
-            order_num = str(idx + 1)
-            try:
-                # Read existing XML or create new
-                existing_xml_bytes = None
-                with zipfile.ZipFile(full_p, 'r') as zf:
-                    for n in zf.namelist():
-                        if n.lower() == "comicinfo.xml":
-                            existing_xml_bytes = zf.read(n)
-                            break
+        if not (iss.get("is_found") and full_p and os.path.exists(full_p) and full_p.lower().endswith(".cbz")):
+            continue
+        order_num = str(idx + 1)
+        try:
+            # Read existing XML or build minimal skeleton
+            existing_xml_bytes = None
+            with zipfile.ZipFile(full_p, "r") as zf:
+                for n in zf.namelist():
+                    if n.lower() == "comicinfo.xml":
+                        existing_xml_bytes = zf.read(n)
+                        break
 
-                if existing_xml_bytes:
-                    root = ET.fromstring(existing_xml_bytes)
-                else:
-                    root = ET.Element("ComicInfo")
-                    fname = os.path.basename(full_p)
-                    ET.SubElement(root, "Title").text = iss.get("title") or fname
-                    ET.SubElement(root, "Series").text = iss.get("series") or ""
-                    ET.SubElement(root, "Number").text = iss.get("number") or "1"
+            if existing_xml_bytes:
+                root = ET.fromstring(existing_xml_bytes)
+            else:
+                root = ET.Element("ComicInfo")
+                fname = os.path.basename(full_p)
+                ET.SubElement(root, "Title").text = iss.get("title") or fname
+                ET.SubElement(root, "Series").text = iss.get("series") or ""
+                ET.SubElement(root, "Number").text = iss.get("number") or "1"
 
-                # Update StoryArc
-                arc_elem = root.find("StoryArc") or root.find("Storyarc")
-                if arc_elem is None:
-                    arc_elem = ET.SubElement(root, "StoryArc")
-                arc_elem.text = clean_arc.title() if clean_arc == "marvel zombies" else story_arc_name
+            # ── Additive StoryArc logic ──────────────────────────────────────
+            arc_elem = root.find("StoryArc") or root.find("Storyarc")
+            num_elem = root.find("StoryArcNumber")
 
-                # Update StoryArcNumber
-                num_elem = root.find("StoryArcNumber")
-                if num_elem is None:
-                    num_elem = ET.SubElement(root, "StoryArcNumber")
-                num_elem.text = order_num
+            existing_arcs = _parse_arc_list(arc_elem.text if arc_elem is not None else "")
+            existing_nums = _parse_num_list(num_elem.text if num_elem is not None else "")
+            # Pad nums to same length as arcs
+            while len(existing_nums) < len(existing_arcs):
+                existing_nums.append("")
 
-                new_xml_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True)
-                embed_comicinfo_in_cbz(full_p, new_xml_bytes)
-                updated_count += 1
-            except Exception as e:
-                errors.append(f"{os.path.basename(full_p)}: {e}")
+            # Normalise comparison (case-insensitive)
+            norm_name = arc_name.lower()
+            arc_positions = [a.lower() for a in existing_arcs]
+
+            if norm_name in arc_positions:
+                # Update existing entry's number
+                pos = arc_positions.index(norm_name)
+                existing_nums[pos] = order_num
+            else:
+                # Append new arc entry
+                existing_arcs.append(arc_name)
+                existing_nums.append(order_num)
+
+            # Write back
+            if arc_elem is None:
+                arc_elem = ET.SubElement(root, "StoryArc")
+            arc_elem.text = ", ".join(existing_arcs)
+
+            if num_elem is None:
+                num_elem = ET.SubElement(root, "StoryArcNumber")
+            num_elem.text = ", ".join(existing_nums)
+
+            new_xml_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+            embed_comicinfo_in_cbz(full_p, new_xml_bytes)
+            updated_count += 1
+        except Exception as e:
+            errors.append(f"{os.path.basename(full_p)}: {e}")
 
     return {
         "success": True,
         "updated_count": updated_count,
         "errors": errors,
-        "message": f"Successfully updated <StoryArc> metadata in {updated_count} local comic file(s) on device!"
+        "message": f"Successfully added/updated <StoryArc> metadata in {updated_count} local comic file(s) on device!"
+    }
+
+def rename_story_arc_on_device(issues_list: list[dict], old_name: str, new_name: str) -> dict:
+    """Renames an arc tag in ComicInfo.xml across all found files.
+    Replaces old_name with new_name inside the comma-separated <StoryArc> list,
+    keeping all other arcs untouched."""
+    old_norm = old_name.strip().lower()
+    new_name = new_name.strip()
+    renamed_count = 0
+    skipped_count = 0
+    errors = []
+
+    for iss in issues_list:
+        full_p = iss.get("file_path", "")
+        if not (iss.get("is_found") and full_p and os.path.exists(full_p) and full_p.lower().endswith(".cbz")):
+            continue
+        try:
+            existing_xml_bytes = None
+            with zipfile.ZipFile(full_p, "r") as zf:
+                for n in zf.namelist():
+                    if n.lower() == "comicinfo.xml":
+                        existing_xml_bytes = zf.read(n)
+                        break
+
+            if not existing_xml_bytes:
+                skipped_count += 1
+                continue
+
+            root = ET.fromstring(existing_xml_bytes)
+            arc_elem = root.find("StoryArc") or root.find("Storyarc")
+            if arc_elem is None or not arc_elem.text:
+                skipped_count += 1
+                continue
+
+            existing_arcs = _parse_arc_list(arc_elem.text)
+            arc_norms = [a.lower() for a in existing_arcs]
+
+            if old_norm not in arc_norms:
+                skipped_count += 1
+                continue
+
+            # Replace in place
+            pos = arc_norms.index(old_norm)
+            existing_arcs[pos] = new_name
+            arc_elem.text = ", ".join(existing_arcs)
+
+            new_xml_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+            embed_comicinfo_in_cbz(full_p, new_xml_bytes)
+            renamed_count += 1
+        except Exception as e:
+            errors.append(f"{os.path.basename(full_p)}: {e}")
+
+    return {
+        "success": True,
+        "renamed_count": renamed_count,
+        "skipped_count": skipped_count,
+        "errors": errors,
+        "message": f"Renamed '{old_name}' → '{new_name}' in {renamed_count} file(s). {skipped_count} file(s) did not contain the old arc tag."
     }
 
 def _is_exact_series_match(target_series: str, file_name: str, folder_path: str) -> bool:

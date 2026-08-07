@@ -1933,7 +1933,19 @@
           <div style="display: flex; gap: 16px; align-items: center;">
             ${arc.image ? `<img src="${arc.image}" style="width: 70px; height: 105px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border-card);">` : ''}
             <div>
-              <h2 style="font-size: 20px; color: #fff; margin: 0 0 6px 0;">📚 ${arc.title}</h2>
+              <div id="arc-title-display" style="display: flex; align-items: center; gap: 10px; margin-bottom: 6px;">
+                <h2 id="arc-title-h2" style="font-size: 20px; color: #fff; margin: 0;">📚 ${arc.title}</h2>
+                <button title="Rename arc" onclick="startRenameArc()" style="background: none; border: none; cursor: pointer; color: var(--text-muted); font-size: 16px; padding: 2px 6px; border-radius: 4px; transition: color 0.2s;" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--text-muted)'">✏️</button>
+              </div>
+              <div id="arc-title-edit" style="display: none; align-items: center; gap: 8px; margin-bottom: 6px;">
+                <input id="arc-title-input" class="form-control" style="height: 36px; font-size: 16px; font-weight: 700; max-width: 360px;" value="${arc.title}">
+                <button class="btn btn-secondary" style="padding: 5px 12px; font-size: 13px; background: linear-gradient(135deg, #10b981, #059669); color: #fff;" onclick="saveRenameArc()">
+                  ✅ Save &amp; Rename Tags
+                </button>
+                <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 13px;" onclick="cancelRenameArc()">
+                  ✖ Cancel
+                </button>
+              </div>
               <div style="font-size: 13px; color: var(--text-muted); max-width: 600px;">${arc.deck || 'Comic Crossover Story Arc'}</div>
               <div style="display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap;">
                 <span class="badge badge-gcp">Total Issues: ${arc.total_issues}</span>
@@ -2029,13 +2041,76 @@
       tableArea.innerHTML = tableHtml;
     }
 
+    function startRenameArc() {
+      document.getElementById('arc-title-display').style.display = 'none';
+      const editRow = document.getElementById('arc-title-edit');
+      editRow.style.display = 'flex';
+      const inp = document.getElementById('arc-title-input');
+      inp.focus();
+      inp.select();
+    }
+
+    function cancelRenameArc() {
+      document.getElementById('arc-title-edit').style.display = 'none';
+      document.getElementById('arc-title-display').style.display = 'flex';
+    }
+
+    async function saveRenameArc() {
+      const newName = document.getElementById('arc-title-input').value.trim();
+      if (!newName) return alert('Arc name cannot be empty.');
+      const oldName = currentStoryArcData ? currentStoryArcData.title : '';
+      if (newName === oldName) { cancelRenameArc(); return; }
+
+      const foundWithTag = (currentStoryArcData?.issues || []).filter(i => i.is_found && i.story_arc_tag);
+      const hasTaggedFiles = foundWithTag.length > 0;
+
+      let doRename = false;
+      if (hasTaggedFiles) {
+        doRename = confirm(`Rename the arc from "${oldName}" to "${newName}"?\n\nThis will also update the <StoryArc> tag in ${foundWithTag.length} tagged file(s) on your device, replacing "${oldName}" with "${newName}" (other arc tags in those files will be kept).`);
+      } else {
+        doRename = confirm(`Rename arc to "${newName}"? (No tagged files found on device to update.)`);
+      }
+      if (!doRename) return;
+
+      // Update title in UI immediately
+      currentStoryArcData.title = newName;
+      document.getElementById('arc-title-h2').textContent = '📚 ' + newName;
+      cancelRenameArc();
+
+      if (hasTaggedFiles) {
+        try {
+          const res = await fetch('/api/story-arc/rename-metadata', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              old_name: oldName,
+              new_name: newName,
+              issues: currentStoryArcData.issues
+            })
+          });
+          const data = await res.json();
+          if (data.success) {
+            // Refresh issue list to reflect new arc tags
+            if (currentStoryArcData.url) {
+              loadStoryArcDetail(currentStoryArcData.url);
+            }
+            alert(`✅ ${data.message}`);
+          } else {
+            alert(`❌ Rename failed: ${data.error}`);
+          }
+        } catch (e) {
+          alert(`❌ Error: ${e}`);
+        }
+      }
+    }
+
     async function fixStoryArcMetadataOnDevice() {
       if (!currentStoryArcData || !currentStoryArcData.issues) return;
       const foundIssues = currentStoryArcData.issues.filter(i => i.is_found && i.file_path);
       if (foundIssues.length === 0) return alert("No comic files found on device to update.");
 
       const arcName = currentStoryArcData.title || "Marvel Zombies";
-      if (!confirm(`Are you sure you want to write <StoryArc>${arcName}</StoryArc> and reading order numbers into ComicInfo.xml for all ${foundIssues.length} file(s) on your device?`)) return;
+      if (!confirm(`Tag ${foundIssues.length} file(s) with <StoryArc>${arcName}</StoryArc> and sequential reading order numbers?\n\nThis is additive — files that already belong to other story arcs will keep those tags.`)) return;
 
       const banner = document.getElementById('story-arc-header-banner');
       banner.innerHTML = `<div style='color: var(--accent); padding: 12px;'>Writing <StoryArc>${arcName}</StoryArc> metadata tags into ${foundIssues.length} local CBZ files...</div>`;

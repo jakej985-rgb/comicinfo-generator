@@ -851,6 +851,25 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
             return
 
+        elif parsed.path == "/api/story-arc/rename-metadata":
+            old_name = fields.get("old_name", "").strip()
+            new_name = fields.get("new_name", "").strip()
+            issues_list = fields.get("issues", [])
+            if not old_name or not new_name:
+                self._set_headers(400)
+                self.wfile.write(json.dumps({"error": "old_name and new_name are required."}).encode("utf-8"))
+                return
+            try:
+                from providers.story_arc import rename_story_arc_on_device
+                res = rename_story_arc_on_device(issues_list, old_name=old_name, new_name=new_name)
+                self._set_headers(200)
+                self.wfile.write(json.dumps(res).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+            return
+
+
         elif parsed.path == "/api/embed-custom":
             file_path_input = fields.get("file_path", "").strip()
             comic_data = fields.get("comic") or fields.get("metadata") or {}
