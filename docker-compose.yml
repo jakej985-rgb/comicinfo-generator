@@ -8,7 +8,6 @@ services:
     ports:
       - "5005:5005"
     volumes:
-      # Required: Volume mounts to grant container access to your comic files & folders
+      # Required: Mount host comic library directory to embed metadata into archives
       - ${COMICS_PATH:-./comics}:/comics
-      - ${DOWNLOADS_PATH:-~/Downloads}:/downloads
     restart: unless-stopped
