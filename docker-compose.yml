@@ -3,11 +3,12 @@ version: '3.8'
 services:
   comicinfo-generator:
     build: .
-    image: comicinfo-generator:v0.1
+    image: ghcr.io/jakej985-rgb/comicinfo-generator:v0.1
     container_name: comicinfo-generator
     ports:
       - "5005:5005"
+    volumes:
+      # Required: Volume mounts to grant container access to your comic files & folders
+      - ${COMICS_PATH:-./comics}:/comics
+      - ${DOWNLOADS_PATH:-~/Downloads}:/downloads
     restart: unless-stopped
-    # Optional volume mounts for comic libraries:
-    # volumes:
-    #   - /path/to/your/comics:/comics

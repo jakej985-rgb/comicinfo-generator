@@ -48,9 +48,9 @@ docker compose down
    docker build -t comicinfo-generator:v0.1 .
    ```
 
-2. **Run the container**:
+2. **Run the container (mounting your comic directory)**:
    ```bash
-   docker run -d -p 5005:5005 --name comicinfo-generator comicinfo-generator:v0.1
+   docker run -d -p 5005:5005 -v /path/to/your/comics:/comics --name comicinfo-generator ghcr.io/jakej985-rgb/comicinfo-generator:v0.1
    ```
 
 3. Open **`http://localhost:5005`**.
