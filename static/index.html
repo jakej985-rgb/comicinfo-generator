@@ -763,6 +763,8 @@
 
     // --- Batch Folder Actions ---
     let currentBatchItems = [];
+    let batchMetadataCache = {};
+    let allDetailsExpanded = false;
 
     async function previewBatchFolder() {
       const folderPath = document.getElementById('batch-folder-path-input').value.trim();
@@ -792,40 +794,153 @@
         }
 
         currentBatchItems = data.items || [];
+        batchMetadataCache = {};
+        allDetailsExpanded = false;
         embedBtn.style.display = 'inline-block';
 
-        area.innerHTML = `
-          <div style="margin-bottom: 12px; font-weight: 600; color: var(--accent);">
-            Matched ${data.matched_count} of ${data.total_files} file(s) for series '${data.series_name}' [${data.provider || 'Database'}]
-          </div>
-          <div style="max-height: 350px; overflow-y: auto; border: 1px solid var(--border-card); border-radius: 8px; padding: 8px;">
-            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
-              <thead>
-                <tr style="border-bottom: 1px solid var(--border-card); text-align: left; color: var(--text-muted);">
-                  <th style="padding: 6px;">File Name</th>
-                  <th style="padding: 6px;">Extracted #</th>
-                  <th style="padding: 6px;">Action / Match Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${currentBatchItems.map(item => `
-                  <tr style="border-bottom: 1px dashed rgba(255,255,255,0.08);">
-                    <td style="padding: 6px; font-weight: 600;">${item.filename}</td>
-                    <td style="padding: 6px;">#${item.issue_number}</td>
-                    <td style="padding: 6px;">
-                      <span class="badge ${item.matched_url ? 'badge-online' : 'badge-offline'}">
-                        ${item.matched_url ? 'READY TO EMBED' : 'UNMATCHED'}
-                      </span>
-                    </td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
-        `;
+        renderBatchTable(data);
       } catch (e) {
         area.innerHTML = `<div style='color: var(--danger); font-size: 14px;'>Error: ${e}</div>`;
       }
+    }
+
+    function renderBatchTable(data) {
+      const area = document.getElementById('batch-results-area');
+      area.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 10px;">
+          <div style="font-weight: 600; color: var(--accent); font-size: 14px;">
+            Matched ${data.matched_count} of ${data.total_files} file(s) for series '${data.series_name}' [${data.provider || 'Database'}]
+          </div>
+          <button class="btn btn-secondary" style="padding: 4px 12px; font-size: 12px;" onclick="toggleAllBatchDetails()">
+            👁️ Toggle All Details
+          </button>
+        </div>
+        <div style="max-height: 450px; overflow-y: auto; border: 1px solid var(--border-card); border-radius: 12px; padding: 8px; background: rgba(15, 23, 42, 0.4);">
+          <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+            <thead>
+              <tr style="border-bottom: 1px solid var(--border-card); text-align: left; color: var(--text-muted);">
+                <th style="padding: 8px;">File Name</th>
+                <th style="padding: 8px;">Extracted #</th>
+                <th style="padding: 8px;">Match Status</th>
+                <th style="padding: 8px; text-align: right;">Metadata Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${currentBatchItems.map((item, idx) => `
+                <tr style="border-bottom: 1px dashed rgba(255,255,255,0.08);">
+                  <td style="padding: 8px; font-weight: 600; color: #fff;">${item.filename}</td>
+                  <td style="padding: 8px;">#${item.issue_number}</td>
+                  <td style="padding: 8px;">
+                    <span class="badge ${item.matched_url ? 'badge-online' : 'badge-offline'}">
+                      ${item.matched_url ? 'READY TO EMBED' : 'UNMATCHED'}
+                    </span>
+                  </td>
+                  <td style="padding: 8px; text-align: right;">
+                    ${item.matched_url ? `
+                      <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 12px;" onclick="toggleBatchItemDetails(${idx})">
+                        👁️ More Details
+                      </button>
+                    ` : '<span style="color: var(--text-muted); font-size: 12px;">No match</span>'}
+                  </td>
+                </tr>
+                <tr id="batch-details-row-${idx}" style="display: none; background: rgba(30, 41, 59, 0.5); border-bottom: 1px solid var(--border-card);">
+                  <td colspan="4" style="padding: 12px;">
+                    <div id="batch-details-body-${idx}" style="font-size: 13px; color: var(--text-muted);">
+                      Loading issue metadata details...
+                    </div>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    async function toggleBatchItemDetails(idx) {
+      const row = document.getElementById(`batch-details-row-${idx}`);
+      const body = document.getElementById(`batch-details-body-${idx}`);
+      if (!row || !body) return;
+
+      if (row.style.display !== 'none') {
+        row.style.display = 'none';
+        return;
+      }
+
+      row.style.display = 'table-row';
+
+      const item = currentBatchItems[idx];
+      if (!item || !item.matched_url) return;
+
+      if (batchMetadataCache[item.matched_url]) {
+        renderItemDetailsCard(batchMetadataCache[item.matched_url], body);
+        return;
+      }
+
+      body.innerHTML = "<div style='color: var(--text-muted); font-size: 12px;'>⏳ Scraping metadata to be embedded into ComicInfo.xml...</div>";
+
+      try {
+        const res = await fetch('/api/scrape', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ urls: item.matched_url })
+        });
+        const data = await res.json();
+        if (data.comic) {
+          batchMetadataCache[item.matched_url] = data.comic;
+          renderItemDetailsCard(data.comic, body);
+        } else {
+          body.innerHTML = `<div style="color: var(--danger);">Failed to fetch details: ${data.error || 'Unknown error'}</div>`;
+        }
+      } catch (e) {
+        body.innerHTML = `<div style="color: var(--danger);">Error: ${e}</div>`;
+      }
+    }
+
+    function renderItemDetailsCard(c, container) {
+      const creators = [];
+      if (c.writers && c.writers.length) creators.push(`<strong>Writers:</strong> ${c.writers.join(', ')}`);
+      if (c.pencillers && c.pencillers.length) creators.push(`<strong>Pencillers:</strong> ${c.pencillers.join(', ')}`);
+      if (c.inkers && c.inkers.length) creators.push(`<strong>Inkers:</strong> ${c.inkers.join(', ')}`);
+      if (c.colorists && c.colorists.length) creators.push(`<strong>Colorists:</strong> ${c.colorists.join(', ')}`);
+
+      const tags = [];
+      if (c.characters && c.characters.length) tags.push(`<strong>Characters:</strong> ${c.characters.slice(0, 8).join(', ')}${c.characters.length > 8 ? '...' : ''}`);
+      if (c.teams && c.teams.length) tags.push(`<strong>Teams:</strong> ${c.teams.join(', ')}`);
+      if (c.story_arcs && c.story_arcs.length) tags.push(`<strong>Story Arcs:</strong> ${c.story_arcs.join(', ')}`);
+
+      container.innerHTML = `
+        <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-card); border-radius: 8px; padding: 12px;">
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 8px; font-size: 13px;">
+            <div><span style="color: var(--text-muted);">Series:</span> <strong style="color: #fff;">${c.series || 'N/A'}</strong></div>
+            <div><span style="color: var(--text-muted);">Issue:</span> <strong style="color: var(--primary);">#${c.number || 'N/A'}</strong></div>
+            <div><span style="color: var(--text-muted);">Title:</span> <strong style="color: #fff;">${c.title || 'N/A'}</strong></div>
+            <div><span style="color: var(--text-muted);">Publisher:</span> <strong style="color: #fff;">${c.publisher || 'N/A'}</strong></div>
+            <div><span style="color: var(--text-muted);">Year/Date:</span> <strong style="color: #fff;">${c.year || 'N/A'}${c.month ? '-' + String(c.month).padStart(2,'0') : ''}</strong></div>
+          </div>
+          ${c.summary ? `<div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px; line-height: 1.4;"><strong>Summary:</strong> ${c.summary}</div>` : ''}
+          ${creators.length ? `<div style="font-size: 12px; color: var(--text-main); margin-bottom: 4px;">${creators.join(' | ')}</div>` : ''}
+          ${tags.length ? `<div style="font-size: 12px; color: var(--accent);">${tags.join(' | ')}</div>` : ''}
+        </div>
+      `;
+    }
+
+    function toggleAllBatchDetails() {
+      allDetailsExpanded = !allDetailsExpanded;
+      currentBatchItems.forEach((item, idx) => {
+        if (item.matched_url) {
+          const row = document.getElementById(`batch-details-row-${idx}`);
+          if (row) {
+            if (allDetailsExpanded) {
+              if (row.style.display === 'none') {
+                toggleBatchItemDetails(idx);
+              }
+            } else {
+              row.style.display = 'none';
+            }
+          }
+        }
+      });
     }
 
     async function runBatchEmbed() {
