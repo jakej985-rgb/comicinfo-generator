@@ -394,6 +394,7 @@
         <button class="tab-btn" data-tab="kapowarr" onclick="switchTab('kapowarr')">⚡ Kapowarr Library</button>
         <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')">⚙️ Settings & Config</button>
         <button class="tab-btn" data-tab="watcher" onclick="switchTab('watcher')">👁️ Folder Watcher</button>
+        <button class="tab-btn" data-tab="storyarc" onclick="switchTab('storyarc')">📚 Story Arc Tracker</button>
         <button class="tab-btn" data-tab="stats" onclick="switchTab('stats')">📊 Cache & Stats</button>
       </nav>
     </div>
@@ -655,6 +656,40 @@
         </div>
 
         <button class="btn btn-danger" onclick="clearCacheDatabase()">🗑️ Clear SQLite Cache</button>
+      </div>
+    </div>
+
+    <!-- TAB 6: STORY ARC TRACKER -->
+    <div id="tab-storyarc" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">📚 ComicVine Story Arc Reading Order & Kapowarr Tracker</div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group" style="flex: 2;">
+            <label class="form-label">Search ComicVine Story Arcs</label>
+            <div style="display: flex; gap: 8px;">
+              <input type="text" id="arc-search-query" class="form-control" placeholder="e.g. Marvel Zombies, Civil War, Infinity Gauntlet, Secret Wars" onkeydown="if(event.key==='Enter') searchStoryArcs()">
+              <button type="button" class="btn btn-primary" onclick="searchStoryArcs()">🔍 Search Arcs</button>
+            </div>
+          </div>
+          <div class="form-group" style="flex: 2;">
+            <label class="form-label">Or Paste Direct ComicVine Story Arc URL</label>
+            <div style="display: flex; gap: 8px;">
+              <input type="text" id="arc-url-input" class="form-control" placeholder="https://comicvine.gamespot.com/civil-war/4045-40615/">
+              <button type="button" class="btn btn-secondary" onclick="loadStoryArcFromUrlInput()">📖 Load Arc</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="story-arc-search-results" style="margin-top: 16px; display: none;"></div>
+      </div>
+
+      <!-- STORY ARC READING ORDER DETAIL CARD -->
+      <div id="story-arc-detail-card" class="card" style="margin-top: 20px; display: none;">
+        <div id="story-arc-header-banner"></div>
+        <div id="story-arc-issues-table-area" style="margin-top: 16px;"></div>
       </div>
     </div>
 
@@ -1670,6 +1705,213 @@
       } catch (e) {
         alert("❌ Error: " + e);
       }
+    }
+
+    // --- Story Arc Tracker ---
+    let currentStoryArcData = null;
+
+    async function searchStoryArcs() {
+      const q = document.getElementById('arc-search-query').value.trim();
+      if (!q) return alert("Please enter a story arc name to search.");
+
+      const resultsArea = document.getElementById('story-arc-search-results');
+      resultsArea.style.display = 'block';
+      resultsArea.innerHTML = "<div style='color: var(--text-muted); padding: 12px;'>Searching ComicVine for story arcs matching '" + q + "'...</div>";
+
+      try {
+        const res = await fetch(`/api/story-arc/search?q=${encodeURIComponent(q)}`);
+        const data = await res.json();
+
+        if (data.story_arcs && data.story_arcs.length > 0) {
+          let html = `<div style="font-weight: 700; font-size: 14px; margin-bottom: 12px; color: var(--accent);">Found ${data.story_arcs.length} Story Arc(s):</div>`;
+          html += `<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px;">`;
+          data.story_arcs.forEach(arc => {
+            html += `
+              <div class="search-item" onclick="loadStoryArcDetail('${arc.url}')" style="display: flex; gap: 12px; align-items: flex-start;">
+                ${arc.image ? `<img src="${arc.image}" style="width: 50px; height: 75px; object-fit: cover; border-radius: 6px;">` : ''}
+                <div>
+                  <div style="font-weight: 700; font-size: 15px; color: #fff;">${arc.name}</div>
+                  <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">${arc.deck || 'Click to view reading order'}</div>
+                </div>
+              </div>
+            `;
+          });
+          html += `</div>`;
+          resultsArea.innerHTML = html;
+        } else {
+          resultsArea.innerHTML = `<div style="color: var(--text-muted); padding: 12px;">No story arcs found for '${q}'. Try pasting a direct ComicVine Story Arc URL.</div>`;
+        }
+      } catch (e) {
+        resultsArea.innerHTML = `<div style="color: var(--danger); padding: 12px;">Error: ${e}</div>`;
+      }
+    }
+
+    function loadStoryArcFromUrlInput() {
+      const url = document.getElementById('arc-url-input').value.trim();
+      if (!url) return alert("Please enter a valid ComicVine Story Arc URL.");
+      loadStoryArcDetail(url);
+    }
+
+    async function loadStoryArcDetail(arcUrl) {
+      const card = document.getElementById('story-arc-detail-card');
+      const banner = document.getElementById('story-arc-header-banner');
+      const tableArea = document.getElementById('story-arc-issues-table-area');
+
+      card.style.display = 'block';
+      banner.innerHTML = "<div style='color: var(--text-muted); padding: 12px;'>Fetching Story Arc reading order and cross-referencing disk library...</div>";
+      tableArea.innerHTML = "";
+      card.scrollIntoView({ behavior: 'smooth' });
+
+      try {
+        const res = await fetch(`/api/story-arc/detail?url=${encodeURIComponent(arcUrl)}`);
+        const data = await res.json();
+        if (data.success && data.data) {
+          const arc = data.data;
+          currentStoryArcData = arc;
+
+          banner.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--border-card);">
+              <div style="display: flex; gap: 16px; align-items: center;">
+                ${arc.image ? `<img src="${arc.image}" style="width: 70px; height: 105px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border-card);">` : ''}
+                <div>
+                  <h2 style="font-size: 20px; color: #fff; margin: 0 0 6px 0;">📚 ${arc.title}</h2>
+                  <div style="font-size: 13px; color: var(--text-muted); max-width: 600px;">${arc.deck || 'ComicVine Story Arc'}</div>
+                  <div style="display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap;">
+                    <span class="badge badge-gcp">Total Issues: ${arc.total_issues}</span>
+                    <span class="badge badge-online">On Disk: ${arc.found_count} / ${arc.total_issues}</span>
+                    <span class="badge badge-cv">Tagged: ${arc.tagged_count}</span>
+                    ${arc.missing_count > 0 ? `<span class="badge badge-offline">Missing: ${arc.missing_count}</span>` : `<span class="badge badge-online">100% Complete</span>`}
+                  </div>
+                </div>
+              </div>
+              <div>
+                ${arc.missing_count > 0 ? `
+                  <button class="btn btn-primary" onclick="requestAllMissingStoryArcIssues()">
+                    ⚡ Request All ${arc.missing_count} Missing Issues on Kapowarr
+                  </button>
+                ` : `
+                  <div style="color: #34d399; font-weight: 700;">✅ All issues in library!</div>
+                `}
+              </div>
+            </div>
+          `;
+
+          let tableHtml = `
+            <table class="table" style="width: 100%; border-collapse: collapse; margin-top: 12px;">
+              <thead>
+                <tr style="text-align: left; border-bottom: 1px solid var(--border-card); color: var(--text-muted); font-size: 13px;">
+                  <th style="padding: 10px;">#</th>
+                  <th style="padding: 10px;">Series / Issue Title</th>
+                  <th style="padding: 10px;">Database &lt;Web&gt; Link</th>
+                  <th style="padding: 10px;">Library Status</th>
+                  <th style="padding: 10px; text-align: right;">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+          `;
+
+          arc.issues.forEach((iss, idx) => {
+            let statusBadge = '<span class="badge badge-offline">⚠️ Missing</span>';
+            if (iss.is_tagged) {
+              statusBadge = '<span class="badge badge-online">✅ Tagged</span>';
+            } else if (iss.is_found) {
+              statusBadge = '<span class="badge badge-cv">📁 File Found</span>';
+            }
+
+            tableHtml += `
+              <tr style="border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 14px;">
+                <td style="padding: 10px; color: var(--accent); font-weight: 700;">${idx + 1}</td>
+                <td style="padding: 10px;">
+                  <div style="font-weight: 700; color: #fff;">${iss.title}</div>
+                  <div style="font-size: 12px; color: var(--text-muted);">${iss.series} #${iss.number || '1'}</div>
+                </td>
+                <td style="padding: 10px;">
+                  <a href="${iss.url}" target="_blank" style="color: var(--primary); font-size: 13px; text-decoration: none;">🌐 ComicVine Link</a>
+                </td>
+                <td style="padding: 10px;">${statusBadge}</td>
+                <td style="padding: 10px; text-align: right;">
+                  <div style="display: flex; gap: 8px; justify-content: flex-end;" id="arc-issue-actions-${idx}">
+                    ${!iss.is_found ? `
+                      <button class="btn btn-primary" style="padding: 5px 10px; font-size: 12px;" onclick="requestIssueOnKapowarr(${idx})">
+                        📥 Request on Kapowarr
+                      </button>
+                    ` : `
+                      <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px;" onclick="openEditorForArcIssue(${idx})">
+                        ✏️ Edit Metadata
+                      </button>
+                    `}
+                  </div>
+                </td>
+              </tr>
+            `;
+          });
+
+          tableHtml += `</tbody></table>`;
+          tableArea.innerHTML = tableHtml;
+        } else {
+          banner.innerHTML = `<div style="color: var(--danger); padding: 12px;">Error: ${data.error || 'Failed to parse story arc.'}</div>`;
+        }
+      } catch (e) {
+        banner.innerHTML = `<div style="color: var(--danger); padding: 12px;">Error loading arc details: ${e}</div>`;
+      }
+    }
+
+    async function requestIssueOnKapowarr(idx) {
+      if (!currentStoryArcData || !currentStoryArcData.issues[idx]) return;
+      const iss = currentStoryArcData.issues[idx];
+      const actionsDiv = document.getElementById(`arc-issue-actions-${idx}`);
+
+      if (actionsDiv) {
+        actionsDiv.innerHTML = "<span style='color: var(--accent); font-size: 12px;'>Requesting...</span>";
+      }
+
+      try {
+        const res = await fetch('/api/kapowarr/request-issue', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            issue_title: iss.title,
+            issue_id: iss.cv_issue_id,
+            cv_volume_id: iss.cv_issue_id
+          })
+        });
+        const data = await res.json();
+        if (actionsDiv) {
+          if (data.success) {
+            actionsDiv.innerHTML = `<span class="badge badge-online">✅ Requested on Kapowarr!</span>`;
+          } else {
+            actionsDiv.innerHTML = `<span class="badge badge-offline">❌ ${data.error || 'Request failed'}</span>`;
+          }
+        }
+      } catch (e) {
+        if (actionsDiv) actionsDiv.innerHTML = `<span class="badge badge-offline">Error: ${e}</span>`;
+      }
+    }
+
+    async function requestAllMissingStoryArcIssues() {
+      if (!currentStoryArcData || !currentStoryArcData.issues) return;
+      const missingIssues = currentStoryArcData.issues.filter(i => !i.is_found);
+      if (missingIssues.length === 0) return alert("All issues in this story arc are already present in your library!");
+
+      if (!confirm(`Are you sure you want to request all ${missingIssues.length} missing issue(s) on Kapowarr?`)) return;
+
+      for (let i = 0; i < currentStoryArcData.issues.length; i++) {
+        if (!currentStoryArcData.issues[i].is_found) {
+          await requestIssueOnKapowarr(i);
+        }
+      }
+      alert("✅ Sent download requests for all missing story arc issues to Kapowarr!");
+    }
+
+    function openEditorForArcIssue(idx) {
+      if (!currentStoryArcData || !currentStoryArcData.issues[idx]) return;
+      const iss = currentStoryArcData.issues[idx];
+      openEditorModal({
+        series: iss.series,
+        number: iss.number,
+        title: iss.title,
+        web: iss.url
+      }, iss.file_path || "");
     }
   </script>
 

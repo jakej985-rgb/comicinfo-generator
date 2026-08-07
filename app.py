@@ -22,6 +22,7 @@ from cache.db import CacheManager
 from providers.kapowarr import KapowarrProvider
 from providers.comicvine import scrape_issue as scrape_cv_issue, scrape_volume as scrape_cv_volume, search_comicvine, ComicVineProvider
 from providers.gcp import scrape_gcp_issue, scrape_gcp_volume, search_gcp, GCPProvider
+from providers.story_arc import search_story_arcs, get_story_arc_details
 from writers.archive import embed_comicinfo_in_cbz
 from writers.comicinfo import write_xml, generate_xml_bytes
 from converters.cbr_to_cbz import convert_cbr_to_cbz
@@ -417,6 +418,30 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 self._set_headers(500)
                 self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
             return
+        elif path == "/api/story-arc/search":
+            query_params = parse_qs(parsed.query)
+            q = query_params.get("q", [""])[0] or query_params.get("query", [""])[0]
+            try:
+                cfg = load_config()
+                arcs = search_story_arcs(q, api_key=cfg.comicvine.api_key)
+                self._set_headers(200)
+                self.wfile.write(json.dumps({"success": True, "count": len(arcs), "story_arcs": arcs}).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+            return
+        elif path == "/api/story-arc/detail":
+            query_params = parse_qs(parsed.query)
+            arc_url = query_params.get("url", [""])[0]
+            try:
+                cfg = load_config()
+                details = get_story_arc_details(arc_url, watch_folder=cfg.automation.watch_folder)
+                self._set_headers(200)
+                self.wfile.write(json.dumps({"success": True, "data": details}).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+            return
         elif path == "/api/watch/status":
             is_active = global_watcher is not None and global_watcher.observer is not None and global_watcher.observer.is_alive()
             self._set_headers(200)
@@ -779,6 +804,21 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             }) + "\n"
             self.wfile.write(final_chunk.encode("utf-8"))
             self.wfile.flush()
+            return
+
+        elif parsed.path == "/api/kapowarr/request-issue":
+            issue_title = fields.get("issue_title", "")
+            issue_id = fields.get("issue_id", "")
+            cv_volume_id = fields.get("cv_volume_id", "")
+            try:
+                cfg = load_config()
+                kap = KapowarrProvider(url=cfg.kapowarr.url, api_key=cfg.kapowarr.api_key)
+                res = kap.request_issue_download(issue_id=issue_id, cv_volume_id=cv_volume_id, issue_title=issue_title)
+                self._set_headers(200)
+                self.wfile.write(json.dumps(res).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
             return
 
         elif parsed.path == "/api/embed-custom":

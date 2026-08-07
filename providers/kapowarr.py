@@ -87,6 +87,41 @@ class KapowarrProvider(BaseProvider):
 
         return results
 
+    def add_volume(self, cv_volume_id: str, folder_path: str = "") -> dict:
+        """Adds a new comic volume to Kapowarr by ComicVine volume ID."""
+        if not self.url:
+            return {"error": "Kapowarr server URL not configured."}
+        try:
+            payload = {
+                "comicvine_id": str(cv_volume_id),
+                "folder": folder_path
+            }
+            r = requests.post(f"{self.url}/api/volumes", json=payload, headers=self._get_headers(), params=self._get_params(), timeout=10)
+            if r.status_code in (200, 201):
+                return {"success": True, "data": r.json()}
+            return {"error": f"Kapowarr returned status {r.status_code}: {r.text}"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def request_issue_download(self, issue_id: str = "", cv_volume_id: str = "", issue_title: str = "") -> dict:
+        """Triggers Kapowarr search/download for a specific issue or volume."""
+        if not self.url:
+            return {"error": "Kapowarr server URL not configured."}
+        try:
+            if issue_id:
+                r = requests.post(f"{self.url}/api/issue/{issue_id}/search", headers=self._get_headers(), params=self._get_params(), timeout=10)
+                if r.status_code in (200, 201, 202):
+                    return {"success": True, "message": f"Triggered Kapowarr download search for issue '{issue_title or issue_id}'."}
+
+            if cv_volume_id:
+                res = self.add_volume(cv_volume_id)
+                if res.get("success") or "already exists" in str(res.get("error", "")).lower():
+                    return {"success": True, "message": f"Added series volume #{cv_volume_id} to Kapowarr & triggered issue search."}
+
+            return {"error": "Kapowarr URL or Volume ID required to request download."}
+        except Exception as e:
+            return {"error": str(e)}
+
     def search_issue(self, query: str) -> list[dict]:
         """Searches issues inside monitored volumes in Kapowarr."""
         results = []
