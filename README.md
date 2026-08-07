@@ -24,11 +24,30 @@ This project was created and developed with significant assistance from autonomo
 
 ---
 
-## 🐳 Docker Setup & Usage
+## 🚀 Quick Start (Primary: Docker Compose)
 
-### Option 1: Docker Compose (Recommended)
+Using Docker Compose is the recommended way to deploy ComicInfo Generator.
 
-Run the Web UI in a detached Docker container:
+### 1. Download `docker-compose.yml`
+
+Create a `docker-compose.yml` file (or download it from the [Latest Release](https://github.com/jakej985-rgb/comicinfo-generator/releases/tag/v0.1)):
+
+```yaml
+version: '3.8'
+
+services:
+  comicinfo-generator:
+    image: ghcr.io/jakej985-rgb/comicinfo-generator:v0.1
+    container_name: comicinfo-generator
+    ports:
+      - "5005:5005"
+    volumes:
+      # Mount host comic library directory to embed metadata into archives
+      - ${COMICS_PATH:-/path/to/your/comics}:/comics
+    restart: unless-stopped
+```
+
+### 2. Start Container
 
 ```bash
 docker compose up -d
@@ -41,23 +60,11 @@ To stop the container:
 docker compose down
 ```
 
-### Option 2: Docker CLI
-
-1. **Build the image**:
-   ```bash
-   docker build -t comicinfo-generator:v0.1 .
-   ```
-
-2. **Run the container (mounting your comic directory)**:
-   ```bash
-   docker run -d -p 5005:5005 -v /path/to/your/comics:/comics --name comicinfo-generator ghcr.io/jakej985-rgb/comicinfo-generator:v0.1
-   ```
-
-3. Open **`http://localhost:5005`**.
-
 ---
 
-## 🚀 Quick Start (Local Setup)
+## 💻 Secondary Setup: Running from Source Code
+
+If you prefer running directly on your host machine without Docker:
 
 ### 1. Installation
 
@@ -82,7 +89,7 @@ Open **`http://localhost:5005`** in your browser.
 
 ---
 
-## 💻 CLI Usage
+## ⚙️ CLI Usage
 
 ### Launch Web UI on a custom port
 
