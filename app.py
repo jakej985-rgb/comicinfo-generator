@@ -63,6 +63,43 @@ def comic_to_dict(c: Comic) -> dict:
         "story_arcs": c.story_arcs,
     }
 
+def dict_to_comic(d: dict) -> Comic:
+    c = Comic()
+    c.title = str(d.get("title", ""))
+    c.series = str(d.get("series", ""))
+    c.number = str(d.get("number", ""))
+    c.volume = str(d.get("volume", ""))
+    c.count = int(d.get("count") or 1)
+    c.summary = str(d.get("summary", ""))
+    c.notes = str(d.get("notes", ""))
+    c.year = int(d.get("year") or 0)
+    c.month = int(d.get("month") or 0)
+    c.day = int(d.get("day") or 0)
+    c.publisher = str(d.get("publisher", ""))
+    c.genre = str(d.get("genre", ""))
+    c.web = str(d.get("web", ""))
+    c.language = str(d.get("language", "en"))
+    c.format = str(d.get("format", "Comic"))
+
+    def to_list(val):
+        if isinstance(val, list):
+            return [str(v).strip() for v in val if str(v).strip()]
+        if isinstance(val, str) and val.strip():
+            return [v.strip() for v in val.split(",") if v.strip()]
+        return []
+
+    c.writers = to_list(d.get("writers"))
+    c.pencillers = to_list(d.get("pencillers"))
+    c.inkers = to_list(d.get("inkers"))
+    c.colorists = to_list(d.get("colorists"))
+    c.letterers = to_list(d.get("letterers"))
+    c.cover_artists = to_list(d.get("cover_artists"))
+    c.characters = to_list(d.get("characters"))
+    c.teams = to_list(d.get("teams"))
+    c.story_arcs = to_list(d.get("story_arcs"))
+    c.provider_name = str(d.get("provider_name") or d.get("provider") or "")
+    return c
+
 def detect_provider(url: str) -> str:
     """Returns 'Kapowarr' if Kapowarr URL/ID, 'GCP' if comics.org or GCP layout, otherwise 'CV'."""
     url_lower = url.lower()
@@ -326,11 +363,55 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 kap = KapowarrProvider(url=cfg.kapowarr.url, api_key=cfg.kapowarr.api_key)
                 items = kap.get_library_status(watch_folder=cfg.automation.watch_folder)
                 self._set_headers(200)
+                self.wfile.write(json.dumps({"online": kap.is_configured(), "items": items}).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+            return
+        elif path == "/api/kapowarr/series-issues":
+            query_params = parse_qs(parsed.query)
+            series_id = query_params.get("id", [""])[0] or query_params.get("series_id", [""])[0]
+            series_url = query_params.get("url", [""])[0]
+            folder_path = query_params.get("folder_path", [""])[0]
+
+            try:
+                cfg = load_config()
+                series_name = ""
+                issues_list = []
+
+                if series_url or series_id:
+                    target_url = series_url or f"{cfg.kapowarr.url}/volume/{series_id}"
+                    series_name, _, issues_list = scrape_any_volume(target_url)
+
+                if folder_path and os.path.exists(folder_path):
+                    local_files = [f for f in os.listdir(folder_path) if f.lower().endswith((".cbz", ".cbr"))]
+                    for iss in issues_list:
+                        num = str(iss.get("number", ""))
+                        matched_file = None
+                        is_tagged = False
+                        for f in local_files:
+                            ext_num = extract_issue_num_from_filename(f)
+                            if ext_num == num or ext_num.lstrip("0") == num.lstrip("0"):
+                                matched_file = f
+                                full_f = os.path.join(folder_path, f)
+                                if f.lower().endswith(".cbz"):
+                                    try:
+                                        with zipfile.ZipFile(full_f, 'r') as zf:
+                                            if "comicinfo.xml" in [name.lower() for name in zf.namelist()]:
+                                                is_tagged = True
+                                    except Exception:
+                                        pass
+                                break
+                        iss["matched_file"] = matched_file
+                        iss["is_tagged"] = is_tagged
+                        iss["file_path"] = os.path.join(folder_path, matched_file) if matched_file else ""
+
+                self._set_headers(200)
                 self.wfile.write(json.dumps({
                     "success": True,
-                    "online": kap.test_connection(),
-                    "count": len(items),
-                    "items": items
+                    "series_name": series_name,
+                    "count": len(issues_list),
+                    "issues": issues_list
                 }).encode("utf-8"))
             except Exception as e:
                 self._set_headers(500)
@@ -678,6 +759,48 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 self._set_headers(500)
                 self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
 
+
+        elif parsed.path == "/api/embed-custom":
+            file_path_input = fields.get("file_path", "").strip()
+            comic_data = fields.get("comic") or fields.get("metadata") or {}
+
+            if not file_path_input:
+                self._set_headers(400)
+                self.wfile.write(json.dumps({"error": "Target comic file path is required."}).encode("utf-8"))
+                return
+
+            real_file_path = find_file_path(file_path_input)
+            if not real_file_path or not os.path.exists(real_file_path):
+                self._set_headers(404)
+                self.wfile.write(json.dumps({"error": f"File '{file_path_input}' not found."}).encode("utf-8"))
+                return
+
+            cfg = load_config()
+            delete_old_cbr = cfg.output.delete_cbr
+
+            try:
+                target_archive = real_file_path
+                converted_note = ""
+                was_cbr = real_file_path.lower().endswith(".cbr")
+                if was_cbr:
+                    target_archive = convert_cbr_to_cbz(real_file_path, delete_original=delete_old_cbr)
+                    converted_note = f" (Converted from '{os.path.basename(real_file_path)}' & deleted original .cbr)"
+
+                comic = dict_to_comic(comic_data)
+                embed_comicinfo_in_cbz(target_archive, comic)
+
+                res_dict = comic_to_dict(comic)
+                self._set_headers(200)
+                self.wfile.write(json.dumps({
+                    "success": True,
+                    "target_file": target_archive,
+                    "deleted_original": delete_old_cbr if was_cbr else False,
+                    "message": f"Successfully updated and embedded custom ComicInfo.xml into '{os.path.basename(target_archive)}'{converted_note}.",
+                    "comic": res_dict
+                }).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
 
         elif parsed.path == "/api/embed":
             url_val = fields.get("urls") or fields.get("url") or ""

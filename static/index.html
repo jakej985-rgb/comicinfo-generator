@@ -720,9 +720,14 @@
                     <strong style="color: var(--text-main);">${item.tagged_count}</strong> tagged / 
                     <strong style="color: ${item.missing_count > 0 ? 'var(--danger)' : 'var(--text-muted)'};">${item.missing_count} missing</strong>
                   </div>
-                  <button class="btn btn-primary" style="padding: 4px 10px; font-size: 12px;" onclick="useVolumeForBatch('${item.cv_url || item.url}', '${item.folder_path ? item.folder_path.replace(/\\/g, '\\\\').replace(/'/g, "\\'") : ''}')">
-                    ⚡ Batch Tag Series
-                  </button>
+                  <div style="display: flex; gap: 6px;">
+                    <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 12px;" onclick="viewKapowarrSeries('${item.id}', '${item.folder_path ? item.folder_path.replace(/\\/g, '\\\\').replace(/'/g, "\\'") : ''}', '${item.cv_url || item.url || ''}')">
+                      📖 View Series
+                    </button>
+                    <button class="btn btn-primary" style="padding: 4px 10px; font-size: 12px;" onclick="useVolumeForBatch('${item.cv_url || item.url}', '${item.folder_path ? item.folder_path.replace(/\\/g, '\\\\').replace(/'/g, "\\'") : ''}')">
+                      ⚡ Batch Tag Series
+                    </button>
+                  </div>
                 </div>
               </div>
             `).join('')}
@@ -897,7 +902,7 @@
       }
     }
 
-    function renderItemDetailsCard(c, container) {
+    function renderItemDetailsCard(c, container, filePath = "") {
       const creators = [];
       if (c.writers && c.writers.length) creators.push(`<strong>Writers:</strong> ${c.writers.join(', ')}`);
       if (c.pencillers && c.pencillers.length) creators.push(`<strong>Pencillers:</strong> ${c.pencillers.join(', ')}`);
@@ -911,12 +916,18 @@
 
       container.innerHTML = `
         <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-card); border-radius: 8px; padding: 12px;">
-          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 8px; font-size: 13px;">
-            <div><span style="color: var(--text-muted);">Series:</span> <strong style="color: #fff;">${c.series || 'N/A'}</strong></div>
-            <div><span style="color: var(--text-muted);">Issue:</span> <strong style="color: var(--primary);">#${c.number || 'N/A'}</strong></div>
-            <div><span style="color: var(--text-muted);">Title:</span> <strong style="color: #fff;">${c.title || 'N/A'}</strong></div>
-            <div><span style="color: var(--text-muted);">Publisher:</span> <strong style="color: #fff;">${c.publisher || 'N/A'}</strong></div>
-            <div><span style="color: var(--text-muted);">Year/Date:</span> <strong style="color: #fff;">${c.year || 'N/A'}${c.month ? '-' + String(c.month).padStart(2,'0') : ''}</strong></div>
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; font-size: 13px; flex-grow: 1;">
+              <div><span style="color: var(--text-muted);">Series:</span> <strong style="color: #fff;">${c.series || 'N/A'}</strong></div>
+              <div><span style="color: var(--text-muted);">Issue:</span> <strong style="color: var(--primary);">#${c.number || 'N/A'}</strong></div>
+              <div><span style="color: var(--text-muted);">Title:</span> <strong style="color: #fff;">${c.title || 'N/A'}</strong></div>
+              <div><span style="color: var(--text-muted);">Publisher:</span> <strong style="color: #fff;">${c.publisher || 'N/A'}</strong></div>
+              <div><span style="color: var(--text-muted);">Year/Date:</span> <strong style="color: #fff;">${c.year || 'N/A'}${c.month ? '-' + String(c.month).padStart(2,'0') : ''}</strong></div>
+              ${c.web ? `<div><span style="color: var(--text-muted);">&lt;Web&gt; URL:</span> <a href="${c.web}" target="_blank" style="color: var(--accent); text-decoration: none;">Link</a></div>` : ''}
+            </div>
+            <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 12px; margin-left: 10px;" onclick='openEditorModal(${JSON.stringify(c).replace(/'/g, "&#39;")}, "${filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}")'>
+              ✏️ Edit Metadata
+            </button>
           </div>
           ${c.summary ? `<div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px; line-height: 1.4;"><strong>Summary:</strong> ${c.summary}</div>` : ''}
           ${creators.length ? `<div style="font-size: 12px; color: var(--text-main); margin-bottom: 4px;">${creators.join(' | ')}</div>` : ''}
@@ -1309,6 +1320,315 @@
         }
       } catch (e) {}
     }
+
+    // --- Series Viewer Modal & Metadata Editor ---
+    let currentSeriesIssues = [];
+    let currentEditFilePath = "";
+
+    async function viewKapowarrSeries(seriesId, folderPath, seriesUrl) {
+      const modal = document.getElementById('series-modal');
+      const title = document.getElementById('series-modal-title');
+      const sub = document.getElementById('series-modal-sub');
+      const body = document.getElementById('series-modal-body');
+
+      modal.style.display = 'flex';
+      title.innerText = "📖 Series Issues & Metadata Inspector";
+      sub.innerText = folderPath ? `Folder: ${folderPath}` : "Loading series info...";
+      body.innerHTML = "<div style='color: var(--text-muted); padding: 12px;'>Connecting to Kapowarr/Database and retrieving issue list...</div>";
+
+      try {
+        const query = new URLSearchParams({ id: seriesId, url: seriesUrl, folder_path: folderPath });
+        const res = await fetch(`/api/kapowarr/series-issues?${query.toString()}`);
+        const data = await res.json();
+
+        if (data.error) {
+          body.innerHTML = `<div style="color: var(--danger); padding: 12px;">Error: ${data.error}</div>`;
+          return;
+        }
+
+        title.innerText = `📖 Series: ${data.series_name || 'Comic Series'}`;
+        sub.innerText = `Folder: ${folderPath || 'N/A'} • Total Issues: ${data.count}`;
+
+        currentSeriesIssues = data.issues || [];
+        renderSeriesIssuesTable(data.issues, folderPath);
+      } catch (e) {
+        body.innerHTML = `<div style="color: var(--danger); padding: 12px;">Error: ${e}</div>`;
+      }
+    }
+
+    function renderSeriesIssuesTable(issues, folderPath) {
+      const body = document.getElementById('series-modal-body');
+      if (!issues || issues.length === 0) {
+        body.innerHTML = "<div style='color: var(--text-muted); padding: 12px;'>No issues found for this series.</div>";
+        return;
+      }
+
+      body.innerHTML = `
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+          <thead>
+            <tr style="border-bottom: 1px solid var(--border-card); text-align: left; color: var(--text-muted);">
+              <th style="padding: 8px;">Issue #</th>
+              <th style="padding: 8px;">Title</th>
+              <th style="padding: 8px;">Database &lt;Web&gt; URL</th>
+              <th style="padding: 8px;">Status</th>
+              <th style="padding: 8px; text-align: right;">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${issues.map((iss, idx) => `
+              <tr style="border-bottom: 1px dashed rgba(255,255,255,0.08);">
+                <td style="padding: 8px; font-weight: 700; color: var(--primary);">#${iss.number}</td>
+                <td style="padding: 8px; color: #fff;">${iss.label || iss.name || ('Issue #' + iss.number)}</td>
+                <td style="padding: 8px;">
+                  <a href="${iss.url}" target="_blank" style="color: var(--accent); text-decoration: none; font-size: 12px;">
+                    ${iss.url ? (iss.url.length > 35 ? iss.url.substring(0, 35) + '...' : iss.url) : 'No URL'}
+                  </a>
+                </td>
+                <td style="padding: 8px;">
+                  <span class="badge ${iss.is_tagged ? 'badge-online' : (iss.matched_file ? 'badge-gcp' : 'badge-offline')}">
+                    ${iss.is_tagged ? '✅ Tagged' : (iss.matched_file ? '📁 File Found' : '⚠️ Missing')}
+                  </span>
+                </td>
+                <td style="padding: 8px; text-align: right;">
+                  <button class="btn btn-secondary" style="padding: 3px 8px; font-size: 11px;" onclick="openEditorForSeriesIssue(${idx})">
+                    ✏️ Edit Metadata
+                  </button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
+    function closeSeriesModal() {
+      document.getElementById('series-modal').style.display = 'none';
+    }
+
+    function openEditorModal(c = {}, filePath = "") {
+      currentEditFilePath = filePath || "";
+
+      document.getElementById('edit-series').value = c.series || "";
+      document.getElementById('edit-number').value = c.number || "";
+      document.getElementById('edit-title').value = c.title || "";
+      document.getElementById('edit-publisher').value = c.publisher || "";
+      document.getElementById('edit-volume').value = c.volume || "1";
+      document.getElementById('edit-year').value = c.year || "";
+      document.getElementById('edit-month').value = c.month || "";
+      document.getElementById('edit-day').value = c.day || "";
+      document.getElementById('edit-web').value = c.web || "";
+      document.getElementById('edit-summary').value = c.summary || "";
+
+      document.getElementById('edit-writers').value = Array.isArray(c.writers) ? c.writers.join(', ') : (c.writers || "");
+      document.getElementById('edit-pencillers').value = Array.isArray(c.pencillers) ? c.pencillers.join(', ') : (c.pencillers || "");
+      document.getElementById('edit-inkers').value = Array.isArray(c.inkers) ? c.inkers.join(', ') : (c.inkers || "");
+      document.getElementById('edit-colorists').value = Array.isArray(c.colorists) ? c.colorists.join(', ') : (c.colorists || "");
+      document.getElementById('edit-characters').value = Array.isArray(c.characters) ? c.characters.join(', ') : (c.characters || "");
+      document.getElementById('edit-teams').value = Array.isArray(c.teams) ? c.teams.join(', ') : (c.teams || "");
+      document.getElementById('edit-story-arcs').value = Array.isArray(c.story_arcs) ? c.story_arcs.join(', ') : (c.story_arcs || "");
+
+      document.getElementById('edit-file-path').value = filePath || selectedFilePath || "";
+
+      document.getElementById('editor-modal').style.display = 'flex';
+    }
+
+    async function openEditorForSeriesIssue(idx) {
+      const iss = currentSeriesIssues[idx];
+      if (!iss) return;
+
+      let c = {};
+      if (iss.url) {
+        try {
+          const res = await fetch('/api/scrape', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ urls: iss.url })
+          });
+          const data = await res.json();
+          if (data.comic) c = data.comic;
+        } catch (e) {}
+      }
+
+      if (!c.series) {
+        const seriesTitleTxt = document.getElementById('series-modal-title').innerText;
+        c.series = seriesTitleTxt.replace('📖 Series: ', '');
+      }
+      if (!c.number) c.number = iss.number;
+      if (!c.web) c.web = iss.url || "";
+
+      openEditorModal(c, iss.file_path || "");
+    }
+
+    function closeEditorModal() {
+      document.getElementById('editor-modal').style.display = 'none';
+    }
+
+    async function browseEditorFile() {
+      fetch('/api/browse-file', {method: 'POST'})
+        .then(r => r.json())
+        .then(d => {
+          if (d.file_path) document.getElementById('edit-file-path').value = d.file_path;
+        });
+    }
+
+    async function saveCustomMetadata(e) {
+      e.preventDefault();
+      const filePath = document.getElementById('edit-file-path').value.trim();
+      if (!filePath) return alert("Please specify target comic file path.");
+
+      const comicObj = {
+        series: document.getElementById('edit-series').value.trim(),
+        number: document.getElementById('edit-number').value.trim(),
+        title: document.getElementById('edit-title').value.trim(),
+        publisher: document.getElementById('edit-publisher').value.trim(),
+        volume: document.getElementById('edit-volume').value.trim(),
+        year: parseInt(document.getElementById('edit-year').value) || 0,
+        month: parseInt(document.getElementById('edit-month').value) || 0,
+        day: parseInt(document.getElementById('edit-day').value) || 0,
+        web: document.getElementById('edit-web').value.trim(),
+        summary: document.getElementById('edit-summary').value.trim(),
+        writers: document.getElementById('edit-writers').value,
+        pencillers: document.getElementById('edit-pencillers').value,
+        inkers: document.getElementById('edit-inkers').value,
+        colorists: document.getElementById('edit-colorists').value,
+        characters: document.getElementById('edit-characters').value,
+        teams: document.getElementById('edit-teams').value,
+        story_arcs: document.getElementById('edit-story-arcs').value
+      };
+
+      try {
+        const res = await fetch('/api/embed-custom', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ file_path: filePath, comic: comicObj })
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert("✅ " + data.message);
+          closeEditorModal();
+        } else {
+          alert("❌ Error: " + data.error);
+        }
+      } catch (e) {
+        alert("❌ Error: " + e);
+      }
+    }
   </script>
+
+  <!-- SERIES DETAILS MODAL -->
+  <div id="series-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-card" style="max-width: 900px; width: 95%;">
+      <div class="card-header" style="margin-bottom: 12px;">
+        <div>
+          <div id="series-modal-title" class="card-title">📖 Series Issues & Metadata Inspector</div>
+          <div id="series-modal-sub" style="font-size: 12px; color: var(--text-muted); margin-top: 2px;"></div>
+        </div>
+        <button class="btn btn-secondary" style="padding: 4px 10px;" onclick="closeSeriesModal()">✕ Close</button>
+      </div>
+      <div id="series-modal-body" style="max-height: 60vh; overflow-y: auto; padding: 4px;">
+        <div style="color: var(--text-muted);">Loading series issues...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LIVE METADATA EDITOR MODAL -->
+  <div id="editor-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-card" style="max-width: 800px; width: 95%;">
+      <div class="card-header" style="margin-bottom: 12px;">
+        <div class="card-title">✏️ Edit ComicInfo.xml Metadata</div>
+        <button class="btn btn-secondary" style="padding: 4px 10px;" onclick="closeEditorModal()">✕ Close</button>
+      </div>
+
+      <form id="editor-form" onsubmit="saveCustomMetadata(event)">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 12px;">
+          <div class="form-group">
+            <label class="form-label">Series Name</label>
+            <input type="text" id="edit-series" class="form-control" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Issue Number</label>
+            <input type="text" id="edit-number" class="form-control" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Issue Title</label>
+            <input type="text" id="edit-title" class="form-control">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Publisher</label>
+            <input type="text" id="edit-publisher" class="form-control">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Volume</label>
+            <input type="text" id="edit-volume" class="form-control" value="1">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Year / Month / Day</label>
+            <div style="display: flex; gap: 4px;">
+              <input type="number" id="edit-year" class="form-control" placeholder="YYYY">
+              <input type="number" id="edit-month" class="form-control" placeholder="MM" min="1" max="12">
+              <input type="number" id="edit-day" class="form-control" placeholder="DD" min="1" max="31">
+            </div>
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 12px;">
+          <label class="form-label">Scraped Database Web URL (&lt;Web&gt; tag in ComicInfo.xml)</label>
+          <input type="text" id="edit-web" class="form-control" placeholder="https://comicvine.gamespot.com/issue/4000-12345/">
+        </div>
+
+        <div class="form-group" style="margin-bottom: 12px;">
+          <label class="form-label">Plot Summary / Synopsis</label>
+          <textarea id="edit-summary" class="form-control" rows="3" style="resize: vertical;"></textarea>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 12px;">
+          <div class="form-group">
+            <label class="form-label">Writers (comma-separated)</label>
+            <input type="text" id="edit-writers" class="form-control" placeholder="Warren Ellis">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Pencillers (comma-separated)</label>
+            <input type="text" id="edit-pencillers" class="form-control" placeholder="Kyle Hotz">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Inkers (comma-separated)</label>
+            <input type="text" id="edit-inkers" class="form-control">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Colorists (comma-separated)</label>
+            <input type="text" id="edit-colorists" class="form-control">
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 12px;">
+          <div class="form-group">
+            <label class="form-label">Characters (comma-separated)</label>
+            <input type="text" id="edit-characters" class="form-control" placeholder="Carnage, Cletus Kasady">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Teams (comma-separated)</label>
+            <input type="text" id="edit-teams" class="form-control" placeholder="Symbiotes">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Story Arcs (comma-separated)</label>
+            <input type="text" id="edit-story-arcs" class="form-control">
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 16px;">
+          <label class="form-label">Target Comic File Path (.cbz or .cbr on disk)</label>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="edit-file-path" class="form-control" placeholder="/path/to/comic.cbz" required>
+            <button type="button" class="btn btn-secondary" onclick="browseEditorFile()">Browse</button>
+          </div>
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 16px;">
+          <button type="button" class="btn btn-secondary" onclick="closeEditorModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">⚡ Save & Embed to File</button>
+        </div>
+      </form>
+    </div>
+  </div>
 </body>
 </html>
