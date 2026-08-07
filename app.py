@@ -22,7 +22,7 @@ from cache.db import CacheManager
 from providers.kapowarr import KapowarrProvider
 from providers.comicvine import scrape_issue as scrape_cv_issue, scrape_volume as scrape_cv_volume, search_comicvine, ComicVineProvider
 from providers.gcp import scrape_gcp_issue, scrape_gcp_volume, search_gcp, GCPProvider
-from providers.story_arc import search_story_arcs, get_story_arc_details
+from providers.story_arc import search_story_arcs, get_story_arc_details, parse_custom_chronological_reading_order, MARVEL_ZOMBIES_PRESET_TEXT
 from writers.archive import embed_comicinfo_in_cbz
 from writers.comicinfo import write_xml, generate_xml_bytes
 from converters.cbr_to_cbz import convert_cbr_to_cbz
@@ -816,6 +816,23 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 res = kap.request_issue_download(issue_id=issue_id, cv_volume_id=cv_volume_id, issue_title=issue_title)
                 self._set_headers(200)
                 self.wfile.write(json.dumps(res).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+            return
+
+        elif parsed.path == "/api/story-arc/parse-custom":
+            text_data = fields.get("text", "") or fields.get("custom_list", "")
+            arc_name = fields.get("title") or "Chronological Story Arc Crossover"
+            if not text_data and fields.get("preset") == "marvel_zombies":
+                text_data = MARVEL_ZOMBIES_PRESET_TEXT
+                arc_name = "Marvel Zombies Complete Chronological Saga (71 Issues Crossover)"
+
+            try:
+                cfg = load_config()
+                data = parse_custom_chronological_reading_order(text_data, arc_name=arc_name, watch_folder=cfg.automation.watch_folder)
+                self._set_headers(200)
+                self.wfile.write(json.dumps({"success": True, "data": data}).encode("utf-8"))
             except Exception as e:
                 self._set_headers(500)
                 self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
