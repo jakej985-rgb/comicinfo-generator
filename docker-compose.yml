@@ -6,8 +6,8 @@ services:
     image: ghcr.io/jakej985-rgb/comicinfo-generator:v0.1
     container_name: comicinfo-generator
     ports:
-      - "${PORT:-5005}:5005"
+      - "5005:5005"
     volumes:
       # Required: Mount host comic library directory to embed metadata into archives
-      - ${COMICS_PATH:-./comics}:/comics
+      - ./comics:/comics
     restart: unless-stopped
