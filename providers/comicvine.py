@@ -147,12 +147,9 @@ def parse_html(html_text: str, url: str = "") -> Comic:
     if y:
         c.year, c.month, c.day = y, m, d
 
-    # 5. Volume
-    v_match = re.search(r"volume\s+(\d+)", page_text, re.I)
-    if v_match:
-        c.volume = v_match.group(1)
-    else:
-        c.volume = "1"
+    # 5. Volume (Leave empty by default to avoid writing wrong/dummy <Volume> tags to ComicInfo.xml)
+    c.volume = ""
+
 
     # 6. Summary / Description
     summary_elem = soup.find(class_="js-toc-content") or soup.find(class_="content-body")

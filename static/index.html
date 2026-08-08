@@ -959,16 +959,17 @@
                   <td style="padding: 8px; font-weight: 600; color: #fff;">${item.filename}</td>
                   <td style="padding: 8px;">#${item.issue_number}</td>
                   <td style="padding: 8px;">
-                    <select id="batch-issue-select-${idx}" class="form-control" style="padding: 4px 8px; font-size: 12px; max-width: 260px; background: rgba(15, 23, 42, 0.8); border: 1px solid var(--border-card); color: #fff;" onchange="onBatchIssueSelectChange(${idx})">
-                      <option value="">❌ No Match / Skip</option>
+                    <select id="batch-issue-select-${idx}" class="form-control" style="padding: 5px 10px; font-size: 13px; font-weight: 700; background: rgba(15, 23, 42, 0.95); border: 1px solid var(--accent); color: #38bdf8; border-radius: 8px; cursor: pointer;" onchange="onBatchIssueSelectChange(${idx})">
+                      <option value="" style="color: var(--danger);">❌ Unmatched / Skip File</option>
                       ${(data.issues_list || []).map(iss => `
-                        <option value="${iss.url}" ${item.matched_url === iss.url ? 'selected' : ''}>
-                          ${iss.label || ('Issue #' + iss.number)}
+                        <option value="${iss.url}" ${item.matched_url === iss.url ? 'selected' : ''} style="color: #fff;">
+                          #${iss.number} ${iss.label && !iss.label.startsWith('Issue #') ? '(' + iss.label + ')' : ''}
                         </option>
                       `).join('')}
-                      <option value="CUSTOM">✏️ Custom URL...</option>
+                      <option value="CUSTOM" style="color: var(--accent-gcp);">✏️ Enter Custom Issue URL...</option>
                     </select>
                   </td>
+
                   <td style="padding: 8px;" id="batch-status-td-${idx}">
                     <span class="badge ${item.matched_url ? 'badge-online' : 'badge-offline'}">
                       ${item.matched_url ? 'READY TO EMBED' : 'UNMATCHED'}
