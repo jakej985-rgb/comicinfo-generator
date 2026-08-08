@@ -914,6 +914,19 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
             return
 
+        elif parsed.path == "/api/story-arc/clean-duplicate-tags":
+            issues_list = fields.get("issues", [])
+            try:
+                from providers.story_arc import clean_duplicate_story_arcs_on_device
+                res = clean_duplicate_story_arcs_on_device(issues_list)
+                self._set_headers(200)
+                self.wfile.write(json.dumps(res).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+            return
+
+
         elif parsed.path == "/api/story-arc/rename-metadata":
             old_name = fields.get("old_name", "").strip()
             new_name = fields.get("new_name", "").strip()

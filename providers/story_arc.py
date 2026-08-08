@@ -529,6 +529,82 @@ def fix_story_arcs_on_device(issues_list: list[dict], story_arc_name: str) -> di
         "message": f"Successfully added/updated <StoryArc> metadata in {updated_count} local comic file(s) on device!"
     }
 
+def clean_duplicate_story_arcs_on_device(issues_list: list[dict]) -> dict:
+    """Finds all local CBZ files and cleans/deduplicates any repeated <StoryArc> or <StoryArcNumber> XML tags into a single clean element."""
+    updated_count = 0
+    errors = []
+    from itertools import zip_longest
+
+    for idx, iss in enumerate(issues_list):
+        full_p = iss.get("file_path", "")
+        if not (iss.get("is_found") and full_p and os.path.exists(full_p) and full_p.lower().endswith(".cbz")):
+            continue
+        try:
+            existing_xml_bytes = None
+            with zipfile.ZipFile(full_p, "r") as zf:
+                for n in zf.namelist():
+                    if n.lower() == "comicinfo.xml":
+                        existing_xml_bytes = zf.read(n)
+                        break
+
+            if not existing_xml_bytes:
+                continue
+
+            root = ET.fromstring(existing_xml_bytes)
+
+            arc_nodes = root.findall("StoryArc") + root.findall("Storyarc")
+            num_nodes = root.findall("StoryArcNumber")
+
+            if not arc_nodes:
+                continue
+
+            raw_arcs = []
+            for n in arc_nodes:
+                if n.text:
+                    raw_arcs.extend([a.strip() for a in n.text.split(",") if a.strip()])
+
+            raw_nums = []
+            for n in num_nodes:
+                if n.text:
+                    raw_nums.extend([num.strip() for num in n.text.split(",") if num.strip()])
+
+            # Remove all old duplicate elements
+            for n in arc_nodes + num_nodes:
+                root.remove(n)
+
+            clean_arcs = []
+            clean_nums = []
+            seen_arcs = set()
+            for a, n in zip_longest(raw_arcs, raw_nums, fillvalue=""):
+                if not a:
+                    continue
+                norm_a = re.sub(r'["\'\(\):]', " ", a).lower().strip()
+                norm_a = " ".join(norm_a.split())
+                if norm_a and norm_a not in seen_arcs:
+                    seen_arcs.add(norm_a)
+                    clean_arcs.append(a.strip().strip('"').strip("'"))
+                    clean_nums.append(n.strip() or "1")
+
+            arc_elem = ET.SubElement(root, "StoryArc")
+            arc_elem.text = ", ".join(clean_arcs)
+
+            num_elem = ET.SubElement(root, "StoryArcNumber")
+            num_elem.text = ", ".join(clean_nums)
+
+            new_xml_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+            embed_comicinfo_in_cbz(full_p, new_xml_bytes)
+            updated_count += 1
+        except Exception as e:
+            errors.append(f"{os.path.basename(full_p)}: {e}")
+
+    return {
+        "success": True,
+        "updated_count": updated_count,
+        "errors": errors,
+        "message": f"Successfully repaired and deduplicated <StoryArc> metadata in {updated_count} local comic file(s)!"
+    }
+
+
 def rename_story_arc_on_device(issues_list: list[dict], old_name: str, new_name: str) -> dict:
     """Renames an arc tag in ComicInfo.xml across all found files.
     Replaces old_name with new_name inside the comma-separated <StoryArc> list,

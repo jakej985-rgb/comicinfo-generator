@@ -2034,7 +2034,11 @@
               <button class="btn btn-secondary" style="background: linear-gradient(135deg, #10b981, #059669); color: #fff; font-weight: 700;" onclick="fixStoryArcMetadataOnDevice()">
                 🏷️ Tag / Fix StoryArc Metadata on Device (${arc.found_count} Files)
               </button>
+              <button class="btn btn-secondary" style="background: linear-gradient(135deg, #6366f1, #4f46e5); color: #fff; font-weight: 700;" onclick="cleanDuplicateStoryArcTagsOnDevice()">
+                🧹 Fix Metadata &amp; Deduplicate Story Arcs
+              </button>
             ` : ''}
+
             ${arc.missing_count > 0 ? `
               <button class="btn btn-primary" onclick="requestAllMissingStoryArcIssues()">
                 ⚡ Request All ${arc.missing_count} Missing Issues on Kapowarr
@@ -2207,6 +2211,41 @@
         alert(`❌ Error: ${e}`);
       }
     }
+
+    async function cleanDuplicateStoryArcTagsOnDevice() {
+      if (!currentStoryArcData || !currentStoryArcData.issues) return;
+      const foundIssues = currentStoryArcData.issues.filter(i => i.is_found && i.file_path);
+      if (foundIssues.length === 0) return alert("No comic files found on device to update.");
+
+      if (!confirm(`Repair and deduplicate <StoryArc> metadata tags across ${foundIssues.length} file(s) on device?\n\nThis will merge repeated <StoryArc> elements into a single clean tag per arc.`)) return;
+
+      const banner = document.getElementById('story-arc-header-banner');
+      banner.innerHTML = `<div style='color: var(--accent); padding: 12px;'>Cleaning and deduplicating <StoryArc> tags in ${foundIssues.length} local CBZ files...</div>`;
+
+      try {
+        const res = await fetch('/api/story-arc/clean-duplicate-tags', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            issues: currentStoryArcData.issues
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert(`✅ ${data.message || 'Repaired duplicate StoryArc metadata tags!'}`);
+          if (currentStoryArcData.url) {
+            loadStoryArcDetail(currentStoryArcData.url);
+          } else {
+            loadPresetStoryArc('marvel_zombies');
+          }
+        } else {
+          alert(`❌ Error: ${data.error || 'Failed to repair duplicate tags'}`);
+        }
+      } catch (e) {
+        alert(`❌ Error: ${e}`);
+      }
+    }
+
 
     async function requestIssueOnKapowarr(idx) {
       if (!currentStoryArcData || !currentStoryArcData.issues[idx]) return;
