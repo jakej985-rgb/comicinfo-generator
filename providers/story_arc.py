@@ -459,9 +459,23 @@ def fix_story_arcs_on_device(issues_list: list[dict], story_arc_name: str) -> di
 
             existing_arcs = _parse_arc_list(arc_elem.text if arc_elem is not None else "")
             existing_nums = _parse_num_list(num_elem.text if num_elem is not None else "")
-            # Pad nums to same length as arcs
             while len(existing_nums) < len(existing_arcs):
                 existing_nums.append("")
+
+            # Deduplicate existing_arcs and existing_nums
+            clean_arcs = []
+            clean_nums = []
+            seen_arcs = set()
+            for a, n in zip(existing_arcs, existing_nums):
+                norm_a = re.sub(r'["\'\(\):]', " ", a).lower().strip()
+                norm_a = " ".join(norm_a.split())
+                if norm_a and norm_a not in seen_arcs:
+                    seen_arcs.add(norm_a)
+                    clean_arcs.append(a.strip().strip('"').strip("'"))
+                    clean_nums.append(n.strip())
+
+            existing_arcs = clean_arcs
+            existing_nums = clean_nums
 
             # Match existing arc (case-insensitive & flexible)
             matched_idx = -1
@@ -471,10 +485,12 @@ def fix_story_arcs_on_device(issues_list: list[dict], story_arc_name: str) -> di
                     break
 
             if matched_idx >= 0:
+                existing_arcs[matched_idx] = arc_name
                 existing_nums[matched_idx] = order_num
             else:
                 existing_arcs.append(arc_name)
                 existing_nums.append(order_num)
+
 
             # Write back
             if arc_elem is None:
