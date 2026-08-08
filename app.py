@@ -226,6 +226,21 @@ def search_all_providers(query: str, search_type: str = "all") -> tuple[list[dic
 
 def extract_issue_num_from_filename(filename: str) -> str:
     fname = re.sub(r"\.(cbz|cbr|zip|rar)$", "", filename, flags=re.I)
+
+    # 1. Handle half issues: 00½, 0½, ½, 1/2, 0.5
+    m_half = re.search(r"(?:issue\s*#?|#|\b)0*(?:½|1/2|0\.5)\b", fname, re.I)
+    if m_half or "½" in fname or "1/2" in fname:
+        return "0.5"
+
+    # 2. Check for Issue #000 / #0
+    m_zero = re.search(r"\bissue\s*#?\s*(0+)(?!\d)", fname, re.I)
+    if m_zero:
+        return "0"
+    m_zero_hash = re.search(r"#\s*(0+)(?!\d)", fname)
+    if m_zero_hash:
+        return "0"
+
+    # 3. Standard issue number matching
     m = re.search(r"\bissue\s*#?\s*0*(\d+[a-zA-Z]?|\d+\.\d+|\d+)", fname, re.I)
     if m:
         return m.group(1)
@@ -242,11 +257,16 @@ def extract_issue_num_from_filename(filename: str) -> str:
     if m:
         fname = fname.replace(m.group(0), "")
 
+    m = re.search(r"\b0+(?!\d)", fname)
+    if m:
+        return "0"
+
     m = re.search(r"0*(\d+)\b", fname)
     if m:
         return m.group(1)
 
     return ""
+
 
 def open_native_file_picker() -> str:
     try:
@@ -696,7 +716,12 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                     full_path = os.path.join(folder_path_input, fname)
                     issue_num = extract_issue_num_from_filename(fname)
 
-                    matched_url = issue_map.get(issue_num) or issue_map.get(issue_num.lstrip("0"))
+                    matched_url = (
+                        issue_map.get(issue_num) or
+                        issue_map.get(issue_num.lstrip("0")) or
+                        (issue_map.get("0.5") or issue_map.get("1/2") or issue_map.get("½") if issue_num in ("0.5", "1/2", "½", "0½") else None) or
+                        (issue_map.get("0") or issue_map.get("00") or issue_map.get("000") if issue_num in ("0", "00", "000") else None)
+                    )
                     if not matched_url and len(comic_files) == 1 and "1" in issue_map:
                         matched_url = issue_map["1"]
 
@@ -720,6 +745,7 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                     "series_name": series_name,
                     "folder_path": folder_path_input,
                     "total_files": len(comic_files),
+                    "total_series_issues": len(issues_list),
                     "matched_count": len([x for x in items if x["matched_url"]]),
                     "issues_list": issues_list,
                     "items": items
@@ -732,6 +758,7 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             volume_url = fields.get("url") or fields.get("urls") or ""
             folder_path_input = fields.get("folder_path", "").strip()
             items = fields.get("items") or []
+            total_series_issues_override = fields.get("total_series_issues") or 0
 
             if not folder_path_input or not os.path.exists(folder_path_input):
                 self._set_headers(400)
@@ -782,6 +809,11 @@ class ComicServerHandler(BaseHTTPRequestHandler):
 
                 try:
                     comic = fetch_and_merge_urls(matched_urls if len(matched_urls) > 1 else matched_urls[0])
+                    # Populate <Count> with total issues in series
+                    count_val = total_series_issues_override or item.get("total_series_issues") or 0
+                    if count_val and int(count_val) > 0:
+                        comic.count = int(count_val)
+
                     embed_comicinfo_in_cbz(target_archive, comic)
                     processed_count += 1
                     msg = f"✅ Embedded ComicInfo.xml into '{os.path.basename(target_archive)}' ({comic.series} #{comic.number})"
@@ -794,6 +826,7 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                     chunk = json.dumps({"current": idx + 1, "total": total_items, "file": fname, "status": "error", "message": err_msg}) + "\n"
                     self.wfile.write(chunk.encode("utf-8"))
                     self.wfile.flush()
+
 
             final_chunk = json.dumps({
                 "done": True,

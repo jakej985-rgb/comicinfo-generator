@@ -366,23 +366,34 @@ def scrape_volume(volume_url: str, max_pages_limit: int = 50) -> tuple[str, dict
             parent = a.find_parent(["li", "div", "tr", "td"]) or a
             txt = parent.get_text(" ", strip=True)
 
-            m = re.search(r"#(?:Issue\s*)?(\d+[a-zA-Z]?|\d+\.\d+|\d+)", txt, re.I)
+            m = re.search(r"#(?:Issue\s*)?(\d+½|\d+/\d+|\d+\.\d+|\d+[a-zA-Z]?|½|1/2|0\.5)", txt, re.I)
             if not m:
-                m = re.search(r"Issue\s*#?\s*(\d+[a-zA-Z]?|\d+\.\d+|\d+)", txt, re.I)
+                m = re.search(r"Issue\s*#?\s*(\d+½|\d+/\d+|\d+\.\d+|\d+[a-zA-Z]?|½|1/2|0\.5)", txt, re.I)
             if not m:
-                m = re.search(r"#(\d+)", a.get_text(strip=True))
+                m = re.search(r"#(0+|\d+½|\d+/\d+|\d+\.\d+|\d+|½)", a.get_text(strip=True))
 
             if m:
-                num_str = m.group(1).lstrip("0") or "0"
+                raw_num = m.group(1).strip()
+                if raw_num in ("½", "1/2", "0½", "0.5"):
+                    num_str = "0.5"
+                    label_str = "Issue #1/2"
+                elif raw_num in ("0", "00", "000"):
+                    num_str = "0"
+                    label_str = f"Issue #{raw_num}"
+                else:
+                    num_str = raw_num.lstrip("0") or "0"
+                    label_str = f"Issue #{num_str}"
+
                 is_match = _slug_matches_series(full_url, series_slug)
                 if is_match:
                     if num_str not in matched_map:
                         matched_map[num_str] = full_url
-                        matched_list.append({"number": num_str, "label": f"Issue #{num_str}", "url": full_url})
+                        matched_list.append({"number": num_str, "label": label_str, "url": full_url})
                 else:
                     if num_str not in unmatched_map:
                         unmatched_map[num_str] = full_url
-                        unmatched_list.append({"number": num_str, "label": f"Issue #{num_str}", "url": full_url})
+                        unmatched_list.append({"number": num_str, "label": label_str, "url": full_url})
+
 
     extract_issues_from_soup(soup)
 

@@ -927,23 +927,28 @@
       }
     }
 
+    let lastScrapedBatchData = null;
+
     function renderBatchTable(data) {
+      lastScrapedBatchData = data;
       const area = document.getElementById('batch-results-area');
       area.innerHTML = `
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 10px;">
           <div style="font-weight: 600; color: var(--accent); font-size: 14px;">
-            Matched ${data.matched_count} of ${data.total_files} file(s) for series '${data.series_name}' [${data.provider || 'Database'}]
+            Matched <span id="batch-matched-count">${data.matched_count} of ${data.total_files}</span> file(s) for series '${data.series_name}' [${data.provider || 'Database'}]
+            ${data.total_series_issues ? `<span class="badge badge-gcp" style="margin-left: 8px;">Series Total: ${data.total_series_issues} Issues</span>` : ''}
           </div>
           <button class="btn btn-secondary" style="padding: 4px 12px; font-size: 12px;" onclick="toggleAllBatchDetails()">
             👁️ Toggle All Details
           </button>
         </div>
-        <div style="max-height: 450px; overflow-y: auto; border: 1px solid var(--border-card); border-radius: 12px; padding: 8px; background: rgba(15, 23, 42, 0.4);">
+        <div style="max-height: 480px; overflow-y: auto; border: 1px solid var(--border-card); border-radius: 12px; padding: 8px; background: rgba(15, 23, 42, 0.4);">
           <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
             <thead>
               <tr style="border-bottom: 1px solid var(--border-card); text-align: left; color: var(--text-muted);">
                 <th style="padding: 8px;">File Name</th>
-                <th style="padding: 8px;">Extracted #</th>
+                <th style="padding: 8px;">Detected #</th>
+                <th style="padding: 8px;">Matched Issue (Select / Override)</th>
                 <th style="padding: 8px;">Match Status</th>
                 <th style="padding: 8px; text-align: right;">Metadata Details</th>
               </tr>
@@ -954,11 +959,22 @@
                   <td style="padding: 8px; font-weight: 600; color: #fff;">${item.filename}</td>
                   <td style="padding: 8px;">#${item.issue_number}</td>
                   <td style="padding: 8px;">
+                    <select id="batch-issue-select-${idx}" class="form-control" style="padding: 4px 8px; font-size: 12px; max-width: 260px; background: rgba(15, 23, 42, 0.8); border: 1px solid var(--border-card); color: #fff;" onchange="onBatchIssueSelectChange(${idx})">
+                      <option value="">❌ No Match / Skip</option>
+                      ${(data.issues_list || []).map(iss => `
+                        <option value="${iss.url}" ${item.matched_url === iss.url ? 'selected' : ''}>
+                          ${iss.label || ('Issue #' + iss.number)}
+                        </option>
+                      `).join('')}
+                      <option value="CUSTOM">✏️ Custom URL...</option>
+                    </select>
+                  </td>
+                  <td style="padding: 8px;" id="batch-status-td-${idx}">
                     <span class="badge ${item.matched_url ? 'badge-online' : 'badge-offline'}">
                       ${item.matched_url ? 'READY TO EMBED' : 'UNMATCHED'}
                     </span>
                   </td>
-                  <td style="padding: 8px; text-align: right;">
+                  <td style="padding: 8px; text-align: right;" id="batch-details-btn-td-${idx}">
                     ${item.matched_url ? `
                       <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 12px;" onclick="toggleBatchItemDetails(${idx})">
                         👁️ More Details
@@ -967,7 +983,7 @@
                   </td>
                 </tr>
                 <tr id="batch-details-row-${idx}" style="display: none; background: rgba(30, 41, 59, 0.5); border-bottom: 1px solid var(--border-card);">
-                  <td colspan="4" style="padding: 12px;">
+                  <td colspan="5" style="padding: 12px;">
                     <div id="batch-details-body-${idx}" style="font-size: 13px; color: var(--text-muted);">
                       Loading issue metadata details...
                     </div>
@@ -979,6 +995,55 @@
         </div>
       `;
     }
+
+    function onBatchIssueSelectChange(idx) {
+      const select = document.getElementById(`batch-issue-select-${idx}`);
+      if (!select) return;
+      let val = select.value;
+      if (val === 'CUSTOM') {
+        const customUrl = prompt('Enter custom ComicVine or GCP issue URL:');
+        if (customUrl && customUrl.trim().startsWith('http')) {
+          val = customUrl.trim();
+        } else {
+          select.value = currentBatchItems[idx].matched_url || '';
+          return;
+        }
+      }
+
+      currentBatchItems[idx].matched_url = val;
+      currentBatchItems[idx].matched_urls = val ? [val] : [];
+
+      if (val) {
+        delete batchMetadataCache[val];
+      }
+
+      // Update row status & matched count
+      const badgeTd = document.getElementById(`batch-status-td-${idx}`);
+      const detailsTd = document.getElementById(`batch-details-btn-td-${idx}`);
+      const countSpan = document.getElementById('batch-matched-count');
+
+      if (badgeTd) {
+        badgeTd.innerHTML = `
+          <span class="badge ${val ? 'badge-online' : 'badge-offline'}">
+            ${val ? 'READY TO EMBED' : 'UNMATCHED'}
+          </span>
+        `;
+      }
+
+      if (detailsTd) {
+        detailsTd.innerHTML = val ? `
+          <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 12px;" onclick="toggleBatchItemDetails(${idx})">
+            👁️ More Details
+          </button>
+        ` : '<span style="color: var(--text-muted); font-size: 12px;">No match</span>';
+      }
+
+      const matchedCount = currentBatchItems.filter(i => i.matched_url).length;
+      if (countSpan) {
+        countSpan.textContent = `${matchedCount} of ${currentBatchItems.length}`;
+      }
+    }
+
 
     async function toggleBatchItemDetails(idx) {
       const row = document.getElementById(`batch-details-row-${idx}`);
@@ -1144,8 +1209,10 @@
           body: JSON.stringify({
             url: volumeUrl,
             folder_path: folderPath,
+            total_series_issues: lastScrapedBatchData ? lastScrapedBatchData.total_series_issues : 0,
             items: currentBatchItems
           })
+
         });
 
         const reader = res.body.getReader();
