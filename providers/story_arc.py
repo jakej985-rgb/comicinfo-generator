@@ -9,6 +9,37 @@ from config import load_config
 from providers.kapowarr import KapowarrProvider
 from writers.archive import embed_comicinfo_in_cbz
 
+def _extract_issue_num(filename: str) -> str:
+    """Extracts issue number from comic filename for story arc cross-referencing."""
+    f_clean = re.sub(r"\(.*?\)", "", filename)
+    f_clean = re.sub(r"vol(?:ume)?\s*\d+", "", f_clean, flags=re.I)
+    
+    if re.search(r"(?:00½|½|1/2|0\.5)", f_clean, re.I):
+        return "0.5"
+
+    if re.search(r"(?:#|\b)(?:000|00|0)(?:\b|\.cbz|\.cbr)", f_clean, re.I):
+        return "0"
+
+    if re.search(r"\b(?:tpb|one[\s-]*shot|gn|graphic novel)\b", f_clean, re.I):
+        return "1"
+
+
+    m = re.search(r"(?:issue|#)\s*(\d+[a-zA-Z]?)", f_clean, re.I)
+    if m:
+        return m.group(1).lstrip("0") or "0"
+
+    m_end = re.search(r"[-_\s](\d+)\.(?:cbz|cbr)$", f_clean, re.I)
+    if m_end:
+        return m_end.group(1).lstrip("0") or "0"
+
+    m_any = re.search(r"(\d+)", f_clean)
+    if m_any:
+        return m_any.group(1).lstrip("0") or "0"
+
+    return ""
+
+
+
 try:
     import cloudscraper
     HAS_CLOUDSCRAPER = True
@@ -308,40 +339,60 @@ def _cross_reference_issues(issues_list: list[dict], story_arc_name: str = "", w
         item["file_path"] = ""
 
         for root, f, full_p in file_index:
-            if _is_exact_series_match(ser, f, root) and target_n is not None:
-                patterns = [
-                    r"issue\s*0*(" + str(target_n) + r")\b",
-                    r"#\s*0*(" + str(target_n) + r")\b",
-                    r"\b0*(" + str(target_n) + r")\.(?:cbz|cbr)$",
-                    r"vol(?:ume)?\s*\d+\s+issue\s+0*(" + str(target_n) + r")\b",
-                    r"v\d+\s+0*(" + str(target_n) + r")\b",
-                    r"[-_\s]0*(" + str(target_n) + r")[-_\s\.]"
-                ]
+            if _is_exact_series_match(ser, f, root):
+                f_num = _extract_issue_num(f)
                 matched = False
-                for pat in patterns:
-                    if re.search(pat, f, re.IGNORECASE):
-                        matched = True
-                        break
+
+                if f_num and num and str(f_num).lstrip("0") == str(num).lstrip("0"):
+                    matched = True
+                elif target_n is not None:
+                    patterns = [
+                        r"issue\s*0*(" + str(target_n) + r")\b",
+                        r"#\s*0*(" + str(target_n) + r")\b",
+                        r"\b0*(" + str(target_n) + r")\.(?:cbz|cbr)$",
+                        r"vol(?:ume)?\s*\d+\s+issue\s+0*(" + str(target_n) + r")\b",
+                        r"v\d+\s+0*(" + str(target_n) + r")\b",
+                    ]
+                    for pat in patterns:
+                        if re.search(pat, f, re.IGNORECASE):
+                            matched = True
+                            break
                 if matched:
                     item["is_found"] = True
                     item["file_path"] = full_p
+
                     if f.lower().endswith(".cbz"):
                         story_arc_tag, story_arc_num, is_xml_present = _read_story_arc_from_cbz(full_p)
                         item["is_tagged"] = is_xml_present
                         item["story_arc_tag"] = story_arc_tag
                         item["story_arc_num"] = story_arc_num
-                        clean_arc_name = _clean_arc_name(story_arc_name)
-                        item["has_matching_arc"] = bool(clean_arc_name and clean_arc_name in story_arc_tag.lower())
+                        item["has_matching_arc"] = _is_story_arc_matching(story_arc_name, story_arc_tag)
                     break
 
-def _clean_arc_name(raw: str) -> str:
-    if not raw:
-        return ""
-    m = re.search(r'"([^"]+)"', raw)
-    if m:
-        return m.group(1).lower().strip()
-    clean = re.sub(r"\(.*?\)", "", raw).lower().strip()
-    return clean
+def _is_story_arc_matching(expected_arc_name: str, actual_story_arc_tag: str) -> bool:
+    """Flexible matching between expected story arc title and actual <StoryArc> tag in ComicInfo.xml."""
+    if not actual_story_arc_tag:
+        return False
+    if not expected_arc_name:
+        return True
+
+    norm_expected = re.sub(r'["\'\(\):]', " ", expected_arc_name).lower().strip()
+    norm_actual = re.sub(r'["\'\(\):]', " ", actual_story_arc_tag).lower().strip()
+
+    norm_expected_clean = " ".join(norm_expected.split())
+    norm_actual_clean = " ".join(norm_actual.split())
+
+    if not norm_expected_clean or not norm_actual_clean:
+        return False
+
+    if norm_expected_clean in norm_actual_clean or norm_actual_clean in norm_expected_clean:
+        return True
+
+    expected_words = [w for w in norm_expected_clean.split() if len(w) > 3]
+    if expected_words and any(w in norm_actual_clean for w in expected_words):
+        return True
+
+    return False
 
 def _read_story_arc_from_cbz(file_path: str) -> tuple[str, str, bool]:
     """Reads <StoryArc> and <StoryArcNumber> from ComicInfo.xml inside a .cbz archive."""
@@ -375,7 +426,7 @@ def _parse_num_list(text: str) -> list[str]:
 def fix_story_arcs_on_device(issues_list: list[dict], story_arc_name: str) -> dict:
     """Additively writes <StoryArc> and <StoryArcNumber> into ComicInfo.xml for all found files.
     If the file already has other story arcs they are preserved; only this arc's entry is added/updated."""
-    arc_name = story_arc_name.strip()
+    arc_name = story_arc_name.strip().strip('"').strip("'")
     updated_count = 0
     errors = []
 
@@ -412,16 +463,16 @@ def fix_story_arcs_on_device(issues_list: list[dict], story_arc_name: str) -> di
             while len(existing_nums) < len(existing_arcs):
                 existing_nums.append("")
 
-            # Normalise comparison (case-insensitive)
-            norm_name = arc_name.lower()
-            arc_positions = [a.lower() for a in existing_arcs]
+            # Match existing arc (case-insensitive & flexible)
+            matched_idx = -1
+            for pos, existing_arc in enumerate(existing_arcs):
+                if _is_story_arc_matching(arc_name, existing_arc):
+                    matched_idx = pos
+                    break
 
-            if norm_name in arc_positions:
-                # Update existing entry's number
-                pos = arc_positions.index(norm_name)
-                existing_nums[pos] = order_num
+            if matched_idx >= 0:
+                existing_nums[matched_idx] = order_num
             else:
-                # Append new arc entry
                 existing_arcs.append(arc_name)
                 existing_nums.append(order_num)
 
@@ -506,17 +557,18 @@ def rename_story_arc_on_device(issues_list: list[dict], old_name: str, new_name:
     }
 
 def _is_exact_series_match(target_series: str, file_name: str, folder_path: str) -> bool:
-    clean_target = target_series.lower().replace("-", " ").replace(":", "").strip()
-    clean_f = file_name.lower().replace("-", " ").replace(":", "").strip()
-    clean_folder = folder_path.lower().replace("-", " ").replace(":", "").strip()
+    def _clean_str(s: str) -> str:
+        s_norm = s.lower().replace("-", " ").replace(":", " ").replace("/", " ").replace(".", " ")
+        s_norm = re.sub(r"\bvs\b|\bversus\b", " ", s_norm)
+        return " ".join(s_norm.split())
+
+    clean_target = _clean_str(target_series)
+    clean_f = _clean_str(file_name)
+    clean_folder = _clean_str(folder_path)
     full_path_clean = (clean_folder + " " + clean_f).strip()
 
-    target_words = [w for w in clean_target.split() if len(w) > 0]
+    target_words = [w for w in clean_target.split() if w not in ("the", "a", "an", "of", "and")]
     if not target_words:
-        return False
-
-    main_words = [w for w in target_words if w not in ("the", "a", "an", "of", "and")]
-    if not all(w in full_path_clean for w in main_words):
         return False
 
     m_digit = re.search(r"(\d+)$", clean_target)
@@ -532,4 +584,5 @@ def _is_exact_series_match(target_series: str, file_name: str, folder_path: str)
                        f"{base} {digit}" in full_path_clean or f"{base} 0{digit}" in full_path_clean)
         return digit_match
 
-    return True
+    return all(w in full_path_clean for w in target_words)
+
