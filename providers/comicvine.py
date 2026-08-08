@@ -244,8 +244,85 @@ def scrape_issue(url: str) -> Comic:
     html_content = fetch_html(url)
     return parse_html(html_content, url)
 
+def _volume_slug_from_url(volume_url: str) -> str:
+    """Extracts the series name slug from a ComicVine volume URL.
+    e.g. 'https://comicvine.gamespot.com/the-darkness/4050-5868/' -> 'the-darkness'"""
+    m = re.search(r"comicvine\.gamespot\.com/([^/]+)/4050-", volume_url)
+    return m.group(1).lower() if m else ""
+
+def _slug_matches_series(issue_url: str, series_slug: str) -> bool:
+    """Returns True if the issue URL slug is consistent with the parent series slug.
+    Rejects collected editions / crossovers that share issue numbers but belong to different series.
+
+    Strategy: strip leading articles from both slugs, then require the issue slug
+    starts with the series slug prefix followed only by a separator+number (issue number),
+    generic issue-label words, or end-of-string — NOT by another alphabetic word.
+    """
+    if not series_slug:
+        return True
+
+    m = re.search(r"comicvine\.gamespot\.com/([^/]+)/4000-", issue_url)
+    if not m:
+        return True
+    issue_slug = m.group(1).lower()
+
+    # Strip leading articles to normalise (e.g. "the-darkness" -> "darkness")
+    def strip_articles(slug: str) -> str:
+        for prefix in ("the-", "a-", "an-"):
+            if slug.startswith(prefix):
+                slug = slug[len(prefix):]
+        return slug
+
+    norm_series = strip_articles(series_slug)   # e.g. "darkness"
+    norm_issue  = strip_articles(issue_slug)     # e.g. "darkness-origins-..." or "darkness-2-..."
+
+    # If the issue slug doesn't even start with the series name, it's clearly a different series
+    if not norm_issue.startswith(norm_series):
+        return False
+
+    # Check what follows the series name in the issue slug
+    suffix = norm_issue[len(norm_series):]  # e.g. "-2-underworld" or "-origins-1-vol-1"
+
+    if not suffix:
+        # Exact match (e.g. series "darkness" issue slug is just "darkness") — accept
+        return True
+
+    if not suffix.startswith("-"):
+        # Runs directly into another char without separator — different word (e.g. "darknesscrossover")
+        return False
+
+    # What comes right after the dash?
+    after_dash = suffix[1:]  # e.g. "2-underworld" or "origins-1-vol-1" or "8-issue-8"
+
+    if not after_dash:
+        return True  # trailing dash edge case, accept
+
+    # If what follows the series name is a digit → issue number → correct series
+    if after_dash[0].isdigit():
+        return True
+
+    # What comes after the dash is alphabetic → could be another word appended to the series name
+    # e.g. "darkness-origins" (different series) vs "darkness-dead-days" (could be an alternate title)
+    # Allow only known generic suffixes that issue titles use
+    ALLOWED_SUFFIXES = {
+        "annual", "annual-", "special", "special-",
+        "crossover", "tie-in", "vs",
+    }
+    first_word = after_dash.split("-")[0]
+
+    # If the first word after the series name is a known "different series" indicator, reject
+    REJECTED_SUFFIXES = {"origins", "complete", "omnibus", "tpb", "collected", "compendium", "chronicles", "saga", "anthology"}
+    if first_word in REJECTED_SUFFIXES:
+        return False
+
+    # Otherwise tentatively accept (it could be a subtitle like "darkness-presents-", "darkness-level-")
+    return True
+
+
+
 def scrape_volume(volume_url: str, max_pages_limit: int = 50) -> tuple[str, dict[str, str], list[dict]]:
-    """Scrapes a Comic Vine Volume/Series page (/4050-XXXXX/)."""
+    """Scrapes a Comic Vine Volume/Series page (/4050-XXXXX/).
+    Uses slug-based filtering to avoid collected editions from other series stealing issue numbers."""
     clean_url = re.sub(r"\?page=\d+.*$", "", volume_url).rstrip("/") + "/"
     html_content = fetch_html(clean_url)
     soup = BeautifulSoup(html_content, "html.parser")
@@ -255,6 +332,9 @@ def scrape_volume(volume_url: str, max_pages_limit: int = 50) -> tuple[str, dict
     if h1:
         series_name = h1.get_text(" ", strip=True).split("»")[0].strip()
 
+    # Derive volume slug for filtering
+    series_slug = _volume_slug_from_url(volume_url)
+
     max_page = 1
     for a in soup.find_all("a", href=re.compile(r"page=\d+")):
         m = re.search(r"page=(\d+)", a["href"])
@@ -263,17 +343,20 @@ def scrape_volume(volume_url: str, max_pages_limit: int = 50) -> tuple[str, dict
             if pnum > max_page:
                 max_page = pnum
 
-    issue_map = {}
-    issues_list = []
+    # Two buckets: matched (slug matches series) and unmatched (collected editions / crossovers)
+    matched_map = {}     # num_str -> url  (correct series)
+    unmatched_map = {}   # num_str -> url  (suspected collected editions)
+    matched_list = []
+    unmatched_list = []
 
     def extract_issues_from_soup(s):
         for a in s.find_all("a", href=re.compile(r"/4000-\d+")):
             href = a["href"]
             full_url = href if href.startswith("http") else "https://comicvine.gamespot.com" + href
-            
+
             parent = a.find_parent(["li", "div", "tr", "td"]) or a
             txt = parent.get_text(" ", strip=True)
-            
+
             m = re.search(r"#(?:Issue\s*)?(\d+[a-zA-Z]?|\d+\.\d+|\d+)", txt, re.I)
             if not m:
                 m = re.search(r"Issue\s*#?\s*(\d+[a-zA-Z]?|\d+\.\d+|\d+)", txt, re.I)
@@ -282,13 +365,15 @@ def scrape_volume(volume_url: str, max_pages_limit: int = 50) -> tuple[str, dict
 
             if m:
                 num_str = m.group(1).lstrip("0") or "0"
-                if num_str not in issue_map:
-                    issue_map[num_str] = full_url
-                    issues_list.append({
-                        "number": num_str,
-                        "label": f"Issue #{num_str}",
-                        "url": full_url
-                    })
+                is_match = _slug_matches_series(full_url, series_slug)
+                if is_match:
+                    if num_str not in matched_map:
+                        matched_map[num_str] = full_url
+                        matched_list.append({"number": num_str, "label": f"Issue #{num_str}", "url": full_url})
+                else:
+                    if num_str not in unmatched_map:
+                        unmatched_map[num_str] = full_url
+                        unmatched_list.append({"number": num_str, "label": f"Issue #{num_str}", "url": full_url})
 
     extract_issues_from_soup(soup)
 
@@ -302,12 +387,21 @@ def scrape_volume(volume_url: str, max_pages_limit: int = 50) -> tuple[str, dict
         except Exception:
             pass
 
+    # Merge: use matched issues, then fill gaps with unmatched only if issue number not already covered
+    issue_map = dict(matched_map)
+    issues_list = list(matched_list)
+    for item in unmatched_list:
+        if item["number"] not in issue_map:
+            issue_map[item["number"]] = item["url"]
+            issues_list.append(item)
+
     issues_list = sorted(
         issues_list,
         key=lambda x: int(re.sub(r"\D", "", x["number"])) if re.sub(r"\D", "", x["number"]) else 0
     )
 
     return series_name, issue_map, issues_list
+
 
 def search_comicvine(query: str, search_type: str = "all") -> list[dict]:
     """Searches Comic Vine for series volumes or single issues."""
