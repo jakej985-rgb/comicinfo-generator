@@ -246,9 +246,15 @@ def scrape_issue(url: str) -> Comic:
 
 def _volume_slug_from_url(volume_url: str) -> str:
     """Extracts the series name slug from a ComicVine volume URL.
-    e.g. 'https://comicvine.gamespot.com/the-darkness/4050-5868/' -> 'the-darkness'"""
+    e.g. 'https://comicvine.gamespot.com/the-darkness/4050-5868/' -> 'the-darkness'
+    If URL is in Kapowarr format ('/volume/4050-5868/'), returns empty string to allow fallback."""
     m = re.search(r"comicvine\.gamespot\.com/([^/]+)/4050-", volume_url)
-    return m.group(1).lower() if m else ""
+    if not m:
+        return ""
+    slug = m.group(1).lower().strip()
+    if slug == "volume":
+        return ""
+    return slug
 
 def _slug_matches_series(issue_url: str, series_slug: str) -> bool:
     """Returns True if the issue URL slug is consistent with the parent series slug.
@@ -319,7 +325,6 @@ def _slug_matches_series(issue_url: str, series_slug: str) -> bool:
     return True
 
 
-
 def scrape_volume(volume_url: str, max_pages_limit: int = 50) -> tuple[str, dict[str, str], list[dict]]:
     """Scrapes a Comic Vine Volume/Series page (/4050-XXXXX/).
     Uses slug-based filtering to avoid collected editions from other series stealing issue numbers."""
@@ -334,8 +339,12 @@ def scrape_volume(volume_url: str, max_pages_limit: int = 50) -> tuple[str, dict
 
     # Derive volume slug for filtering
     series_slug = _volume_slug_from_url(volume_url)
+    if not series_slug and series_name:
+        clean_name = re.sub(r"[^a-zA-Z0-9\s-]", "", series_name).lower().strip()
+        series_slug = re.sub(r"[\s_]+", "-", clean_name)
 
     max_page = 1
+
     for a in soup.find_all("a", href=re.compile(r"page=\d+")):
         m = re.search(r"page=(\d+)", a["href"])
         if m:
