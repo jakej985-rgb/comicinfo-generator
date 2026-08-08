@@ -57,6 +57,10 @@ def read_existing_comicinfo(cbz_path: str) -> Optional[Comic]:
             teams = root.findtext("Teams")
             if teams: c.teams = [t.strip() for t in teams.split(",") if t.strip()]
 
+            arcs = root.findtext("StoryArc") or root.findtext("Storyarc")
+            if arcs: c.story_arcs = [a.strip() for a in arcs.split(",") if a.strip()]
+
+
             if c.series or c.title:
                 c.provider_name = "ExistingXML"
                 return c

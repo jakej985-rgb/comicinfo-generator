@@ -28,6 +28,8 @@ from writers.comicinfo import write_xml, generate_xml_bytes
 from converters.cbr_to_cbz import convert_cbr_to_cbz
 from automation.watcher import LibraryWatcher
 from automation.queue import ProcessingQueue
+from pipeline.resolver import MetadataResolver, read_existing_comicinfo
+
 
 PORT = 5005
 STATIC_DIR = os.path.join(repo_dir, "static")
@@ -853,6 +855,34 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 self._set_headers(500)
                 self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
             return
+
+        elif parsed.path == "/api/inspect-file":
+            file_path = fields.get("file_path", "").strip()
+            url_str = fields.get("url", "").strip()
+            try:
+                comic = None
+                if file_path and os.path.exists(file_path) and file_path.lower().endswith(".cbz"):
+                    comic = read_existing_comicinfo(file_path)
+
+                if not comic and url_str:
+                    comic = fetch_and_merge_urls(url_str)
+
+                if not comic and file_path:
+                    cfg = load_config()
+                    resolver = MetadataResolver(config=cfg)
+                    comic, _ = resolver.resolve_file_metadata(file_path, url_override=url_str, force_overwrite=True)
+
+                if comic:
+                    self._set_headers(200)
+                    self.wfile.write(json.dumps({"success": True, "comic": comic_to_dict(comic)}).encode("utf-8"))
+                else:
+                    self._set_headers(404)
+                    self.wfile.write(json.dumps({"error": "No metadata found for file or URL."}).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+            return
+
 
         elif parsed.path == "/api/story-arc/parse-custom":
             text_data = fields.get("text", "") or fields.get("custom_list", "")

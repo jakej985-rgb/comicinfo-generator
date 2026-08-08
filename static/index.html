@@ -2255,16 +2255,39 @@
       alert("✅ Sent download requests for all missing story arc issues to Kapowarr!");
     }
 
-    function openEditorForArcIssue(idx) {
+    async function openEditorForArcIssue(idx) {
       if (!currentStoryArcData || !currentStoryArcData.issues[idx]) return;
       const iss = currentStoryArcData.issues[idx];
-      openEditorModal({
+
+      let c = {
         series: iss.series,
         number: iss.number,
         title: iss.title,
         web: iss.url
-      }, iss.file_path || "");
+      };
+
+      if (iss.file_path || iss.url) {
+        try {
+          const res = await fetch('/api/inspect-file', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              file_path: iss.file_path || "",
+              url: iss.url || ""
+            })
+          });
+          const data = await res.json();
+          if (data.success && data.comic) {
+            c = data.comic;
+          }
+        } catch (e) {
+          console.warn("Could not fetch full file metadata for editor:", e);
+        }
+      }
+
+      openEditorModal(c, iss.file_path || "");
     }
+
   </script>
 
   <!-- SERIES DETAILS MODAL -->
