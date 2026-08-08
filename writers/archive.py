@@ -9,6 +9,10 @@ def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
     """
     Embeds or updates ComicInfo.xml inside a .cbz (ZIP) archive atomically.
     Returns the path to the updated archive.
+
+    The temp file is written to the system temp directory (/tmp) rather than
+    the source directory, so network-mounted folders (NFS/Samba) that disallow
+    creating new files don't cause Permission Denied errors.
     """
     if not os.path.exists(archive_path):
         raise FileNotFoundError(f"Archive file not found: {archive_path}")
@@ -25,10 +29,9 @@ def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
         xml_data = comic
     else:
         xml_data = generate_xml_bytes(comic)
-    dir_name = os.path.dirname(os.path.abspath(archive_path))
-    
-    # Create temp zip file in the same directory for atomic replace
-    with tempfile.NamedTemporaryFile(dir=dir_name, delete=False, suffix=".cbz") as temp_file:
+
+    # Always write temp file to /tmp — avoids permission issues on network mounts
+    with tempfile.NamedTemporaryFile(dir=tempfile.gettempdir(), delete=False, suffix=".cbz") as temp_file:
         temp_path = temp_file.name
 
     try:
@@ -36,14 +39,15 @@ def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
             with zipfile.ZipFile(temp_path, 'w', compression=zipfile.ZIP_DEFLATED) as dst_zip:
                 # Copy all files except existing ComicInfo.xml
                 for item in src_zip.infolist():
-                    if item.filename.lower() not in ("comicinfo.xml", "comicinfo.xml"):
+                    if item.filename.lower() != "comicinfo.xml":
                         data = src_zip.read(item.filename)
                         dst_zip.writestr(item, data)
-                
+
                 # Write the new ComicInfo.xml at root
                 dst_zip.writestr("ComicInfo.xml", xml_data)
 
-        # Atomically replace original archive
+        # Move finished file back to original path
+        # shutil.move handles cross-filesystem (copy + delete) automatically
         shutil.move(temp_path, archive_path)
     except Exception as e:
         if os.path.exists(temp_path):

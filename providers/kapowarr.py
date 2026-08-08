@@ -262,7 +262,7 @@ class KapowarrProvider(BaseProvider):
         # 1. Fetch from Kapowarr API if configured
         if self.url:
             try:
-                r = requests.get(f"{self.url}/api/volumes", headers=self._get_headers(), params=self._get_params(), timeout=6)
+                r = requests.get(f"{self.url}/api/volumes", headers=self._get_headers(), params=self._get_params(), timeout=15)
                 if r.status_code == 200:
                     resp_json = r.json()
                     data = resp_json.get("result", resp_json) if isinstance(resp_json, dict) else resp_json
