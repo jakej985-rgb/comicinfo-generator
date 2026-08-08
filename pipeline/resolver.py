@@ -1,4 +1,5 @@
 import os
+import re
 import zipfile
 import xml.etree.ElementTree as ET
 from typing import Optional, List, Dict, Tuple
@@ -54,11 +55,24 @@ def read_existing_comicinfo(cbz_path: str) -> Optional[Comic]:
 
             chars = root.findtext("Characters")
             if chars: c.characters = [ch.strip() for ch in chars.split(",") if ch.strip()]
-            teams = root.findtext("Teams")
-            if teams: c.teams = [t.strip() for t in teams.split(",") if t.strip()]
+            # Find ALL <StoryArc> and <Storyarc> nodes in XML
+            arc_nodes = root.findall("StoryArc") + root.findall("Storyarc")
+            raw_arcs = []
+            for node in arc_nodes:
+                if node.text:
+                    raw_arcs.extend([a.strip() for a in node.text.split(",") if a.strip()])
 
-            arcs = root.findtext("StoryArc") or root.findtext("Storyarc")
-            if arcs: c.story_arcs = [a.strip() for a in arcs.split(",") if a.strip()]
+            clean_arcs = []
+            seen_arcs = set()
+            for a in raw_arcs:
+                norm_a = re.sub(r'["\'\(\):]', " ", a).lower().strip()
+                norm_a = " ".join(norm_a.split())
+                if norm_a and norm_a not in seen_arcs:
+                    seen_arcs.add(norm_a)
+                    clean_arcs.append(a.strip().strip('"').strip("'"))
+
+            c.story_arcs = clean_arcs
+
 
 
             if c.series or c.title:

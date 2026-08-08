@@ -454,28 +454,45 @@ def fix_story_arcs_on_device(issues_list: list[dict], story_arc_name: str) -> di
                 ET.SubElement(root, "Number").text = iss.get("number") or "1"
 
             # ── Additive StoryArc logic ──────────────────────────────────────
-            arc_elem = root.find("StoryArc") or root.find("Storyarc")
-            num_elem = root.find("StoryArcNumber")
+            arc_nodes = root.findall("StoryArc") + root.findall("Storyarc")
+            num_nodes = root.findall("StoryArcNumber")
 
-            existing_arcs = _parse_arc_list(arc_elem.text if arc_elem is not None else "")
-            existing_nums = _parse_num_list(num_elem.text if num_elem is not None else "")
-            while len(existing_nums) < len(existing_arcs):
-                existing_nums.append("")
+            raw_arcs = []
+            for n in arc_nodes:
+                if n.text:
+                    raw_arcs.extend([a.strip() for a in n.text.split(",") if a.strip()])
+
+            raw_nums = []
+            for n in num_nodes:
+                if n.text:
+                    raw_nums.extend([num.strip() for num in n.text.split(",") if num.strip()])
+
+            # Remove all old duplicate arc/number elements from tree
+            for n in arc_nodes + num_nodes:
+                root.remove(n)
+
+            while len(raw_nums) < len(raw_arcs):
+                raw_nums.append("")
+
+            from itertools import zip_longest
 
             # Deduplicate existing_arcs and existing_nums
             clean_arcs = []
             clean_nums = []
             seen_arcs = set()
-            for a, n in zip(existing_arcs, existing_nums):
+            for a, n in zip_longest(raw_arcs, raw_nums, fillvalue=""):
+                if not a:
+                    continue
                 norm_a = re.sub(r'["\'\(\):]', " ", a).lower().strip()
                 norm_a = " ".join(norm_a.split())
                 if norm_a and norm_a not in seen_arcs:
                     seen_arcs.add(norm_a)
                     clean_arcs.append(a.strip().strip('"').strip("'"))
-                    clean_nums.append(n.strip())
+                    clean_nums.append(n.strip() or order_num)
 
             existing_arcs = clean_arcs
             existing_nums = clean_nums
+
 
             # Match existing arc (case-insensitive & flexible)
             matched_idx = -1
@@ -491,15 +508,13 @@ def fix_story_arcs_on_device(issues_list: list[dict], story_arc_name: str) -> di
                 existing_arcs.append(arc_name)
                 existing_nums.append(order_num)
 
-
-            # Write back
-            if arc_elem is None:
-                arc_elem = ET.SubElement(root, "StoryArc")
+            # Write back single clean elements
+            arc_elem = ET.SubElement(root, "StoryArc")
             arc_elem.text = ", ".join(existing_arcs)
 
-            if num_elem is None:
-                num_elem = ET.SubElement(root, "StoryArcNumber")
+            num_elem = ET.SubElement(root, "StoryArcNumber")
             num_elem.text = ", ".join(existing_nums)
+
 
             new_xml_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True)
             embed_comicinfo_in_cbz(full_p, new_xml_bytes)
