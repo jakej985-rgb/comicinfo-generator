@@ -48,10 +48,26 @@ def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
 
         # Move finished file back to original path
         # shutil.move handles cross-filesystem (copy + delete) automatically
-        shutil.move(temp_path, archive_path)
+        try:
+            shutil.move(temp_path, archive_path)
+        except PermissionError as pe:
+            raise PermissionError(
+                f"Permission denied: Unable to overwrite '{os.path.basename(archive_path)}'. "
+                f"The folder/file permissions on your NAS or storage target restrict write access for files created by Kapowarr/downloader. "
+                f"Please update permissions on the NAS (e.g., chmod 777 -R on your Comics directory) or adjust Kapowarr/downloader umask/permission settings."
+            ) from pe
     except Exception as e:
         if os.path.exists(temp_path):
             os.remove(temp_path)
+        if isinstance(e, PermissionError):
+            raise e
+        elif getattr(e, "errno", None) == 13:
+            raise PermissionError(
+                f"Permission denied: Unable to overwrite '{os.path.basename(archive_path)}'. "
+                f"The folder/file permissions on your NAS or storage target restrict write access for files created by Kapowarr/downloader. "
+                f"Please update permissions on the NAS (e.g., chmod 777 -R on your Comics directory) or adjust Kapowarr/downloader umask/permission settings."
+            ) from e
         raise e
 
     return archive_path
+
