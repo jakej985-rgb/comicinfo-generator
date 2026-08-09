@@ -20,8 +20,9 @@ def _extract_issue_num(filename: str) -> str:
     if re.search(r"(?:#|\b)(?:000|00|0)(?:\b|\.cbz|\.cbr)", f_clean, re.I):
         return "0"
 
-    if re.search(r"\b(?:tpb|one[\s-]*shot|gn|graphic novel)\b", f_clean, re.I):
+    if re.search(r"\b(?:tpb|os|one[\s-]*shot|gn|graphic novel|special)\b", f_clean, re.I):
         return "1"
+
 
 
     m = re.search(r"(?:issue|#)\s*(\d+[a-zA-Z]?)", f_clean, re.I)
