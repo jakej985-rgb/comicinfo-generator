@@ -608,13 +608,14 @@ def clean_duplicate_story_arcs_on_device(issues_list: list[dict]) -> dict:
 
 def rename_story_arc_on_device(issues_list: list[dict], old_name: str, new_name: str) -> dict:
     """Renames an arc tag in ComicInfo.xml across all found files.
-    Replaces old_name with new_name inside the comma-separated <StoryArc> list,
+    Replaces old_name (using flexible matching) with new_name inside the <StoryArc> list,
     keeping all other arcs untouched."""
-    old_norm = old_name.strip().lower()
+    old_name = old_name.strip()
     new_name = new_name.strip()
     renamed_count = 0
     skipped_count = 0
     errors = []
+    from itertools import zip_longest
 
     for iss in issues_list:
         full_p = iss.get("file_path", "")
@@ -633,22 +634,56 @@ def rename_story_arc_on_device(issues_list: list[dict], old_name: str, new_name:
                 continue
 
             root = ET.fromstring(existing_xml_bytes)
-            arc_elem = root.find("StoryArc") or root.find("Storyarc")
-            if arc_elem is None or not arc_elem.text:
+            arc_nodes = root.findall("StoryArc") + root.findall("Storyarc")
+            num_nodes = root.findall("StoryArcNumber")
+
+            if not arc_nodes:
                 skipped_count += 1
                 continue
 
-            existing_arcs = _parse_arc_list(arc_elem.text)
-            arc_norms = [a.lower() for a in existing_arcs]
+            raw_arcs = []
+            for n in arc_nodes:
+                if n.text:
+                    raw_arcs.extend([a.strip() for a in n.text.split(",") if a.strip()])
 
-            if old_norm not in arc_norms:
+            raw_nums = []
+            for n in num_nodes:
+                if n.text:
+                    raw_nums.extend([num.strip() for num in n.text.split(",") if num.strip()])
+
+            clean_arcs = []
+            clean_nums = []
+            seen_arcs = set()
+            for a, n in zip_longest(raw_arcs, raw_nums, fillvalue=""):
+                if not a:
+                    continue
+                norm_a = re.sub(r'["\'\(\):]', " ", a).lower().strip()
+                norm_a = " ".join(norm_a.split())
+                if norm_a and norm_a not in seen_arcs:
+                    seen_arcs.add(norm_a)
+                    clean_arcs.append(a.strip().strip('"').strip("'"))
+                    clean_nums.append(n.strip() or "1")
+
+            matched_idx = -1
+            for pos, existing_arc in enumerate(clean_arcs):
+                if _is_story_arc_matching(old_name, existing_arc):
+                    matched_idx = pos
+                    break
+
+            if matched_idx == -1:
                 skipped_count += 1
                 continue
 
-            # Replace in place
-            pos = arc_norms.index(old_norm)
-            existing_arcs[pos] = new_name
-            arc_elem.text = ", ".join(existing_arcs)
+            for n in arc_nodes + num_nodes:
+                root.remove(n)
+
+            clean_arcs[matched_idx] = new_name
+
+            arc_elem = ET.SubElement(root, "StoryArc")
+            arc_elem.text = ", ".join(clean_arcs)
+
+            num_elem = ET.SubElement(root, "StoryArcNumber")
+            num_elem.text = ", ".join(clean_nums)
 
             new_xml_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True)
             embed_comicinfo_in_cbz(full_p, new_xml_bytes)
@@ -661,7 +696,7 @@ def rename_story_arc_on_device(issues_list: list[dict], old_name: str, new_name:
         "renamed_count": renamed_count,
         "skipped_count": skipped_count,
         "errors": errors,
-        "message": f"Renamed '{old_name}' → '{new_name}' in {renamed_count} file(s). {skipped_count} file(s) did not contain the old arc tag."
+        "message": f"Renamed '{old_name}' → '{new_name}' in {renamed_count} file(s). {skipped_count} file(s) did not contain a matching old arc tag."
     }
 
 def update_issue_arc_number_on_device(file_path: str, story_arc_name: str, new_arc_number: str) -> dict:
