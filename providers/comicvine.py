@@ -245,7 +245,7 @@ def _volume_slug_from_url(volume_url: str) -> str:
     """Extracts the series name slug from a ComicVine volume URL.
     e.g. 'https://comicvine.gamespot.com/the-darkness/4050-5868/' -> 'the-darkness'
     If URL is in Kapowarr format ('/volume/4050-5868/'), returns empty string to allow fallback."""
-    m = re.search(r"comicvine\.gamespot\.com/([^/]+)/4050-", volume_url)
+    m = re.search(r"/([^/]+)/4050-", volume_url)
     if not m:
         return ""
     slug = m.group(1).lower().strip()
@@ -259,7 +259,7 @@ def _slug_matches_series(issue_url: str, series_slug: str) -> bool:
     if not series_slug:
         return True
 
-    m = re.search(r"comicvine\.gamespot\.com/([^/]+)/4000-", issue_url)
+    m = re.search(r"/([^/]+)/4000-", issue_url)
     if not m:
         return True
     issue_slug = m.group(1).lower()
@@ -270,7 +270,7 @@ def _slug_matches_series(issue_url: str, series_slug: str) -> bool:
         "-hardcover", "-softcover", "-collection", "-collected",
         "-omnibus", "-compendium", "-deluxe", "-edition", "-masterworks",
         "-box-set", "-slipcase", "-treasury", "-digest", "-epic-collection",
-        "-ultimate-collection", "-must-haves", "-volume-", "-vol-"
+        "-ultimate-collection", "-must-haves", "-volume-", "-vol-", "coleccionable"
     )
     if any(kw in issue_slug for kw in COLLECTED_KEYWORDS):
         return False
