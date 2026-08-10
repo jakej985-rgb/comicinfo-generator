@@ -73,6 +73,13 @@ def read_existing_comicinfo(cbz_path: str) -> Optional[Comic]:
 
             c.story_arcs = clean_arcs
 
+            arc_num_nodes = root.findall("StoryArcNumber")
+            raw_arc_nums = []
+            for node in arc_num_nodes:
+                if node.text:
+                    raw_arc_nums.extend([n.strip() for n in node.text.split(",") if n.strip()])
+            c.story_arc_numbers = raw_arc_nums
+
 
 
             if c.series or c.title:

@@ -64,6 +64,7 @@ def comic_to_dict(c: Comic) -> dict:
         "characters": c.characters,
         "teams": c.teams,
         "story_arcs": c.story_arcs,
+        "story_arc_numbers": c.story_arc_numbers,
     }
 
 def dict_to_comic(d: dict) -> Comic:
@@ -100,6 +101,7 @@ def dict_to_comic(d: dict) -> Comic:
     c.characters = to_list(d.get("characters"))
     c.teams = to_list(d.get("teams"))
     c.story_arcs = to_list(d.get("story_arcs"))
+    c.story_arc_numbers = to_list(d.get("story_arc_numbers"))
     c.provider_name = str(d.get("provider_name") or d.get("provider") or "")
     return c
 
@@ -938,6 +940,24 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             try:
                 from providers.story_arc import rename_story_arc_on_device
                 res = rename_story_arc_on_device(issues_list, old_name=old_name, new_name=new_name)
+                self._set_headers(200)
+                self.wfile.write(json.dumps(res).encode("utf-8"))
+            except Exception as e:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+            return
+
+        elif parsed.path == "/api/story-arc/update-issue-arc-num":
+            file_path = fields.get("file_path", "").strip()
+            story_arc_name = fields.get("story_arc_name", "").strip()
+            new_arc_number = fields.get("new_arc_number", "").strip()
+            if not file_path or not story_arc_name or not new_arc_number:
+                self._set_headers(400)
+                self.wfile.write(json.dumps({"error": "file_path, story_arc_name, and new_arc_number are required."}).encode("utf-8"))
+                return
+            try:
+                from providers.story_arc import update_issue_arc_number_on_device
+                res = update_issue_arc_number_on_device(file_path, story_arc_name, new_arc_number)
                 self._set_headers(200)
                 self.wfile.write(json.dumps(res).encode("utf-8"))
             except Exception as e:

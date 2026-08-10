@@ -1731,6 +1731,7 @@
       document.getElementById('edit-characters').value = Array.isArray(c.characters) ? c.characters.join(', ') : (c.characters || "");
       document.getElementById('edit-teams').value = Array.isArray(c.teams) ? c.teams.join(', ') : (c.teams || "");
       document.getElementById('edit-story-arcs').value = Array.isArray(c.story_arcs) ? c.story_arcs.join(', ') : (c.story_arcs || "");
+      document.getElementById('edit-story-arc-numbers').value = Array.isArray(c.story_arc_numbers) ? c.story_arc_numbers.join(', ') : (c.story_arc_numbers || "");
 
       document.getElementById('edit-file-path').value = filePath || selectedFilePath || "";
 
@@ -1798,7 +1799,8 @@
         colorists: document.getElementById('edit-colorists').value,
         characters: document.getElementById('edit-characters').value,
         teams: document.getElementById('edit-teams').value,
-        story_arcs: document.getElementById('edit-story-arcs').value
+        story_arcs: document.getElementById('edit-story-arcs').value,
+        story_arc_numbers: document.getElementById('edit-story-arc-numbers').value
       };
 
       try {
@@ -2075,9 +2077,29 @@
 
         let arcTagBadge = '<span style="color: var(--text-muted); font-size: 12px;">—</span>';
         if (iss.has_matching_arc) {
-          arcTagBadge = `<span class="badge badge-online" title="ComicInfo.xml contains <StoryArc>${iss.story_arc_tag}</StoryArc>">✅ ${iss.story_arc_tag} ${iss.story_arc_num ? '#' + iss.story_arc_num : ''}</span>`;
+          arcTagBadge = `
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="badge badge-online" title="ComicInfo.xml contains <StoryArc>${iss.story_arc_tag}</StoryArc>">✅ ${iss.story_arc_tag}</span>
+              <div style="display: flex; align-items: center; gap: 4px;">
+                <span style="font-size: 12px; color: var(--text-muted); font-weight: 600;">#</span>
+                <input type="text" style="width: 44px; padding: 2px 6px; font-size: 12px; font-weight: 700; border-radius: 4px; border: 1px solid var(--border-card); background: rgba(15,23,42,0.8); color: var(--accent); text-align: center;" 
+                       value="${iss.story_arc_num || (idx + 1)}" 
+                       onchange="saveInlineArcNumber(${idx}, this.value)">
+              </div>
+            </div>
+          `;
         } else if (iss.is_found) {
-          arcTagBadge = `<span class="badge badge-offline" title="ComicInfo.xml is missing <StoryArc> tag">⚠️ Missing Arc Tag ${iss.story_arc_tag ? `("${iss.story_arc_tag}")` : ''}</span>`;
+          arcTagBadge = `
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="badge badge-offline" title="ComicInfo.xml is missing <StoryArc> tag">⚠️ Missing Arc Tag ${iss.story_arc_tag ? `("${iss.story_arc_tag}")` : ''}</span>
+              <div style="display: flex; align-items: center; gap: 4px;">
+                <span style="font-size: 12px; color: var(--text-muted); font-weight: 600;">#</span>
+                <input type="text" style="width: 44px; padding: 2px 6px; font-size: 12px; font-weight: 700; border-radius: 4px; border: 1px solid var(--border-card); background: rgba(15,23,42,0.8); color: var(--danger); text-align: center;" 
+                       value="${iss.story_arc_num || (idx + 1)}" 
+                       onchange="saveInlineArcNumber(${idx}, this.value)">
+              </div>
+            </div>
+          `;
         }
 
         tableHtml += `
@@ -2246,6 +2268,40 @@
       }
     }
 
+    async function saveInlineArcNumber(idx, newNum) {
+      if (!currentStoryArcData || !currentStoryArcData.issues[idx]) return;
+      const iss = currentStoryArcData.issues[idx];
+      if (!iss.file_path) return alert("No local file found on disk to update.");
+      const arcName = currentStoryArcData.title || "Story Arc";
+
+      try {
+        const res = await fetch('/api/story-arc/update-issue-arc-num', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            file_path: iss.file_path,
+            story_arc_name: arcName,
+            new_arc_number: newNum
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          iss.story_arc_num = newNum;
+          iss.has_matching_arc = true;
+          // Silently refresh details to update status colors / order
+          if (currentStoryArcData.url) {
+            loadStoryArcDetail(currentStoryArcData.url);
+          } else {
+            loadPresetStoryArc('marvel_zombies');
+          }
+        } else {
+          alert("❌ " + (data.error || "Failed to update arc number"));
+        }
+      } catch (e) {
+        alert("❌ Error: " + e);
+      }
+    }
+
 
     async function requestIssueOnKapowarr(idx) {
       if (!currentStoryArcData || !currentStoryArcData.issues[idx]) return;
@@ -2302,7 +2358,9 @@
         series: iss.series,
         number: iss.number,
         title: iss.title,
-        web: iss.url
+        web: iss.url,
+        story_arcs: [currentStoryArcData.title],
+        story_arc_numbers: [iss.story_arc_num || String(idx + 1)]
       };
 
       if (iss.file_path || iss.url) {
@@ -2318,6 +2376,12 @@
           const data = await res.json();
           if (data.success && data.comic) {
             c = data.comic;
+            if (!c.story_arcs || c.story_arcs.length === 0) {
+              c.story_arcs = [currentStoryArcData.title];
+            }
+            if (!c.story_arc_numbers || c.story_arc_numbers.length === 0) {
+              c.story_arc_numbers = [iss.story_arc_num || String(idx + 1)];
+            }
           }
         } catch (e) {
           console.warn("Could not fetch full file metadata for editor:", e);
@@ -2414,7 +2478,7 @@
           </div>
         </div>
 
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 12px;">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 12px;">
           <div class="form-group">
             <label class="form-label">Characters (comma-separated)</label>
             <input type="text" id="edit-characters" class="form-control" placeholder="Carnage, Cletus Kasady">
@@ -2426,6 +2490,10 @@
           <div class="form-group">
             <label class="form-label">Story Arcs (comma-separated)</label>
             <input type="text" id="edit-story-arcs" class="form-control">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Story Arc Numbers (comma-separated)</label>
+            <input type="text" id="edit-story-arc-numbers" class="form-control" placeholder="e.g. 1, 12">
           </div>
         </div>
 

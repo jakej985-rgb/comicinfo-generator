@@ -19,7 +19,8 @@ def generate_xml_bytes(c) -> bytes:
         ("CoverArtist", "; ".join(c.cover_artists)),
         ("Characters", ", ".join(c.characters)),
         ("Teams", ", ".join(c.teams)),
-        ("StoryArc", ", ".join(c.story_arcs))
+        ("StoryArc", ", ".join(c.story_arcs)),
+        ("StoryArcNumber", ", ".join(getattr(c, "story_arc_numbers", [])))
     ]:
         _add(root, k, v)
     return etree.tostring(root, pretty_print=True, xml_declaration=True, encoding="utf-8")

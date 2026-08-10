@@ -664,6 +664,91 @@ def rename_story_arc_on_device(issues_list: list[dict], old_name: str, new_name:
         "message": f"Renamed '{old_name}' → '{new_name}' in {renamed_count} file(s). {skipped_count} file(s) did not contain the old arc tag."
     }
 
+def update_issue_arc_number_on_device(file_path: str, story_arc_name: str, new_arc_number: str) -> dict:
+    """Updates the <StoryArcNumber> associated with story_arc_name in a specific CBZ file on disk."""
+    if not (file_path and os.path.exists(file_path) and file_path.lower().endswith(".cbz")):
+        return {"error": "Invalid or missing .cbz file path."}
+
+    arc_name = story_arc_name.strip().strip('"').strip("'")
+    new_num = str(new_arc_number).strip()
+    if not new_num:
+        return {"error": "New arc number cannot be empty."}
+
+    try:
+        existing_xml_bytes = None
+        with zipfile.ZipFile(file_path, "r") as zf:
+            for n in zf.namelist():
+                if n.lower() == "comicinfo.xml":
+                    existing_xml_bytes = zf.read(n)
+                    break
+
+        if not existing_xml_bytes:
+            root = ET.Element("ComicInfo")
+        else:
+            root = ET.fromstring(existing_xml_bytes)
+
+        arc_nodes = root.findall("StoryArc") + root.findall("Storyarc")
+        num_nodes = root.findall("StoryArcNumber")
+
+        raw_arcs = []
+        for n in arc_nodes:
+            if n.text:
+                raw_arcs.extend([a.strip() for a in n.text.split(",") if a.strip()])
+
+        raw_nums = []
+        for n in num_nodes:
+            if n.text:
+                raw_nums.extend([num.strip() for num in n.text.split(",") if num.strip()])
+
+        for n in arc_nodes + num_nodes:
+            root.remove(n)
+
+        from itertools import zip_longest
+        clean_arcs = []
+        clean_nums = []
+        seen_arcs = set()
+        for a, n in zip_longest(raw_arcs, raw_nums, fillvalue=""):
+            if not a:
+                continue
+            norm_a = re.sub(r'["\'\(\):]', " ", a).lower().strip()
+            norm_a = " ".join(norm_a.split())
+            if norm_a and norm_a not in seen_arcs:
+                seen_arcs.add(norm_a)
+                clean_arcs.append(a.strip().strip('"').strip("'"))
+                clean_nums.append(n.strip() or "1")
+
+        matched_idx = -1
+        for pos, existing_arc in enumerate(clean_arcs):
+            if _is_story_arc_matching(arc_name, existing_arc):
+                matched_idx = pos
+                break
+
+        if matched_idx >= 0:
+            clean_arcs[matched_idx] = arc_name
+            clean_nums[matched_idx] = new_num
+        else:
+            clean_arcs.append(arc_name)
+            clean_nums.append(new_num)
+
+        arc_elem = ET.SubElement(root, "StoryArc")
+        arc_elem.text = ", ".join(clean_arcs)
+
+        num_elem = ET.SubElement(root, "StoryArcNumber")
+        num_elem.text = ", ".join(clean_nums)
+
+        new_xml_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+        embed_comicinfo_in_cbz(file_path, new_xml_bytes)
+
+        return {
+            "success": True,
+            "file_path": file_path,
+            "story_arc": arc_name,
+            "new_arc_number": new_num,
+            "message": f"Updated <StoryArcNumber> to '{new_num}' for arc '{arc_name}' in {os.path.basename(file_path)}."
+        }
+    except Exception as e:
+        return {"error": f"Failed to update StoryArcNumber: {e}"}
+
 def _is_exact_series_match(target_series: str, file_name: str, folder_path: str) -> bool:
     def _clean_str(s: str) -> str:
         s_norm = s.lower().replace("-", " ").replace(":", " ").replace("/", " ").replace(".", " ")
