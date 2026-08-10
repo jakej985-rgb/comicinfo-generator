@@ -255,12 +255,7 @@ def _volume_slug_from_url(volume_url: str) -> str:
 
 def _slug_matches_series(issue_url: str, series_slug: str) -> bool:
     """Returns True if the issue URL slug is consistent with the parent series slug.
-    Rejects collected editions / crossovers that share issue numbers but belong to different series.
-
-    Strategy: strip leading articles from both slugs, then require the issue slug
-    starts with the series slug prefix followed only by a separator+number (issue number),
-    generic issue-label words, or end-of-string — NOT by another alphabetic word.
-    """
+    Rejects collected editions, TPBs, hardcovers, and crossovers from other series."""
     if not series_slug:
         return True
 
@@ -269,57 +264,53 @@ def _slug_matches_series(issue_url: str, series_slug: str) -> bool:
         return True
     issue_slug = m.group(1).lower()
 
-    # Strip leading articles to normalise (e.g. "the-darkness" -> "darkness")
+    # Reject URLs containing collected edition / TPB / volume indicators anywhere in slug
+    COLLECTED_KEYWORDS = (
+        "-tpb", "-hc", "-gn", "-graphic-novel", "-trade-paperback",
+        "-hardcover", "-softcover", "-collection", "-collected",
+        "-omnibus", "-compendium", "-deluxe", "-edition", "-masterworks",
+        "-box-set", "-slipcase", "-treasury", "-digest", "-epic-collection",
+        "-ultimate-collection", "-must-haves", "-volume-", "-vol-"
+    )
+    if any(kw in issue_slug for kw in COLLECTED_KEYWORDS):
+        return False
+
     def strip_articles(slug: str) -> str:
         for prefix in ("the-", "a-", "an-"):
             if slug.startswith(prefix):
                 slug = slug[len(prefix):]
         return slug
 
-    norm_series = strip_articles(series_slug)   # e.g. "darkness"
-    norm_issue  = strip_articles(issue_slug)     # e.g. "darkness-origins-..." or "darkness-2-..."
+    norm_series = strip_articles(series_slug)   # e.g. "ultimate-spider-man"
+    norm_issue  = strip_articles(issue_slug)     # e.g. "ultimate-spider-man-1-..." or "ultimate-spider-man-ultimate-collection-1-..."
 
-    # If the issue slug doesn't even start with the series name, it's clearly a different series
     if not norm_issue.startswith(norm_series):
         return False
 
-    # Check what follows the series name in the issue slug
-    suffix = norm_issue[len(norm_series):]  # e.g. "-2-underworld" or "-origins-1-vol-1"
+    suffix = norm_issue[len(norm_series):]  # e.g. "-1-power-and-responsibility" or "-ultimate-collection-1"
 
     if not suffix:
-        # Exact match (e.g. series "darkness" issue slug is just "darkness") — accept
         return True
 
     if not suffix.startswith("-"):
-        # Runs directly into another char without separator — different word (e.g. "darknesscrossover")
         return False
 
-    # What comes right after the dash?
-    after_dash = suffix[1:]  # e.g. "2-underworld" or "origins-1-vol-1" or "8-issue-8"
+    after_dash = suffix[1:]  # e.g. "1-power-and-responsibility" or "ultimate-collection-1"
 
     if not after_dash:
-        return True  # trailing dash edge case, accept
+        return True
 
-    # If what follows the series name is a digit → issue number → correct series
     if after_dash[0].isdigit():
         return True
 
-    # What comes after the dash is alphabetic → could be another word appended to the series name
-    # e.g. "darkness-origins" (different series) vs "darkness-dead-days" (could be an alternate title)
-    # Allow only known generic suffixes that issue titles use
-    ALLOWED_SUFFIXES = {
-        "annual", "annual-", "special", "special-",
-        "crossover", "tie-in", "vs",
+    ALLOWED_SPECIAL_PREFIXES = {
+        "annual", "special", "super", "giant", "fcbd", "free", "ashcan", "preview", "oneshot", "one", "zero", "issue", "crossover", "tie-in", "vs"
     }
     first_word = after_dash.split("-")[0]
+    if first_word in ALLOWED_SPECIAL_PREFIXES:
+        return True
 
-    # If the first word after the series name is a known "different series" indicator, reject
-    REJECTED_SUFFIXES = {"origins", "complete", "omnibus", "tpb", "collected", "compendium", "chronicles", "saga", "anthology"}
-    if first_word in REJECTED_SUFFIXES:
-        return False
-
-    # Otherwise tentatively accept (it could be a subtitle like "darkness-presents-", "darkness-level-")
-    return True
+    return False
 
 
 def scrape_volume(volume_url: str, max_pages_limit: int = 50) -> tuple[str, dict[str, str], list[dict]]:
@@ -349,11 +340,8 @@ def scrape_volume(volume_url: str, max_pages_limit: int = 50) -> tuple[str, dict
             if pnum > max_page:
                 max_page = pnum
 
-    # Two buckets: matched (slug matches series) and unmatched (collected editions / crossovers)
-    matched_map = {}     # num_str -> url  (correct series)
-    unmatched_map = {}   # num_str -> url  (suspected collected editions)
+    matched_map = {}     # num_str -> url  (correct series single issues)
     matched_list = []
-    unmatched_list = []
 
     def extract_issues_from_soup(s):
         for a in s.find_all("a", href=re.compile(r"/4000-\d+")):
@@ -386,11 +374,6 @@ def scrape_volume(volume_url: str, max_pages_limit: int = 50) -> tuple[str, dict
                     if num_str not in matched_map:
                         matched_map[num_str] = full_url
                         matched_list.append({"number": num_str, "label": label_str, "url": full_url})
-                else:
-                    if num_str not in unmatched_map:
-                        unmatched_map[num_str] = full_url
-                        unmatched_list.append({"number": num_str, "label": label_str, "url": full_url})
-
 
     extract_issues_from_soup(soup)
 
@@ -404,16 +387,10 @@ def scrape_volume(volume_url: str, max_pages_limit: int = 50) -> tuple[str, dict
         except Exception:
             pass
 
-    # Merge: use matched issues, then fill gaps with unmatched only if issue number not already covered
+    # Strictly use matched single issues for volume map and list
     issue_map = dict(matched_map)
-    issues_list = list(matched_list)
-    for item in unmatched_list:
-        if item["number"] not in issue_map:
-            issue_map[item["number"]] = item["url"]
-            issues_list.append(item)
-
     issues_list = sorted(
-        issues_list,
+        matched_list,
         key=lambda x: int(re.sub(r"\D", "", x["number"])) if re.sub(r"\D", "", x["number"]) else 0
     )
 
