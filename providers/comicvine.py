@@ -304,7 +304,7 @@ def _slug_matches_series(issue_url: str, series_slug: str) -> bool:
         return True
 
     ALLOWED_SPECIAL_PREFIXES = {
-        "annual", "special", "super", "giant", "fcbd", "free", "ashcan", "preview", "oneshot", "one", "zero", "issue", "crossover", "tie-in", "vs"
+        "annual", "special", "super", "giant", "fcbd", "free", "ashcan", "preview", "oneshot", "one", "zero", "issue"
     }
     first_word = after_dash.split("-")[0]
     if first_word in ALLOWED_SPECIAL_PREFIXES:
@@ -350,6 +350,10 @@ def scrape_volume(volume_url: str, max_pages_limit: int = 50) -> tuple[str, dict
 
             parent = a.find_parent(["li", "div", "tr", "td"]) or a
             txt = parent.get_text(" ", strip=True)
+
+            # Skip range listings like (#21-26) or #1-7 (collected edition listings)
+            if re.search(r"\(#?\d+\s*[-–]\s*\d+\)", txt) or re.search(r"#\d+\s*[-–]\s*\d+", txt):
+                continue
 
             m = re.search(r"#(?:Issue\s*)?(\d+½|\d+/\d+|\d+\.\d+|\d+[a-zA-Z]?|½|1/2|0\.5)", txt, re.I)
             if not m:
