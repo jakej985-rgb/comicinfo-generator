@@ -38,7 +38,17 @@ STATE_METADATA_NOT_FOUND = "METADATA_NOT_FOUND"
 STATE_METADATA_PROVIDER_ERROR = "METADATA_PROVIDER_ERROR"
 STATE_METADATA_INVALID = "METADATA_INVALID"
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+@dataclass
+class ProviderOperationResult:
+    """Explicit state model for provider operation execution (Phase 57)."""
+    provider: str
+    operation: str
+    status: str  # SUCCESS, NOT_FOUND, OFFLINE, TIMEOUT, RATE_LIMITED, SERVER_ERROR, AUTH_FAILED, PARSE_ERROR, INVALID_RESPONSE
+    error_type: str = ""
+    retryable: bool = False
+    message: str = ""
 
 @dataclass
 class MetadataRetrievalResult:
@@ -49,6 +59,17 @@ class MetadataRetrievalResult:
     error_message: str = ""
     is_complete: bool = False
     source: str = ""
+
+@dataclass
+class ResolutionResult:
+    """Full comprehensive result of identity and metadata resolution (Phase 57)."""
+    identity: Optional[ComicIdentity] = None
+    confidence: float = 0.0
+    decision: Optional[ConfidenceDecision] = None
+    provider_results: Dict[str, ProviderOperationResult] = field(default_factory=dict)
+    conflicts: List[str] = field(default_factory=list)
+    metadata_result: Optional[MetadataRetrievalResult] = None
+    comic: Optional[Comic] = None
 
 def read_existing_comicinfo(cbz_path: str) -> Optional[Comic]:
     """Reads existing ComicInfo.xml from a .cbz archive if present and valid."""
@@ -62,8 +83,9 @@ _logger = logging.getLogger("comicinfo.resolver")
 
 class MetadataResolver:
     """
-    Two-Phase Metadata Resolver Architecture (Phase 9 & Phase 56):
+    Two-Phase Metadata Resolver Architecture (Phase 9 & Phase 56 & Phase 57):
     Strictly separates Identity Resolution (resolve_identity) from Metadata Retrieval (retrieve_metadata).
+    Preserves provider operation states across the entire resolution pipeline.
     """
 
     def __init__(self, config: Optional[Config] = None, cache_mgr: Optional[CacheManager] = None):
@@ -79,9 +101,12 @@ class MetadataResolver:
 
     def resolve_identity(self, file_path: str, url_override: str = "") -> Tuple[Optional[ComicIdentity], ConfidenceDecision]:
         """
-        Phase 9 Step 1: Resolves and verifies the canonical ComicIdentity from filename, directory hints,
-        existing metadata, and remote providers. Evaluates candidate pool via Central Candidate Decision Policy.
+        Phase 9 Step 1 & Phase 57: Resolves and verifies the canonical ComicIdentity from filename, directory hints,
+        existing metadata, and remote providers. Evaluates candidate pool via Central Candidate Decision Policy
+        and preserves provider operation results.
         """
+        provider_results: Dict[str, ProviderOperationResult] = {}
+
         # 1. URL Override (Phase 28)
         if url_override:
             m_cv = re.search(r"4000-(\d+)", url_override)
@@ -92,9 +117,13 @@ class MetadataResolver:
                     issue_provider="ComicVine",
                     url=url_override
                 )
-                return identity, ConfidenceDecision(score=100.0, level=LEVEL_AUTO_ACCEPT, action="UPDATE")
+                provider_results["ComicVine"] = ProviderOperationResult(provider="ComicVine", operation="url_override", status="SUCCESS")
+                dec = ConfidenceDecision(score=100.0, level=LEVEL_AUTO_ACCEPT, action="UPDATE", provider_results=provider_results)
+                return identity, dec
             identity = ComicIdentity(provider="URLOverride", issue_id=url_override, url=url_override)
-            return identity, ConfidenceDecision(score=100.0, level=LEVEL_AUTO_ACCEPT, action="UPDATE")
+            provider_results["URLOverride"] = ProviderOperationResult(provider="URLOverride", operation="url_override", status="SUCCESS")
+            dec = ConfidenceDecision(score=100.0, level=LEVEL_AUTO_ACCEPT, action="UPDATE", provider_results=provider_results)
+            return identity, dec
 
         parsed = parse_filename_identity(file_path)
 
@@ -107,7 +136,7 @@ class MetadataResolver:
         if existing_report.candidate_identity and not any(c.provider == "ExistingXML" for c in local_candidates):
             local_candidates.append(existing_report.candidate_identity)
 
-        # 4. Search Providers for Candidate Identity Signals
+        # 4. Search Providers for Candidate Identity Signals (Phase 57)
         fname = os.path.basename(file_path)
         provider_candidates: List[ComicIdentity] = []
 
@@ -115,8 +144,12 @@ class MetadataResolver:
         if self.kapowarr.test_connection():
             try:
                 searches = self.kapowarr.search_issue(fname)
-                if not searches:
+                if searches:
+                    provider_results["Kapowarr"] = ProviderOperationResult(provider="Kapowarr", operation="search_issue", status="SUCCESS")
+                else:
                     _logger.debug("PROVIDER_NOT_FOUND provider=Kapowarr operation=search_issue query=%s", fname)
+                    provider_results["Kapowarr"] = ProviderOperationResult(provider="Kapowarr", operation="search_issue", status="NOT_FOUND")
+
                 for s in searches:
                     if s.get("id"):
                         s_year = int(s.get("year") or s.get("volume_year") or 0) if (s.get("year") or s.get("volume_year")) else 0
@@ -133,15 +166,34 @@ class MetadataResolver:
                             publisher=s_pub
                         ))
             except Exception as e:
-                classify_provider_error(e, provider="Kapowarr", operation="search_issue", query_or_url=fname)
+                state, retryable = classify_provider_error(e, provider="Kapowarr", operation="search_issue", query_or_url=fname)
+                provider_results["Kapowarr"] = ProviderOperationResult(
+                    provider="Kapowarr",
+                    operation="search_issue",
+                    status=state,
+                    error_type=type(e).__name__,
+                    retryable=retryable,
+                    message=str(e)
+                )
         else:
             _logger.info("PROVIDER_OFFLINE provider=Kapowarr operation=test_connection")
+            provider_results["Kapowarr"] = ProviderOperationResult(
+                provider="Kapowarr",
+                operation="test_connection",
+                status="OFFLINE",
+                retryable=True,
+                message="Kapowarr service is offline or unreachable"
+            )
 
         # ComicVine
         try:
             cv_results = self.comicvine.search_issue(fname)
-            if not cv_results:
+            if cv_results:
+                provider_results["ComicVine"] = ProviderOperationResult(provider="ComicVine", operation="search_issue", status="SUCCESS")
+            else:
                 _logger.debug("PROVIDER_NOT_FOUND provider=ComicVine operation=search_issue query=%s", fname)
+                provider_results["ComicVine"] = ProviderOperationResult(provider="ComicVine", operation="search_issue", status="NOT_FOUND")
+
             for r in cv_results:
                 if r.get("url"):
                     m_cv = re.search(r"4000-(\d+)", r["url"])
@@ -159,14 +211,26 @@ class MetadataResolver:
                         publisher=r_pub
                     ))
         except Exception as e:
-            classify_provider_error(e, provider="ComicVine", operation="search_issue", query_or_url=fname)
+            state, retryable = classify_provider_error(e, provider="ComicVine", operation="search_issue", query_or_url=fname)
+            provider_results["ComicVine"] = ProviderOperationResult(
+                provider="ComicVine",
+                operation="search_issue",
+                status=state,
+                error_type=type(e).__name__,
+                retryable=retryable,
+                message=str(e)
+            )
 
         # GCP (Grand Comics Database)
         if hasattr(self, "gcp") and self.gcp:
             try:
                 gcp_results = self.gcp.search_issue(fname)
-                if not gcp_results:
+                if gcp_results:
+                    provider_results["GCP"] = ProviderOperationResult(provider="GCP", operation="search_issue", status="SUCCESS")
+                else:
                     _logger.debug("PROVIDER_NOT_FOUND provider=GCP operation=search_issue query=%s", fname)
+                    provider_results["GCP"] = ProviderOperationResult(provider="GCP", operation="search_issue", status="NOT_FOUND")
+
                 for g in gcp_results:
                     if g.get("url") or g.get("id"):
                         g_year = int(g.get("year") or g.get("volume_year") or 0) if (g.get("year") or g.get("volume_year")) else 0
@@ -183,25 +247,36 @@ class MetadataResolver:
                             publisher=g_pub
                         ))
             except Exception as e:
-                classify_provider_error(e, provider="GCP", operation="search_issue", query_or_url=fname)
+                state, retryable = classify_provider_error(e, provider="GCP", operation="search_issue", query_or_url=fname)
+                provider_results["GCP"] = ProviderOperationResult(
+                    provider="GCP",
+                    operation="search_issue",
+                    status=state,
+                    error_type=type(e).__name__,
+                    retryable=retryable,
+                    message=str(e)
+                )
 
         # If no provider candidates and no existing XML, filename alone is not sufficient proof of identity
         has_existing_xml = any(c.provider == "ExistingXML" for c in local_candidates)
         if not provider_candidates and not has_existing_xml:
-            return None, ConfidenceDecision(score=0.0, level=LEVEL_UNRESOLVED, action="SKIP")
+            dec = ConfidenceDecision(score=0.0, level=LEVEL_UNRESOLVED, action="SKIP", provider_results=provider_results)
+            return None, dec
 
         all_candidates = local_candidates + provider_candidates
         if not all_candidates:
-            empty_cand = ComicIdentity(series_name=parsed.series_name, issue_number=parsed.issue_number)
-            return None, ConfidenceDecision(score=0.0, level=LEVEL_UNRESOLVED, action="SKIP")
+            dec = ConfidenceDecision(score=0.0, level=LEVEL_UNRESOLVED, action="SKIP", provider_results=provider_results)
+            return None, dec
 
         # 5. Evaluate Candidate Pool Decision via Central Decision Policy (Phase 44)
-        return evaluate_candidate_pool_decision(
+        best_cand, decision = evaluate_candidate_pool_decision(
             all_candidates,
             parsed,
             min_margin=10.0,
             existing_comic=existing
         )
+        decision.provider_results = provider_results
+        return best_cand, decision
 
     def retrieve_metadata_result(self, identity: ComicIdentity, file_path: str = "") -> MetadataRetrievalResult:
         """
@@ -318,3 +393,27 @@ class MetadataResolver:
                 return meta_res.comic, identity.provider or "Resolver"
 
         return None, "None"
+
+    def resolve_file_pipeline(self, file_path: str, url_override: str = "", force_overwrite: bool = False) -> ResolutionResult:
+        """
+        Phase 57: Complete pipeline entry point executing identity resolution, candidate scoring,
+        and metadata retrieval, returning a comprehensive ResolutionResult with preserved provider states.
+        """
+        identity, decision = self.resolve_identity(file_path, url_override=url_override)
+        meta_res = None
+        comic = None
+
+        if identity and decision.action != "SKIP":
+            meta_res = self.retrieve_metadata_result(identity, file_path=file_path)
+            if meta_res.state == STATE_METADATA_FOUND and meta_res.comic:
+                comic = meta_res.comic
+
+        return ResolutionResult(
+            identity=identity,
+            confidence=decision.score if decision else 0.0,
+            decision=decision,
+            provider_results=decision.provider_results if decision else {},
+            conflicts=[str(c) for c in (decision.conflicts if decision else [])],
+            metadata_result=meta_res,
+            comic=comic
+        )

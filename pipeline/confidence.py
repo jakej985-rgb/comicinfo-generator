@@ -26,6 +26,7 @@ class ConfidenceDecision:
     score_margin: Optional[float] = None
     is_ambiguous_margin: bool = False
     provider_agreement_count: int = 0
+    provider_results: dict = field(default_factory=dict)
 
 CandidateDecision = ConfidenceDecision
 
