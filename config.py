@@ -66,6 +66,97 @@ class LoggingConfig:
     level: str = "INFO"
     log_file: str = os.path.expanduser("~/.comicinfo/generator.log")
 
+class ConfigurationError(Exception):
+    """Raised when configuration values are invalid or unusable for production."""
+    pass
+
+
+def mask_secret(secret: str, show_chars: int = 4) -> str:
+    """
+    Phase 71.4: Masks sensitive secrets for secure logging.
+    Example: '1234567890abcdef' -> '1234...cdef'
+    """
+    if not secret:
+        return "<not set>"
+    if len(secret) <= show_chars * 2:
+        return "********"
+    return f"{secret[:show_chars]}...{secret[-show_chars:]}"
+
+
+def check_conversion_tools() -> dict:
+    """Phase 71.2: Checks availability of conversion utilities (unrar, rar, 7z)."""
+    import shutil
+    return {
+        "unrar": shutil.which("unrar") is not None,
+        "rar": shutil.which("rar") is not None,
+        "7z": shutil.which("7z") is not None or shutil.which("7za") is not None
+    }
+
+
+def validate_startup_config(cfg: "Config") -> list:
+    """
+    Phase 71.2 & 71.5: Validates production configuration settings.
+    Raises ConfigurationError on fatal misconfigurations and returns informative warnings.
+    """
+    warnings = []
+
+    # 1. Validate Kapowarr URL
+    if cfg.kapowarr.url and cfg.kapowarr.url.strip():
+        url = cfg.kapowarr.url.strip()
+        if not (url.startswith("http://") or url.startswith("https://")):
+            raise ConfigurationError(
+                f"Configuration error: Kapowarr is enabled but URL is invalid ('{url}'). "
+                "URL must begin with 'http://' or 'https://'."
+            )
+
+    # 2. Validate ComicVine API key
+    if cfg.comicvine.api_key:
+        key = cfg.comicvine.api_key.strip()
+        if any(c.isspace() for c in key):
+            raise ConfigurationError(
+                "Configuration error: ComicVine API key contains invalid whitespace characters."
+            )
+
+    # 3. Validate Workers
+    if cfg.automation.workers < 1:
+        raise ConfigurationError(
+            f"Configuration error: Automation workers must be >= 1 (got {cfg.automation.workers})."
+        )
+
+    # 4. Validate Logging Level
+    valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+    if cfg.logging.level.upper() not in valid_levels:
+        raise ConfigurationError(
+            f"Configuration error: Invalid log level '{cfg.logging.level}'. Must be one of {sorted(valid_levels)}."
+        )
+
+    # 5. Validate Database & Cache directory writability
+    if cfg.cache.enabled and cfg.cache.db_path and cfg.cache.db_path != ":memory:":
+        db_dir = os.path.dirname(os.path.abspath(os.path.expanduser(cfg.cache.db_path)))
+        if db_dir:
+            try:
+                os.makedirs(db_dir, exist_ok=True)
+                if not os.access(db_dir, os.W_OK):
+                    raise ConfigurationError(
+                        f"Configuration error: Cache database directory '{db_dir}' is not writable."
+                    )
+            except Exception as e:
+                if isinstance(e, ConfigurationError):
+                    raise e
+                raise ConfigurationError(
+                    f"Configuration error: Cannot create or access cache database directory '{db_dir}': {e}"
+                )
+
+    # 6. Check conversion tool readiness
+    tools = check_conversion_tools()
+    if not any(tools.values()):
+        warnings.append(
+            "Warning: No CBR extraction tool (unrar/rar/7z) found on PATH. CBR conversion will be unavailable."
+        )
+
+    return warnings
+
+
 @dataclass
 class Config:
     comicvine: ComicvineConfig = field(default_factory=ComicvineConfig)
@@ -75,6 +166,41 @@ class Config:
     output: OutputConfig = field(default_factory=OutputConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     config_file_path: str = DEFAULT_CONFIG_PATH
+
+    def to_safe_dict(self) -> dict:
+        """
+        Phase 71.4: Returns a dictionary representation of configuration
+        with sensitive secrets (API keys) securely masked.
+        """
+        return {
+            "comicvine": {
+                "api_key": mask_secret(self.comicvine.api_key)
+            },
+            "kapowarr": {
+                "url": self.kapowarr.url,
+                "api_key": mask_secret(self.kapowarr.api_key)
+            },
+            "automation": {
+                "mode": self.automation.mode,
+                "workers": self.automation.workers,
+                "prefer_kapowarr": self.automation.prefer_kapowarr
+            },
+            "cache": {
+                "enabled": self.cache.enabled,
+                "db_path": self.cache.db_path
+            },
+            "output": {
+                "embed_xml": self.output.embed_xml,
+                "overwrite": self.output.overwrite,
+                "delete_cbr": self.output.delete_cbr,
+                "strict_archive_verification": self.output.strict_archive_verification
+            },
+            "logging": {
+                "level": self.logging.level,
+                "log_file": self.logging.log_file
+            },
+            "config_file_path": self.config_file_path
+        }
 
 def init_config(config_path: str = DEFAULT_CONFIG_PATH, force: bool = False) -> str:
     """Generates default config.yaml file if it does not already exist."""

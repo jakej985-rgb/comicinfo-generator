@@ -4,7 +4,7 @@ import zipfile
 from typing import Optional, Tuple, List
 from models.comic import Comic
 from models.identity import ComicIdentity
-from providers.base import BaseProvider
+from providers.base import BaseProvider, ProviderAuthenticationError, ProviderConnectionError
 from providers.kapowarr.client import KapowarrClient
 from providers.kapowarr.models import KapowarrVolume, KapowarrIssue
 from config import load_config
@@ -69,6 +69,27 @@ class KapowarrProvider(BaseProvider):
             return res is not None
         except Exception:
             return False
+
+    def test_connection_detailed(self) -> Tuple[str, str]:
+        """
+        Phase 71.1: Returns (status, message) distinguishing:
+        - DISABLED: URL is empty or unconfigured
+        - REACHABLE: server is online and request succeeded
+        - AUTH_FAILED: API key was rejected (HTTP 401/403)
+        - UNREACHABLE: server cannot be reached (connection refused / timeout)
+        """
+        if not self.url or not self.url.strip():
+            return "DISABLED", "Kapowarr is disabled (no URL configured)."
+
+        try:
+            res = self.client.get("/api/volumes")
+            if res is not None:
+                return "REACHABLE", f"Kapowarr is reachable and authenticated at {self.url}."
+            return "UNREACHABLE", f"Kapowarr returned empty response at {self.url}."
+        except ProviderAuthenticationError as e:
+            return "AUTH_FAILED", f"Kapowarr enabled but authentication failed: {e}"
+        except Exception as e:
+            return "UNREACHABLE", f"Kapowarr enabled but unreachable: {e}"
 
     def search_series(self, query: str) -> list[dict]:
         """Searches monitored volumes/series in Kapowarr."""

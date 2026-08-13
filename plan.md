@@ -54,7 +54,7 @@ Priority| Issue| Status
 P0| CI enforcement| Completed
 P0| Metadata-write safety final verification| Completed
 P1| README architecture is stale| Needs update
-P1| Production configuration validation| Needs hardening
+P1| Production configuration validation| Completed
 P1| Dependency reproducibility| Needs improvement
 P1| CLI dry-run integration test| Completed
 P1| Provider abstraction maintainability| Review/refactor only if justified
