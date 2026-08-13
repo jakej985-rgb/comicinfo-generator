@@ -11,7 +11,7 @@ These rules govern design decisions across all subsystems (pipeline, providers, 
 
 - Filenames are ambiguous, noisy, and prone to user formatting variations (e.g. `Batman #1`, `Batman (2016) #001`, `Batman 1A`).
 - Filenames provide **signals** (parsed into `ParsedFilename` via `pipeline/filename_parser.py`), which are used as inputs to generate candidates.
-- Final identity MUST be confirmed by identity resolution (`pipeline/resolver.py → MetadataResolver`) and evaluated through confidence scoring (`pipeline/scoring.py` & `pipeline/confidence.py`).
+- Final identity MUST be confirmed by identity resolution (`pipeline/resolver.py → MetadataResolver`), normalized into `CanonicalIdentityKey`, and evaluated through confidence scoring (`pipeline/scoring.py` & `pipeline/confidence.py`).
 
 ---
 
@@ -21,7 +21,7 @@ These rules govern design decisions across all subsystems (pipeline, providers, 
 
 - `KapowarrProvider`, `ComicVineProvider`, and `GCPProvider` are candidate generators.
 - Providers query external or local databases and return raw candidate identities.
-- The pipeline (`pipeline/resolver.py` & `pipeline/confidence.py`) evaluates candidate pools with score-margin protection (`margin <= 10.0` triggering `MANUAL_REVIEW`) and multi-provider agreement bonuses (+15.0).
+- The pipeline (`pipeline/resolver.py` & `pipeline/confidence.py`) evaluates candidate pools with score-margin protection (`margin <= 10.0` triggering `MANUAL_REVIEW`) and multi-field provider agreement bonuses (+15.0).
 
 ---
 
@@ -31,17 +31,19 @@ These rules govern design decisions across all subsystems (pipeline, providers, 
 
 - `ComicIdentity` (`models/identity.py`) represents *what* a comic is (series, issue number, volume ID, publication year, publisher, provider ID).
 - `Comic` (`models/comic.py`) represents *metadata details* (title, summary, creators, characters, story arcs, cover art info).
-- Identity resolution (`resolve_identity()`) happens strictly BEFORE metadata retrieval (`retrieve_metadata()`). Metadata is fetched only after an identity candidate is selected.
+- Identity resolution (`resolve_identity()`) happens strictly BEFORE metadata retrieval (`retrieve_metadata_result()`).
+- Metadata is fetched and validated only after an identity candidate is selected. There is NO direct transition from identity resolution to archive writing.
 
 ---
 
-## 4. Archive Safety Invariant
+## 4. Archive Safety & Durability Invariant
 
 > **Never replace an original archive with an unverified archive.**
 
-- Every archive update (`writers/archive.py → embed_comicinfo_in_cbz`) executes an atomic 9-step transaction: `temp file → fsync temp file → fsync directory → os.replace`.
-- Pre-replacement verification (`verify_cbz_archive`) tests the temporary archive for ZIP integrity, entry-by-entry CRC and size manifest matching, image preservation, and parseable `ComicInfo.xml` BEFORE replacing the original.
+- Every archive update (`writers/archive.py → embed_comicinfo_in_cbz`) executes an atomic 10-step transaction: `temp file → fsync temp file → fsync directory → os.replace → fsync directory → verify final`.
+- Pre-replacement verification (`verify_cbz_archive`) tests the temporary archive for ZIP integrity, entry-by-entry CRC and size manifest matching, image preservation, optional strict SHA256 integrity, and parseable `ComicInfo.xml` BEFORE replacing the original.
 - Post-replacement verification runs on the final file. If any check fails, the transaction is aborted and the original archive remains untouched.
+- Actual hardware/disk I/O failures (`EIO`, `ENOSPC`, `EROFS`) during fsync raise `ArchiveWriteError` to ensure durability failures fail the job safely rather than being silently swallowed.
 - Conversion from `.cbr` to `.cbz` (`converters/cbr_to_cbz.py`) deletes the original `.cbr` ONLY after the `.cbz` is created, embedded, and fully verified.
 
 ---
@@ -56,24 +58,25 @@ These rules govern design decisions across all subsystems (pipeline, providers, 
 
 ---
 
-## 6. Automation Invariant
+## 6. Automation & Concurrency Invariant
 
 > **Every processing operation is restart-safe and concurrency-safe.**
 
-- Job states (`PENDING`, `PROCESSING`, `DONE`, `FAILED`) are persisted in SQLite (`cache/jobs.py`).
+- Job states (`PENDING`, `PROCESSING`, `SUCCESS`, `FAILED`) are persisted in SQLite (`cache/jobs.py`) running in WAL mode with a 30s busy timeout.
 - Concurrent workers claim jobs via SQLite `BEGIN IMMEDIATE` exclusive locking with worker lease timeouts.
 - On restart or worker timeout, expired leases (`lease_until < now`) are automatically recovered, while poison-pill jobs exceeding `max_attempts` transition to `FAILED`.
 - File processing uses SHA256 fingerprinting (`cache/tracker.py` & `cache/db.py → file_hashes`). The pipeline's own writes are recognized and dropped to prevent modification loops.
+- Active pending and processing files are deduplicated in `automation/queue.py` to prevent duplicate concurrent jobs on burst events.
 
 ---
 
-## 7. Error Classification Invariant
+## 7. Error Classification & Propagation Invariant
 
 > **No match != provider failure.**
 
-- A provider search returning zero results for a query is a valid negative match (`None` or empty list), NOT a system failure or network error.
+- A provider search returning zero results for a query is a valid negative match (`NOT_FOUND`), NOT a system failure or network error.
 - Provider failures are classified into typed exceptions: retryable (`ProviderUnavailable`, `ProviderRateLimited`, `ProviderTimeout`) and non-retryable (`ProviderNotFound`, `ProviderAuthError`, `ProviderParseError`, `ProviderInvalidResponse`).
-- Zero matches result in an `UNRESOLVED` identity decision, allowing graceful degradation without raising unhandled exceptions.
+- Provider operational states survive to the final `ResolutionResult` and job store.
 
 ---
 
@@ -109,13 +112,13 @@ These rules govern design decisions across all subsystems (pipeline, providers, 
 
 | Invariant | Enforced In | Key Mechanism / Class |
 |---|---|---|
-| 1. Identity | `pipeline/filename_parser.py`, `pipeline/resolver.py` | `parse_filename_identity()` signal extraction |
+| 1. Identity | `pipeline/filename_parser.py`, `pipeline/resolver.py` | `CanonicalIdentityKey`, signal extraction |
 | 2. Providers | `pipeline/resolver.py`, `pipeline/confidence.py` | Candidate pool scoring, agreement bonus, score margin |
-| 3. Metadata | `pipeline/resolver.py`, `models/` | `resolve_identity()` vs `retrieve_metadata()` |
-| 4. Archives | `writers/archive.py`, `converters/cbr_to_cbz.py` | CRC manifest verification, directory fsync, atomic `os.replace` |
+| 3. Metadata | `pipeline/resolver.py`, `models/` | `resolve_identity()` vs `retrieve_metadata_result()` |
+| 4. Archives | `writers/archive.py`, `converters/cbr_to_cbz.py` | CRC & SHA256 manifest verification, directory fsync, atomic `os.replace` |
 | 5. Existing Metadata | `pipeline/merge.py`, `pipeline/existing_metadata.py` | `inspect_existing_comicinfo()`, tag preservation |
-| 6. Automation | `cache/jobs.py`, `automation/watcher.py` | `BEGIN IMMEDIATE` lease claims, SHA256 self-write guard |
-| 7. Errors | `observability/retry.py`, `pipeline/resolver.py` | Typed exceptions vs `UNRESOLVED` decisions |
+| 6. Automation | `cache/jobs.py`, `automation/watcher.py` | `BEGIN IMMEDIATE` lease claims, SQLite WAL, SHA256 self-write guard |
+| 7. Errors | `observability/retry.py`, `pipeline/resolver.py` | `ProviderOperationResult` state tracking |
 | 8. Kapowarr | `pipeline/resolver.py`, `services/kapowarr.py` | Connection test & preferred lookup fallback |
 | 9. API Boundary | `api/handlers.py`, `services/` | Service delegation, AST static analysis validation |
 | 10. Dry-Run Isolation | `pipeline/dry_run.py`, `main.py` | In-memory SQLite & archive write interceptor |

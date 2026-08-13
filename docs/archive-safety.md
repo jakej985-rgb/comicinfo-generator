@@ -9,41 +9,54 @@ and the invariants that must be maintained for all archive operations.
 
 ## Responsibilities
 
-`writers/archive.py → embed_comicinfo_in_cbz(archive_path, comic)`
+`writers/archive.py → embed_comicinfo_in_cbz(archive_path, comic, strict=False)`
 
-1. Record original archive entry manifest with entry-by-entry CRC32 and uncompressed sizes
-2. Create a temporary `.cbz` in the **same directory** as the target (same filesystem)
-3. Stream-copy original image and asset entries without re-compressing uncompressed data
-4. Write the new `ComicInfo.xml` (preserving unrecognised XML fields)
-5. Preserve file permissions, timestamps, and ownership
-6. Verify the temporary archive with entry-by-entry CRC and size matching before replacement
-7. `fsync` the temp file file descriptor to flush data blocks to stable storage
-8. `fsync_directory` to ensure directory metadata changes are durable on disk
-9. `os.replace()` — atomic swap on POSIX filesystem
-10. Verify the final archive with post-replacement CRC verification
+1. Record original archive entry manifest with entry-by-entry CRC32, uncompressed sizes, and SHA256 hashes.
+2. Create a temporary `.cbz` in the **same directory** as the target (same filesystem to guarantee POSIX `os.replace` atomicity).
+3. Stream-copy original image and asset entries without re-compressing uncompressed data.
+4. Write the new `ComicInfo.xml` (preserving unrecognised XML fields and schema compliance).
+5. Preserve file permissions, timestamps, and ownership (best-effort skips on unprivileged chown).
+6. Verify the temporary archive with entry-by-entry CRC, size matching, and optional strict SHA256 manifest matching before replacement.
+7. `fsync_file` the temp file descriptor to flush data blocks to stable storage with classified errno handling.
+8. `fsync_directory` to ensure directory metadata changes are durable on disk.
+9. `os.replace()` — atomic swap on POSIX filesystem.
+10. `fsync_directory` after replacement to commit parent directory entry.
+11. Verify the final archive with post-replacement CRC and strict SHA256 verification.
 
 ---
 
-## The 9-Step Atomic Write Contract
+## The 10-Step Atomic Durability Contract
 
 ```text
-[original.cbz]  ──read manifest (CRC32, size)──▶  [.tmp_XXXXXX.cbz]
-                                                          │
-                                         verify_cbz_archive(temp, original_manifest)
-                                                          │
-                                                     fsync(temp_fd)
-                                                          │
-                                                    fsync_directory(dir)
-                                                          │
-                                              os.replace(tmp → original)
-                                                          │
-                                                    fsync_directory(dir)
-                                                          │
-                                         verify_cbz_archive(final, original_manifest)
+[original.cbz]  ──read manifest (CRC32, size, SHA256)──▶  [.tmp_XXXXXX.cbz]
+                                                                  │
+                                                 verify_cbz_archive(temp, original_manifest, strict)
+                                                                  │
+                                                             fsync_file(temp_fd)
+                                                                  │
+                                                            fsync_directory(dir)
+                                                                  │
+                                                      os.replace(tmp → original)
+                                                                  │
+                                                            fsync_directory(dir)
+                                                                  │
+                                                 verify_cbz_archive(final, original_manifest, strict)
 ```
 
 `os.replace()` is guaranteed atomic on POSIX systems when source and destination are on the same filesystem.  
 The temp file is **always created in the same directory** as the target to guarantee this.
+
+---
+
+## Durability Status & fsync Classification
+
+`fsync_file` and `fsync_directory` explicitly classify filesystem outcomes:
+
+| Durability State | Condition / Errno | Action |
+|---|---|---|
+| `FSYNC_SUCCESS` | Disk sync completed successfully | Flushed to physical disk blocks |
+| `FSYNC_UNSUPPORTED` | `ENOSYS`, `EINVAL`, `EISDIR`, `ENOTSUP` | Platform/filesystem does not support directory or handle sync; logs and proceeds safely |
+| `FSYNC_FAILED` | `EIO`, `ENOSPC`, `EROFS`, `EPERM` | Storage media or permission failure; raises `ArchiveWriteError` causing the job to fail safely |
 
 ---
 
@@ -58,8 +71,9 @@ Every archive is verified at two checkpoints (pre-replace on temp file, and post
 | Image Preserved | At least one image exists, entry count matches original |
 | Entry CRC32 | Every image entry CRC32 exactly matches the pre-write manifest |
 | Entry File Size | Every image entry uncompressed size exactly matches original |
+| Strict SHA256 | When strict mode enabled, every untouched file SHA256 matches pre-write manifest |
 
-Verification failure raises `ArchiveValidationError` and aborts immediately.
+Verification failure raises `ArchiveValidationError` and aborts immediately, guaranteeing temp file cleanup and untampered original file retention.
 
 ---
 
@@ -82,8 +96,8 @@ Defined in `converters/cbr_to_cbz.py`:
 | Exception | When raised |
 |---|---|
 | `ArchiveReadError` | Archive does not exist, is not a ZIP, or cannot be opened |
-| `ArchiveWriteError` | Temp file creation fails, disk full, `os.replace` fails, permission denied |
-| `ArchiveValidationError` | Integrity or CRC check fails before or after replacement |
+| `ArchiveWriteError` | Temp file creation fails, disk full, `os.replace` fails, `EIO` on fsync |
+| `ArchiveValidationError` | Integrity, CRC, or strict SHA256 check fails before or after replacement |
 
 All three inherit from `ArchiveError`.
 
@@ -110,7 +124,7 @@ When `--dry-run` is active:
 ## Summary of Invariants
 
 1. The original archive is never modified in-place — only replaced atomically via same-directory temp file.
-2. Verification with entry-level CRC matching runs before **and** after every replacement.
+2. Verification with entry-level CRC and size matching runs before **and** after every replacement.
 3. A failed verification leaves the original archive intact.
 4. `.cbr` originals are never deleted until their `.cbz` replacement is fully verified.
-5. `fsync` on both file descriptor and directory inode is executed to guarantee on-disk durability.
+5. `fsync` on file descriptor and directory inode is executed to guarantee on-disk durability, with actual I/O failures raising `ArchiveWriteError`.

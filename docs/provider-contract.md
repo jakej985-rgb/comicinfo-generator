@@ -12,7 +12,8 @@ This describes the **actual implemented** provider interface, not a wishlist.
 Providers are responsible **only** for:
 1. Accepting a search query or URL
 2. Returning structured data (`Comic` objects or raw dicts)
-3. Raising typed exceptions on failure
+3. Raising typed exceptions on failure (`RetryableError`, `NonRetryableError`)
+4. Participating in `ProviderOperationResult` state tracking
 
 Providers must **never**:
 - Write to archives
@@ -38,10 +39,26 @@ Providers must **never**:
 
 | Method | Output |
 |---|---|
-| `search_issue` | `list[dict]` with `url`, `title` keys |
+| `search_issue` | `list[dict]` or `list[ComicIdentity]` |
 | `search_series` | `list[dict]` with `id`, `title`, `url` keys |
 | `lookup_issue` | `Comic` dataclass or `None` |
 | `lookup_volume` | `(series_name: str, issue_map: dict, issues_list: list)` |
+
+---
+
+## Provider Operation Taxonomy & State Propagation
+
+Every provider operation is classified and recorded in `ProviderOperationResult`:
+
+| Status State | Description | Retryable |
+|---|---|---|
+| `SUCCESS` | Candidates or metadata successfully retrieved | N/A |
+| `NOT_FOUND` | Query returned zero results (valid negative match) | False |
+| `SERVER_ERROR` | Provider HTTP 5xx or server crash | True |
+| `RATE_LIMITED` | HTTP 429 Too Many Requests | True |
+| `TIMEOUT` | Socket/connection timeout | True |
+| `AUTH_FAILED` | HTTP 401/403 Invalid API key or credentials | False |
+| `OFFLINE` | `test_connection()` failed (e.g. Kapowarr unreachable) | True |
 
 ---
 
@@ -49,9 +66,9 @@ Providers must **never**:
 
 | Provider | Module | Type |
 |---|---|---|
-| Kapowarr | `providers/kapowarr.py` | REST API (local) |
-| Comic Vine | `providers/comicvine.py` | HTML scraper |
-| Grand Comics Database | `providers/gcp.py` | HTML scraper |
+| Kapowarr | `providers/kapowarr/provider.py` | REST API (local) |
+| Comic Vine | `providers/comicvine/provider.py` | HTML scraper / API |
+| Grand Comics Database | `providers/gcd/provider.py` | HTML scraper |
 | Story Arc | `providers/story_arc.py` | HTML scraper + custom parser |
 
 ---
@@ -93,38 +110,8 @@ def fetch_issue(url: str) -> Comic:
 
 ## Invariants
 
-1. A provider must return `None` (not raise) when it genuinely cannot find a result.
-2. A provider must raise a typed exception (`RetryableError`, `NonRetryableError`) on failure — never silently swallow errors.
+1. A provider returning zero results is a valid `NOT_FOUND` state, distinct from provider server failure.
+2. A provider must raise a typed exception on genuine failure — never silently swallow errors.
 3. Provider results are **never** embedded without passing through `MetadataResolver`.
 4. Provider HTML parsing failures are `NonRetryableError` — never retried.
-
----
-
-## Failure Modes
-
-| Failure | Expected Behaviour |
-|---|---|
-| HTTP 429 | Raise `RetryableError` → retried with backoff |
-| HTTP 404 | Raise `NonRetryableError` → not retried |
-| Cloudflare block | Raise `NonRetryableError` → flagged for manual review |
-| Malformed HTML | Raise `NonRetryableError` → not retried |
-| Timeout | Raise `RetryableError` → retried up to `max_attempts` |
-| Connection reset | Raise `RetryableError` → retried with backoff |
-
----
-
-## Testing Requirements
-
-- All provider tests must use mocked HTTP responses — no live network.
-- Fixture HTML files live in `tests/fixtures/comicvine/` and `tests/fixtures/gcp/`.
-- Every provider must have at least one test covering: success, 404, timeout, Cloudflare block.
-
----
-
-## Do-Not-Do Rules
-
-- Do not call providers from `api/handlers.py` directly.
-- Do not hardcode API keys in provider code — always read from `config.py`.
-- Do not add Comic Vine-specific or GCD-specific fields to `Comic` or `ComicIdentity`.
-- Do not suppress provider exceptions without logging them.
-- Do not retry 404 responses.
+5. All provider tests use mocked network calls — no live HTTP requests during tests.

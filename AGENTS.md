@@ -16,10 +16,11 @@ This repository has accumulated significant domain logic (issue ordering, identi
 confidence scoring, atomic archive writes, CBR safety, durable job queuing).  
 Rewriting from scratch discards tested invariants. Always extend, never replace.
 
-### 1.2 Do not bypass the identity resolver
+### 1.2 Do not bypass the identity resolver or metadata separation
 
 All metadata retrieval must go through `pipeline/resolver.py → MetadataResolver`.  
-Do not call providers directly from `api/handlers.py`, `services/`, or any other layer.
+Do not call providers directly from `api/handlers.py`, `services/`, or any other layer.  
+There is strictly NO path from Identity Resolved directly to Archive Write without successful, validated Metadata Retrieval.
 
 ### 1.3 Do not accept the first provider search result automatically
 
@@ -60,10 +61,10 @@ Every call to `embed_comicinfo_in_cbz` runs `verify_cbz_archive` before and afte
 Always use the `temp file → fsync → os.replace` pattern in `writers/archive.py`.
 The temp file must be in the **same directory** as the target (same filesystem).
 
-### 2.4 Do not suppress archive exceptions
+### 2.4 Do not suppress archive or durability exceptions
 
 `ArchiveReadError`, `ArchiveWriteError`, and `ArchiveValidationError` must always
-propagate. Log the failure, record the job as `FAILED`, but do not swallow the error.
+propagate. Actual storage I/O errors (`EIO`, `ENOSPC`, `EROFS`) during file or directory fsync must raise `ArchiveWriteError`. Log the failure, record the job as `FAILED`, but do not swallow the error.
 
 ---
 
@@ -76,7 +77,7 @@ All provider failures must raise typed exceptions:
 - `RetryableError` for timeouts, 429, temporary 5xx
 - `NonRetryableError` for 404, 401/403, Cloudflare blocks, parse failures
 
-Never catch and discard a provider exception without logging.
+Never catch and discard a provider exception without logging. Provider operation outcomes must be recorded in `ProviderOperationResult`.
 
 ### 3.2 Do not retry non-retryable errors
 
@@ -133,7 +134,7 @@ Do not modify `cache/tracker.py → mark_file_processed` in ways that break this
 ### 6.2 Dry-run mode must never modify any file
 
 When `--dry-run` is active, no archive, temp file, file hash, or job record  
-may be created or modified. This is enforced in `main.py`.
+may be created or modified. This is enforced in `main.py` via `DryRunContext`.
 
 ---
 
@@ -187,9 +188,10 @@ Run `./venv/bin/python -m unittest discover tests` and confirm `OK` before commi
 | Architecture | Rewrite from scratch |
 | Identity | Bypass `MetadataResolver` |
 | Identity | Auto-accept the first search result |
+| Identity | Skip Metadata Retrieval directly to Archive Write |
 | Archives | Write to target without temp+verify+replace |
 | Archives | Delete CBR before CBZ is verified |
-| Archives | Silently catch `ArchiveError` |
+| Archives | Silently catch `ArchiveError` or fsync I/O errors |
 | Providers | Silently swallow provider exceptions |
 | Providers | Retry HTTP 404 or auth failures |
 | Kapowarr | Change file ownership/permissions |
