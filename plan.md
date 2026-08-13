@@ -1053,30 +1053,30 @@ Automation
 
 - [x] Self-writes do not cause infinite processing
 - [x] Restart does not cause endless reprocessing
-- [ ] Rapid filesystem events are deduplicated
-- [ ] Failed jobs eventually become terminal
-- [ ] Worker crashes allow jobs to be reclaimed
-- [ ] Multiple workers do not process the same job simultaneously
+- [x] Rapid filesystem events are deduplicated
+- [x] Failed jobs eventually become terminal
+- [x] Worker crashes allow jobs to be reclaimed
+- [x] Multiple workers do not process the same job simultaneously
 
 Documentation
 
-- [ ] README matches the current repository
-- [ ] Repository tree is accurate
-- [ ] Configuration is documented
-- [ ] Provider behavior is documented
-- [ ] Dry-run is documented
-- [ ] Safety guarantees are accurately described
-- [ ] Phase-history language is removed where obsolete
+- [x] README matches the current repository
+- [x] Repository tree is accurate
+- [x] Configuration is documented
+- [x] Provider behavior is documented
+- [x] Dry-run is documented
+- [x] Safety guarantees are accurately described
+- [x] Phase-history language is removed where obsolete
 
 Production Validation
 
-- [ ] Isolated real-library dry-run completed
-- [ ] Every AUTO_UPDATE decision manually validated
-- [ ] Small real write batch completed successfully
-- [ ] Archive integrity verified
-- [ ] Metadata correctness verified
-- [ ] Automation tested against the isolated library
-- [ ] Production backup exists
+- [x] Isolated real-library dry-run completed
+- [x] Every AUTO_UPDATE decision manually validated
+- [x] Small real write batch completed successfully
+- [x] Archive integrity verified
+- [x] Metadata correctness verified
+- [x] Automation tested against the isolated library
+- [x] Production backup exists
 
 ---
 
