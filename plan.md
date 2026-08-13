@@ -1667,85 +1667,67 @@ Identity
 - [ ] Low-confidence matches are not automatically written.
 - [ ] First-result selection has been eliminated.
 
-- [x] Identity is separate from metadata.
-- [x] Provider metadata is normalized.
-- [x] Field-level merge rules exist.
-- [x] TPB/collection metadata is validated.
+Metadata
+
+- [ ] Identity is separate from metadata.
+- [ ] Provider metadata is normalized.
+- [ ] Field-level merge rules exist.
+- [ ] TPB/collection metadata is validated.
 
 ComicInfo
 
-- [x] All supported fields round-trip.
-- [x] Unknown fields are preserved.
-- [x] Existing metadata is not silently destroyed.
-- [x] XML validation exists.
+- [ ] All supported fields round-trip.
+- [ ] Unknown fields are preserved.
+- [ ] Existing metadata is not silently destroyed.
+- [ ] XML validation exists.
 
 Archives
 
-- [x] Temporary archive is created on the same filesystem.
-- [x] Temporary archive is validated.
-- [x] Atomic replacement is used.
-- [x] Unsafe cross-filesystem replacement is not silently used.
-- [x] Final archive is verified.
-- [x] Original content entries are preserved.
-- [x] CBR deletion occurs only after successful CBZ verification.
+- [ ] Temporary archive is created on the same filesystem.
+- [ ] Temporary archive is validated.
+- [ ] Atomic replacement is used.
+- [ ] Unsafe cross-filesystem replacement is not silently used.
+- [ ] Final archive is verified.
+- [ ] Original content entries are preserved.
+- [ ] CBR deletion occurs only after successful CBZ verification.
 
 Automation
 
-- [x] Jobs are stored durably.
-- [x] Queue survives restart.
-- [x] Processing jobs can recover after crashes.
-- [x] Duplicate jobs are prevented.
-- [x] Watcher does not repeatedly process its own output.
-- [x] SHA256 state is recorded.
+- [ ] Jobs are stored durably.
+- [ ] Queue survives restart.
+- [ ] Processing jobs can recover after crashes.
+- [ ] Duplicate jobs are prevented.
+- [ ] Watcher does not repeatedly process its own output.
+- [ ] SHA256 state is recorded.
 
 Providers
 
-- [x] Provider contracts are defined.
-- [x] Provider failures are typed.
-- [x] Rate limiting exists.
-- [x] Retry policy exists.
-- [x] Provider responses are cached.
-- [x] Parser fixtures exist.
+- [ ] Provider contracts are defined.
+- [ ] Provider failures are typed.
+- [ ] Rate limiting exists.
+- [ ] Retry policy exists.
+- [ ] Provider responses are cached.
+- [ ] Parser fixtures exist.
 
 Testing
 
-- [x] Unit tests pass.
-- [x] Integration tests pass.
-- [x] Archive tests pass.
-- [x] Provider fixture tests pass.
-- [x] Failure-injection tests pass.
-- [x] Restart/recovery tests pass.
-- [x] Large-library test set passes.
+- [ ] Unit tests pass.
+- [ ] Integration tests pass.
+- [ ] Archive tests pass.
+- [ ] Provider fixture tests pass.
+- [ ] Failure-injection tests pass.
+- [ ] Restart/recovery tests pass.
+- [ ] Large-library test set passes.
 
 Documentation
 
-- [x] Architecture documentation exists.
-- [x] Metadata resolution documentation exists.
-- [x] Provider contract documentation exists.
-- [x] Archive safety documentation exists.
-- [x] Automation documentation exists.
-- [x] Testing documentation exists.
-- [x] AI-agent instructions exist.
-- [x] Existing ComicInfo is never silently destroyed.
-- [x] Archive replacement is atomic/safe.
-- [x] No automatic directory renaming/copy takeover occurs.
-- [x] Identity is separate from metadata.
-- [x] Provider IDs are preserved.
-- [x] Filename matching cannot directly force a match.
-- [x] Confidence scoring exists.
-- [x] Low-confidence matches require review.
-- [x] Kapowarr data is cached.
-- [x] Comic Vine requests are cached.
-- [x] Provider errors are visible.
-- [x] ComicInfo round-trip is lossless.
-- [x] TPB merging validates inputs.
-- [x] Processing state survives restart.
-- [x] Watcher is idempotent.
-- [x] Dry-run mode works.
-- [x] Real-library regression tests exist.
-- [x] Archive corruption is detected.
-- [x] ZIP path traversal is handled safely.
-- [x] Full-library dry run completes without modifying files.
+- [ ] Architecture documentation exists.
+- [ ] Metadata resolution documentation exists.
+- [ ] Provider contract documentation exists.
+- [ ] Archive safety documentation exists.
+- [ ] Automation documentation exists.
+- [ ] Testing documentation exists.
+- [ ] AI-agent instructions exist.
 
 ---
 
