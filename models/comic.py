@@ -8,7 +8,7 @@ class Comic:
     series: str = ""
     number: str = ""
     volume: str = ""
-    count: int = 1
+    count: Optional[int] = None
     summary: str = ""
     notes: str = ""
     year: int = 0
@@ -34,6 +34,7 @@ class Comic:
     sha256: str = ""
     identity: Optional[ComicIdentity] = None
     extra_fields: Dict[str, str] = field(default_factory=dict)
+    extra_nodes: list = field(default_factory=list)
 
 def merge_comics(comics: list[Comic]) -> Comic:
     """

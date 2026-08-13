@@ -4,13 +4,15 @@ from models.comic import Comic
 
 KNOWN_TAGS = {
     "Title", "Series", "Number", "Volume", "Count", "Summary", "Notes",
-    "Year", "Month", "Day", "Publisher", "Genre", "Web", "LanguageISOCode",
-    "Format", "Writer", "Penciller", "Inker", "Colorist", "Letterer",
-    "CoverArtist", "Characters", "Teams", "StoryArc", "Storyarc", "StoryArcNumber"
+    "Year", "Month", "Day", "Publisher", "Imprint", "Genre", "Web", "PageCount",
+    "LanguageISOCode", "Format", "BlackAndWhite", "Manga", "Characters", "Teams",
+    "Locations", "MainCharacterOrTeam", "StoryArc", "Storyarc", "StoryArcNumber",
+    "SeriesGroup", "AgeRating", "CommunityRating", "Review", "Writer", "Penciller",
+    "Inker", "Colorist", "Letterer", "CoverArtist", "Editor", "Translator"
 }
 
 class ComicInfoParser:
-    """Parses ComicInfo.xml bytes or ElementTree into a Comic model while preserving extra unknown tags."""
+    """Parses ComicInfo.xml bytes or ElementTree into a Comic model while preserving unknown nodes & attributes."""
 
     @staticmethod
     def parse_xml_bytes(xml_bytes: bytes) -> Comic:
@@ -26,13 +28,17 @@ class ComicInfoParser:
         c.publisher = root.findtext("Publisher") or ""
         c.genre = root.findtext("Genre") or ""
         c.web = root.findtext("Web") or ""
-        c.language = root.findtext("LanguageISOCode") or "en"
-        c.format = root.findtext("Format") or "Comic"
+        c.language = root.findtext("LanguageISOCode") or ""
+        c.format = root.findtext("Format") or ""
 
-        try:
-            c.count = int(root.findtext("Count") or 1)
-        except ValueError:
-            c.count = 1
+        count_text = root.findtext("Count")
+        if count_text:
+            try:
+                c.count = int(count_text)
+            except ValueError:
+                c.count = 1
+        else:
+            c.count = None
 
         try:
             c.year = int(root.findtext("Year") or 0)
@@ -71,22 +77,23 @@ class ComicInfoParser:
                 raw_arc_nums.extend([n.strip() for n in node.text.split(",") if n.strip()])
         c.story_arc_numbers = raw_arc_nums
 
-        # Preserve unknown extra fields
+        # Preserve unknown extra XML nodes (tags, attributes, nested elements)
         for child in root:
             tag = child.tag
-            if tag not in KNOWN_TAGS and child.text:
-                c.extra_fields[tag] = child.text
+            if isinstance(tag, str) and tag not in KNOWN_TAGS:
+                c.extra_fields[tag] = child.text or ""
+                c.extra_nodes.append(etree.fromstring(etree.tostring(child)))
 
         return c
 
 
 class ComicInfoWriter:
-    """Generates ComicInfo.xml bytes from a Comic model, preserving unknown extra fields."""
+    """Generates ComicInfo.xml bytes from a Comic model, preserving unknown XML nodes and attributes."""
 
     @staticmethod
     def _add(root, name, val):
-        e = etree.SubElement(root, name)
         if val not in (None, ""):
+            e = etree.SubElement(root, name)
             e.text = str(val)
 
     @classmethod
@@ -109,12 +116,19 @@ class ComicInfoWriter:
             ("StoryArc", ", ".join(c.story_arcs)),
             ("StoryArcNumber", ", ".join(getattr(c, "story_arc_numbers", [])))
         ]:
-            cls._add(root, k, v)
-            written_tags.add(k)
+            if v not in (None, ""):
+                cls._add(root, k, v)
+                written_tags.add(k)
 
-        # Write preserved extra unknown fields
+        # Write preserved extra unknown XML nodes
+        for node in getattr(c, "extra_nodes", []):
+            if isinstance(node.tag, str) and node.tag not in written_tags:
+                root.append(etree.fromstring(etree.tostring(node)))
+                written_tags.add(node.tag)
+
+        # Write extra_fields fallback if not already appended
         for k, v in getattr(c, "extra_fields", {}).items():
-            if k not in written_tags:
+            if k not in written_tags and v:
                 cls._add(root, k, v)
 
         return etree.tostring(root, pretty_print=True, xml_declaration=True, encoding="utf-8")
