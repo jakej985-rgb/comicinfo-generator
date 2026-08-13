@@ -90,6 +90,27 @@ def verify_cbz_archive(archive_path: str):
         )
 
 
+def preserve_file_metadata(src_path: str, dst_path: str):
+    """
+    Preserves file permissions (mode), modification timestamps (mtime/atime),
+    and original file ownership (UID/GID) where permitted without forcing changes.
+    """
+    try:
+        shutil.copystat(src_path, dst_path)
+    except Exception:
+        pass
+
+    try:
+        st = os.stat(src_path)
+        if hasattr(os, "chown"):
+            try:
+                os.chown(dst_path, st.st_uid, st.st_gid)
+            except (PermissionError, OSError):
+                pass
+    except Exception:
+        pass
+
+
 def fsync_file(file_path: str):
     """Fsyncs a file descriptor to ensure bytes are committed to persistent disk media."""
     try:
@@ -170,11 +191,10 @@ def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
 
                 dst_zip.writestr("ComicInfo.xml", xml_data)
 
-        # Phase 17: Preserve file metadata (permissions, mtime, atime, stat)
-        try:
-            shutil.copystat(archive_path, temp_path)
-        except Exception:
-            pass
+        # Phase 17: Preserve file metadata (permissions, mtime, atime, UID/GID)
+        preserve_file_metadata(archive_path, temp_path)
+
+
 
         # Phase 16 Step 3: Verify temp archive
         verify_cbz_archive(temp_path)
