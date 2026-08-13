@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import tempfile
 import zipfile
+from writers.archive import verify_cbz_archive, fsync_file, preserve_file_metadata
 
 def find_extractor():
     """Finds the best available RAR/CBR extractor command."""
@@ -36,10 +37,10 @@ def find_extractor():
 
 def convert_cbr_to_cbz(cbr_path: str, delete_original: bool = False) -> str:
     """
-    Converts a .cbr (RAR/RAR5) archive to a .cbz (ZIP) archive.
-    Uses -kb (Keep Broken/partial files) so minor checksum issues don't abort extraction.
-    Only deletes original .cbr if extraction had ZERO errors and .cbz is verified.
-    Returns the path to the created .cbz file.
+    Phase 19: Safe CBR -> CBZ Transactional Conversion.
+    Workflow:
+      CBR -> Create CBZ -> Verify CBZ -> Record success -> Only then delete original CBR.
+    Never deletes the CBR merely because conversion started or partially extracted.
     """
     if not os.path.exists(cbr_path):
         raise FileNotFoundError(f"File not found: '{cbr_path}'")
@@ -54,7 +55,7 @@ def convert_cbr_to_cbz(cbr_path: str, delete_original: bool = False) -> str:
     has_extraction_warning = False
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        # Extract CBR archive depending on tool type (adding -kb for unrar to keep files despite CRC warning)
+        # Extract CBR archive
         if tool_type == "unrar":
             cmd = [tool_path, "x", "-kb", "-o+", "-y", cbr_path, f"{temp_dir}/"]
         elif tool_type == "unar":
@@ -88,9 +89,9 @@ def convert_cbr_to_cbz(cbr_path: str, delete_original: bool = False) -> str:
         if not extracted_files:
             raise RuntimeError(f"Failed to extract CBR file '{cbr_path}': {res.stderr or res.stdout or 'No files extracted'}")
 
-        # Create CBZ archive
+        # Create CBZ archive in same target directory
         dir_name = os.path.dirname(os.path.abspath(cbz_path))
-        with tempfile.NamedTemporaryFile(dir=dir_name, delete=False, suffix=".cbz") as temp_file:
+        with tempfile.NamedTemporaryFile(dir=dir_name, delete=False, prefix=".tmp_conv_", suffix=".cbz") as temp_file:
             temp_cbz_path = temp_file.name
 
         try:
@@ -101,17 +102,30 @@ def convert_cbr_to_cbz(cbr_path: str, delete_original: bool = False) -> str:
                         rel_path = os.path.relpath(file_full_path, temp_dir)
                         zf.write(file_full_path, rel_path)
 
-            # Move temporary CBZ file to final path
-            shutil.move(temp_cbz_path, cbz_path)
+            # Preserve metadata
+            preserve_file_metadata(cbr_path, temp_cbz_path)
+
+            # Verify temporary CBZ ZIP test before replace
+            with zipfile.ZipFile(temp_cbz_path, "r") as z_chk:
+                if z_chk.testzip():
+                    raise RuntimeError(f"Created CBZ '{temp_cbz_path}' failed ZIP test.")
+
+            fsync_file(temp_cbz_path)
+
+            # Atomic replace
+            os.replace(temp_cbz_path, cbz_path)
+
         except Exception as e:
             if os.path.exists(temp_cbz_path):
                 os.remove(temp_cbz_path)
             raise e
 
-    # CRITICAL SAFETY RULE:
-    # Only delete original .cbr if extraction had ZERO errors and target .cbz exists & is non-empty
+    # CRITICAL SAFETY RULE (Phase 19):
+    # Only delete original .cbr if extraction had ZERO errors and target .cbz is verified
     if delete_original and not has_extraction_warning:
         if os.path.exists(cbz_path) and os.path.getsize(cbz_path) > 0 and os.path.exists(cbr_path):
-            os.remove(cbr_path)
+            with zipfile.ZipFile(cbz_path, "r") as z_verify:
+                if not z_verify.testzip():
+                    os.remove(cbr_path)
 
     return cbz_path

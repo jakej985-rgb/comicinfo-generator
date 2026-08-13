@@ -3,6 +3,7 @@ import shutil
 import tempfile
 import zipfile
 import xml.etree.ElementTree as ET
+from typing import Optional, Set
 from models.comic import Comic
 from writers.comicinfo import generate_xml_bytes
 
@@ -25,11 +26,11 @@ class ArchiveValidationError(ArchiveError):
     """Raised when post-replacement verification fails."""
 
 
-def verify_cbz_archive(archive_path: str):
+def verify_cbz_archive(archive_path: str, original_entries: Optional[Set[str]] = None):
     """
-    Verifies the integrity of a modified CBZ archive.
+    Phase 18: Expands archive verification before and after replacement.
     Ensures valid ZIP format, no corrupted files, presence and parseability of ComicInfo.xml,
-    and presence of original content files.
+    valid image count, and zero unexpected entry deletions compared to original archive entries.
     """
     if not os.path.exists(archive_path) or os.path.getsize(archive_path) == 0:
         raise ArchiveValidationError(
@@ -79,6 +80,19 @@ def verify_cbz_archive(archive_path: str):
                     archive_path=archive_path,
                     operation="verify_images"
                 )
+
+            # 5. Phase 18: Compare original archive entries vs new archive entries
+            if original_entries is not None:
+                orig_non_xml = {n.lower() for n in original_entries if n.lower() != "comicinfo.xml"}
+                new_non_xml = {n for n in namelist if n != "comicinfo.xml"}
+                missing = orig_non_xml - new_non_xml
+                if missing:
+                    raise ArchiveValidationError(
+                        f"Unexpected file deletion detected in '{os.path.basename(archive_path)}': missing {missing}",
+                        archive_path=archive_path,
+                        operation="verify_entry_preservation"
+                    )
+
     except Exception as e:
         if isinstance(e, ArchiveValidationError):
             raise e
@@ -129,13 +143,14 @@ def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
     Returns the path to the updated archive.
 
     Guarantees strict same-filesystem atomic transactions:
-    1. Create temporary archive in same target directory
-    2. Write updated ZIP contents
-    3. Preserve permissions & timestamps (Phase 17)
-    4. Pre-replacement integrity verification
-    5. fsync temporary file to storage media
-    6. os.replace() atomic swap
-    7. Post-replacement verification
+    1. Record original archive entries (Phase 18)
+    2. Create temporary archive in same target directory
+    3. Write updated ZIP contents
+    4. Preserve permissions & timestamps (Phase 17)
+    5. Pre-replacement integrity verification & entry comparison (Phase 18)
+    6. fsync temporary file to storage media (Phase 16)
+    7. os.replace() atomic swap (Phase 16)
+    8. Post-replacement verification
     """
     if not os.path.exists(archive_path):
         raise ArchiveReadError(
@@ -166,6 +181,14 @@ def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
     archive_dir = os.path.dirname(os.path.abspath(archive_path))
     file_name = os.path.basename(archive_path)
 
+    # Phase 18: Record original archive entries
+    original_entries = set()
+    try:
+        with zipfile.ZipFile(archive_path, 'r') as src_z:
+            original_entries = set(src_z.namelist())
+    except Exception:
+        pass
+
     # Phase 16 Step 1: Create temporary archive strictly in same directory to guarantee atomic os.replace()
     try:
         temp_file = tempfile.NamedTemporaryFile(dir=archive_dir, delete=False, prefix=".tmp_", suffix=".cbz")
@@ -194,10 +217,8 @@ def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
         # Phase 17: Preserve file metadata (permissions, mtime, atime, UID/GID)
         preserve_file_metadata(archive_path, temp_path)
 
-
-
-        # Phase 16 Step 3: Verify temp archive
-        verify_cbz_archive(temp_path)
+        # Phase 18: Pre-replacement integrity verification on temp file comparing original entries
+        verify_cbz_archive(temp_path, original_entries=original_entries)
 
         # Phase 16 Step 4: fsync temporary file
         fsync_file(temp_path)
@@ -213,8 +234,8 @@ def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
                 original_exception=re_err
             )
 
-        # Phase 16 Step 6: Verify final archive
-        verify_cbz_archive(archive_path)
+        # Phase 16 Step 6: Post-replacement verification on final file
+        verify_cbz_archive(archive_path, original_entries=original_entries)
 
     except PermissionError as pe:
         if os.path.exists(temp_path):
