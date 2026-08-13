@@ -199,21 +199,56 @@ def preserve_file_metadata(src_path: str, dst_path: str):
         pass
 
 
-def fsync_file(file_path: str):
-    """Fsyncs a file descriptor to ensure bytes are committed to persistent disk media."""
+import errno
+import logging
+
+logger = logging.getLogger(__name__)
+
+# --- Durability States (Phase 61) ---
+FSYNC_SUCCESS = "FSYNC_SUCCESS"
+FSYNC_UNSUPPORTED = "FSYNC_UNSUPPORTED"
+FSYNC_FAILED = "FSYNC_FAILED"
+
+
+def fsync_file(file_path: str) -> str:
+    """
+    Phase 61: Fsyncs a file descriptor to ensure bytes are committed to persistent disk media.
+    Distinguishes unsupported filesystem operations (ENOSYS, EINVAL) from actual I/O failures (EIO, ENOSPC, EPERM).
+    Raises ArchiveWriteError on actual I/O failure.
+    """
     try:
         fd = os.open(file_path, os.O_RDONLY)
         try:
             os.fsync(fd)
+            return FSYNC_SUCCESS
         finally:
             os.close(fd)
-    except Exception:
-        pass
+    except OSError as err:
+        if err.errno in (errno.ENOSYS, errno.EINVAL, getattr(errno, "EOPNOTSUPP", -1), getattr(errno, "ENOTSUP", -1)):
+            logger.warning(f"fsync not supported by underlying filesystem for '{file_path}': {err}")
+            return FSYNC_UNSUPPORTED
+        logger.error(f"fsync failed for file '{file_path}': {err}")
+        raise ArchiveWriteError(
+            f"Filesystem fsync failed for '{os.path.basename(file_path)}': {err}",
+            archive_path=file_path,
+            operation="fsync_file",
+            original_exception=err
+        ) from err
+    except Exception as e:
+        logger.error(f"Unexpected fsync failure for '{file_path}': {e}")
+        raise ArchiveWriteError(
+            f"Unexpected fsync failure for '{os.path.basename(file_path)}': {e}",
+            archive_path=file_path,
+            operation="fsync_file",
+            original_exception=e
+        ) from e
 
 
-def fsync_directory(dir_path: str):
+def fsync_directory(dir_path: str) -> str:
     """
-    Phase 47: Fsyncs directory descriptor to ensure directory entry changes are committed to disk media.
+    Phase 47 & 61: Fsyncs directory descriptor to commit directory metadata to persistent disk media.
+    Distinguishes unsupported directory fsync from actual I/O failures.
+    Raises ArchiveWriteError on actual I/O failure.
     """
     try:
         flags = os.O_RDONLY
@@ -222,10 +257,29 @@ def fsync_directory(dir_path: str):
         fd = os.open(dir_path, flags)
         try:
             os.fsync(fd)
+            return FSYNC_SUCCESS
         finally:
             os.close(fd)
-    except Exception:
-        pass
+    except OSError as err:
+        # Platforms / filesystems (e.g. FAT, ExFAT, CIFS, macOS/Windows) may not support fsync on directory handles
+        if err.errno in (errno.ENOSYS, errno.EINVAL, errno.EISDIR, errno.EACCES, getattr(errno, "EOPNOTSUPP", -1), getattr(errno, "ENOTSUP", -1)):
+            logger.debug(f"Directory fsync unsupported for '{dir_path}': {err}")
+            return FSYNC_UNSUPPORTED
+        logger.error(f"Directory fsync failed for '{dir_path}': {err}")
+        raise ArchiveWriteError(
+            f"Directory metadata fsync failed for '{dir_path}': {err}",
+            archive_path=dir_path,
+            operation="fsync_directory",
+            original_exception=err
+        ) from err
+    except Exception as e:
+        logger.error(f"Unexpected directory fsync failure for '{dir_path}': {e}")
+        raise ArchiveWriteError(
+            f"Unexpected directory fsync failure for '{dir_path}': {e}",
+            archive_path=dir_path,
+            operation="fsync_directory",
+            original_exception=e
+        ) from e
 
 
 def embed_comicinfo_in_cbz(archive_path: str, comic: Comic, strict: bool = False) -> str:

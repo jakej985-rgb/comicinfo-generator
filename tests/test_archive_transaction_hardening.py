@@ -165,16 +165,23 @@ class TestArchiveTransactionHardening(unittest.TestCase):
         tmp_files = [f for f in os.listdir(self.tmp) if f.startswith(".tmp_")]
         self.assertEqual(len(tmp_files), 0)
 
-    # 47.6 Stage 6: Failure at fsync
+    # 47.6 & Phase 61 Stage 6: Failure at fsync raises ArchiveWriteError
     def test_failure_stage_6_fsync_handling(self):
         cbz_path = self._create_sample_cbz("stage6.cbz")
+        with open(cbz_path, "rb") as f:
+            orig_bytes = f.read()
+
         comic = Comic(series="Batman", number="1")
         
-        # fsync failure does not break the transaction unless it raises uncaught OSError
+        # Phase 61: fsync I/O failure must raise ArchiveWriteError and leave original file intact
         with patch("os.fsync", side_effect=OSError("Mock fsync failure")):
-            updated = embed_comicinfo_in_cbz(cbz_path, comic)
-            self.assertEqual(updated, cbz_path)
-            self.assertTrue(os.path.exists(cbz_path))
+            with self.assertRaises(ArchiveWriteError):
+                embed_comicinfo_in_cbz(cbz_path, comic)
+
+        with open(cbz_path, "rb") as f:
+            self.assertEqual(f.read(), orig_bytes)
+        tmp_files = [f for f in os.listdir(self.tmp) if f.startswith(".tmp_")]
+        self.assertEqual(len(tmp_files), 0)
 
     # 47.6 Stage 7: Failure at atomic replace
     def test_failure_stage_7_atomic_replace(self):
