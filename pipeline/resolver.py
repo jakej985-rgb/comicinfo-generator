@@ -143,7 +143,7 @@ class MetadataResolver:
 
         return (best_cand, best_dec) if best_dec.action != "SKIP" else (None, best_dec)
 
-    def retrieve_metadata(self, identity: ComicIdentity) -> Optional[Comic]:
+    def retrieve_metadata(self, identity: ComicIdentity, file_path: str = "") -> Optional[Comic]:
         """
         Phase 9 Step 2: Retrieves full Comic metadata details for a resolved ComicIdentity.
         Does NOT alter identity resolution.
@@ -154,14 +154,16 @@ class MetadataResolver:
         comic: Optional[Comic] = None
 
         if identity.provider == "ExistingXML":
-            # Retain existing XML fields
-            comic = Comic(
-                series=identity.series_name,
-                number=identity.issue_number,
-                year=identity.publication_year,
-                publisher=identity.publisher,
-                provider_name="ExistingXML"
-            )
+            if file_path and os.path.exists(file_path) and file_path.lower().endswith(".cbz"):
+                comic = read_existing_comicinfo(file_path)
+            if not comic:
+                comic = Comic(
+                    series=identity.series_name,
+                    number=identity.issue_number,
+                    year=identity.publication_year,
+                    publisher=identity.publisher,
+                    provider_name="ExistingXML"
+                )
         elif identity.provider == "Kapowarr" and identity.issue_id:
             comic = self.kapowarr.lookup_issue(identity.issue_id)
         elif identity.provider == "ComicVine" and identity.issue_id:
@@ -190,7 +192,7 @@ class MetadataResolver:
         """
         identity, decision = self.resolve_identity(file_path, url_override=url_override)
         if identity and decision.action != "SKIP":
-            comic = self.retrieve_metadata(identity)
+            comic = self.retrieve_metadata(identity, file_path=file_path)
             return comic, identity.provider or "Resolver"
 
         return None, "None"

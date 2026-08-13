@@ -51,8 +51,18 @@ def score_identity_candidate(
     evidence: List[IdentityEvidence] = []
     reasons: List[str] = []
 
-    # 1. Kapowarr / Direct Provider ID (+100 / +90)
-    if candidate.provider == "Kapowarr" and (candidate.issue_id or candidate.series_id):
+    # 1. Kapowarr / Direct Provider ID / Existing XML (+100 / +90)
+    if candidate.provider == "ExistingXML":
+        score += weights.exact_issue_provider_id
+        ev = IdentityEvidence(
+            source="ExistingXML", field="existing_xml",
+            expected="", actual="ComicInfo.xml",
+            score=weights.exact_issue_provider_id,
+            explanation=f"Existing embedded ComicInfo.xml metadata matched (+{weights.exact_issue_provider_id})"
+        )
+        evidence.append(ev)
+        reasons.append(ev.explanation)
+    elif candidate.provider == "Kapowarr" and (candidate.issue_id or candidate.series_id):
         score += weights.exact_kapowarr_identity
         ev = IdentityEvidence(
             source="Kapowarr", field="provider_id",

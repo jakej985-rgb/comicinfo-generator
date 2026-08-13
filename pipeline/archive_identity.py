@@ -14,7 +14,7 @@ def extract_archive_identity(archive: ArchiveRecord) -> Optional[ComicIdentity]:
         return None
 
     evidence: List[IdentityEvidence] = []
-    identity = ComicIdentity(provider="ExistingXML")
+    identity = ComicIdentity(provider="ExistingXML" if archive.comicinfo_present else "DirectoryStructure")
 
     # 1. Inspect embedded ComicInfo.xml if present
     if archive.comicinfo_present and archive.path.lower().endswith(".cbz"):
