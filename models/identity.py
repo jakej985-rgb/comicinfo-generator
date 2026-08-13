@@ -1,5 +1,84 @@
+import re
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Any
+from pipeline.issue_order import parse_issue_order, IssueOrder
+
+
+def _normalize_series(title: str) -> str:
+    if not title:
+        return ""
+    t = title.lower().strip()
+    t = re.sub(r'^(the|a|an)\s+', '', t)
+    t = re.sub(r'[\W_]+', ' ', t)
+    return ' '.join(t.split())
+
+
+@dataclass(frozen=True)
+class CanonicalIdentityKey:
+    """
+    Phase 59: Canonical comic identity comparison key.
+    Normalizes series name, volume, issue number/suffix, year, and publisher for accurate comparison
+    WITHOUT destroying the original raw issue number or metadata string.
+    """
+    series_norm: str
+    issue_numeric: float
+    issue_suffix: str
+    is_named: bool
+    volume_norm: str
+    year: int
+    publisher_norm: str
+
+    @classmethod
+    def from_identity(cls, identity: "ComicIdentity") -> "CanonicalIdentityKey":
+        order = parse_issue_order(identity.issue_number or "")
+        return cls(
+            series_norm=_normalize_series(identity.series_name),
+            issue_numeric=order.numeric_value,
+            issue_suffix=order.letter_suffix.upper(),
+            is_named=order.is_named,
+            volume_norm=str(identity.volume).strip().lower() if identity.volume else "",
+            year=int(identity.publication_year or 0),
+            publisher_norm=_normalize_series(identity.publisher)
+        )
+
+    @classmethod
+    def from_parsed(cls, parsed: Any) -> "CanonicalIdentityKey":
+        order = parse_issue_order(getattr(parsed, "issue_number", "") or "")
+        return cls(
+            series_norm=_normalize_series(getattr(parsed, "series_name", "")),
+            issue_numeric=order.numeric_value,
+            issue_suffix=order.letter_suffix.upper(),
+            is_named=order.is_named,
+            volume_norm=str(getattr(parsed, "volume", "")).strip().lower() if getattr(parsed, "volume", None) else "",
+            year=int(getattr(parsed, "year", 0) or 0),
+            publisher_norm=_normalize_series(getattr(parsed, "publisher", ""))
+        )
+
+    def matches(self, other: "CanonicalIdentityKey", allow_year_tolerance: bool = True) -> bool:
+        """
+        Determines if two canonical identity keys match the same comic edition.
+        """
+        if self.series_norm and other.series_norm and self.series_norm != other.series_norm:
+            return False
+
+        if self.issue_numeric != other.issue_numeric or self.issue_suffix != other.issue_suffix:
+            return False
+
+        if self.is_named != other.is_named:
+            return False
+
+        if self.volume_norm and other.volume_norm and self.volume_norm != other.volume_norm:
+            return False
+
+        if self.year > 0 and other.year > 0:
+            diff = abs(self.year - other.year)
+            if allow_year_tolerance and diff > 1:
+                return False
+            elif not allow_year_tolerance and diff > 0:
+                return False
+
+        return True
+
 
 @dataclass
 class IdentityEvidence:
@@ -40,6 +119,11 @@ class ComicIdentity:
     def is_resolved(self) -> bool:
         """Returns True if identity confidence meets threshold."""
         return self.confidence >= 50.0 and bool(self.series_name)
+
+    @property
+    def canonical_key(self) -> CanonicalIdentityKey:
+        """Returns the canonical comparison key for this identity."""
+        return CanonicalIdentityKey.from_identity(self)
 
     def to_dict(self) -> dict:
         """Converts identity instance to dictionary."""
