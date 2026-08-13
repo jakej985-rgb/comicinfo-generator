@@ -35,6 +35,8 @@ class Comic:
     identity: Optional[ComicIdentity] = None
     extra_fields: Dict[str, str] = field(default_factory=dict)
     extra_nodes: list = field(default_factory=list)
+    metadata_complete: bool = True
+    source: str = ""
 
 def merge_comics(comics: list[Comic]) -> Comic:
     """
