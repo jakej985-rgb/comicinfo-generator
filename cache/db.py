@@ -66,7 +66,7 @@ class CacheManager:
                 );
             """)
 
-            # File Hash Tracking Table
+            # File Hash & Processing State Table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS file_hashes (
                     file_path TEXT PRIMARY KEY,
@@ -75,6 +75,11 @@ class CacheManager:
                     mtime INTEGER NOT NULL,
                     provider_used TEXT,
                     metadata_version TEXT,
+                    status TEXT DEFAULT 'SUCCESS',
+                    job_id TEXT,
+                    confidence REAL DEFAULT 100.0,
+                    error_message TEXT,
+                    generator_version TEXT DEFAULT '2.0',
                     processed_at INTEGER
                 );
             """)
@@ -89,21 +94,37 @@ class CacheManager:
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def save_file_record(self, file_path: str, sha256: str, file_size: int, mtime: int, provider_used: str = "", metadata_version: str = "2.0"):
+    def save_file_record(
+        self,
+        file_path: str,
+        sha256: str,
+        file_size: int,
+        mtime: int,
+        provider_used: str = "",
+        metadata_version: str = "2.0",
+        status: str = "SUCCESS",
+        job_id: str = "",
+        confidence: float = 100.0,
+        error_message: str = ""
+    ):
         with self._get_connection() as conn:
             cursor = conn.cursor()
             now = int(time.time())
             cursor.execute("""
-                INSERT INTO file_hashes (file_path, sha256, file_size, mtime, provider_used, metadata_version, processed_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO file_hashes (file_path, sha256, file_size, mtime, provider_used, metadata_version, status, job_id, confidence, error_message, generator_version, processed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2.0', ?)
                 ON CONFLICT(file_path) DO UPDATE SET
                     sha256 = excluded.sha256,
                     file_size = excluded.file_size,
                     mtime = excluded.mtime,
                     provider_used = excluded.provider_used,
                     metadata_version = excluded.metadata_version,
+                    status = excluded.status,
+                    job_id = excluded.job_id,
+                    confidence = excluded.confidence,
+                    error_message = excluded.error_message,
                     processed_at = excluded.processed_at;
-            """, (os.path.abspath(file_path), sha256, file_size, mtime, provider_used, metadata_version, now))
+            """, (os.path.abspath(file_path), sha256, file_size, mtime, provider_used, metadata_version, status, job_id, confidence, error_message, now))
             conn.commit()
 
     # --- Issue Cache Operations ---

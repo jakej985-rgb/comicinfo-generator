@@ -10,6 +10,8 @@ from providers.kapowarr import KapowarrProvider
 from providers.comicvine import ComicVineProvider
 from providers.gcp import GCPProvider
 
+from writers.comicinfo import ComicInfoParser
+
 def read_existing_comicinfo(cbz_path: str) -> Optional[Comic]:
     """Reads existing ComicInfo.xml from a .cbz archive if present and valid."""
     if not os.path.exists(cbz_path) or not cbz_path.lower().endswith(".cbz"):
@@ -22,65 +24,7 @@ def read_existing_comicinfo(cbz_path: str) -> Optional[Comic]:
                 return None
 
             xml_data = z.read(xml_names[0])
-            root = ET.fromstring(xml_data)
-
-            c = Comic()
-            c.title = root.findtext("Title") or ""
-            c.series = root.findtext("Series") or ""
-            c.number = root.findtext("Number") or ""
-            c.volume = root.findtext("Volume") or ""
-            c.summary = root.findtext("Summary") or ""
-            c.notes = root.findtext("Notes") or ""
-            c.publisher = root.findtext("Publisher") or ""
-            c.genre = root.findtext("Genre") or ""
-            c.web = root.findtext("Web") or ""
-
-            try:
-                c.year = int(root.findtext("Year") or 0)
-                c.month = int(root.findtext("Month") or 0)
-                c.day = int(root.findtext("Day") or 0)
-            except ValueError:
-                pass
-
-            writers = root.findtext("Writer")
-            if writers: c.writers = [w.strip() for w in writers.split(",") if w.strip()]
-            pencillers = root.findtext("Penciller")
-            if pencillers: c.pencillers = [p.strip() for p in pencillers.split(",") if p.strip()]
-            inkers = root.findtext("Inker")
-            if inkers: c.inkers = [i.strip() for i in inkers.split(",") if i.strip()]
-            colorists = root.findtext("Colorist")
-            if colorists: c.colorists = [col.strip() for col in colorists.split(",") if col.strip()]
-            letterers = root.findtext("Letterer")
-            if letterers: c.letterers = [l.strip() for l in letterers.split(",") if l.strip()]
-
-            chars = root.findtext("Characters")
-            if chars: c.characters = [ch.strip() for ch in chars.split(",") if ch.strip()]
-            # Find ALL <StoryArc> and <Storyarc> nodes in XML
-            arc_nodes = root.findall("StoryArc") + root.findall("Storyarc")
-            raw_arcs = []
-            for node in arc_nodes:
-                if node.text:
-                    raw_arcs.extend([a.strip() for a in node.text.split(",") if a.strip()])
-
-            clean_arcs = []
-            seen_arcs = set()
-            for a in raw_arcs:
-                norm_a = re.sub(r'["\'\(\):]', " ", a).lower().strip()
-                norm_a = " ".join(norm_a.split())
-                if norm_a and norm_a not in seen_arcs:
-                    seen_arcs.add(norm_a)
-                    clean_arcs.append(a.strip().strip('"').strip("'"))
-
-            c.story_arcs = clean_arcs
-
-            arc_num_nodes = root.findall("StoryArcNumber")
-            raw_arc_nums = []
-            for node in arc_num_nodes:
-                if node.text:
-                    raw_arc_nums.extend([n.strip() for n in node.text.split(",") if n.strip()])
-            c.story_arc_numbers = raw_arc_nums
-
-
+            c = ComicInfoParser.parse_xml_bytes(xml_data)
 
             if c.series or c.title:
                 c.provider_name = "ExistingXML"

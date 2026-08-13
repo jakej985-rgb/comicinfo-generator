@@ -2,122 +2,193 @@ import os
 import shutil
 import tempfile
 import zipfile
+import xml.etree.ElementTree as ET
 from models.comic import Comic
 from writers.comicinfo import generate_xml_bytes
 
-def _try_takeover_folder_permissions(archive_path: str, temp_path: str) -> bool:
+# --- Explicit Archive Exceptions ---
+class ArchiveError(Exception):
+    """Base exception for archive operations."""
+    def __init__(self, message: str, archive_path: str = "", operation: str = "", original_exception: Exception = None):
+        super().__init__(message)
+        self.archive_path = archive_path
+        self.operation = operation
+        self.original_exception = original_exception
 
+class ArchiveReadError(ArchiveError):
+    """Raised when reading or inspecting an archive fails."""
+
+class ArchiveWriteError(ArchiveError):
+    """Raised when writing or replacing an archive fails."""
+
+class ArchiveValidationError(ArchiveError):
+    """Raised when post-replacement verification fails."""
+
+
+def verify_cbz_archive(archive_path: str):
     """
-    If Kapowarr or a downloader created a volume folder with restricted permissions on a network share,
-    this automatically recreates the volume folder under the current user's ownership (via writable parent folder),
-    transfers all files, and places the newly tagged file cleanly in place.
+    Verifies the integrity of a updated CBZ archive.
+    Ensures valid ZIP format, no corrupted files, presence and parseability of ComicInfo.xml,
+    and presence of original content files.
     """
+    if not os.path.exists(archive_path) or os.path.getsize(archive_path) == 0:
+        raise ArchiveValidationError(
+            f"Archive file '{os.path.basename(archive_path)}' is missing or 0 bytes after modification.",
+            archive_path=archive_path,
+            operation="verify_archive"
+        )
+
     try:
-        vol_dir = os.path.dirname(os.path.abspath(archive_path))
-        parent_dir = os.path.dirname(vol_dir)
-        vol_name = os.path.basename(vol_dir)
-        file_name = os.path.basename(archive_path)
+        with zipfile.ZipFile(archive_path, "r") as z:
+            # 1. ZIP file integrity test
+            bad_file = z.testzip()
+            if bad_file:
+                raise ArchiveValidationError(
+                    f"Corrupted file '{bad_file}' detected inside archive '{os.path.basename(archive_path)}'.",
+                    archive_path=archive_path,
+                    operation="testzip"
+                )
 
-        if not (parent_dir and vol_name and os.path.exists(parent_dir)):
-            return False
+            namelist = [n.lower() for n in z.namelist()]
 
-        bak_dir = os.path.join(parent_dir, f".{vol_name}_kapowarr_bak")
+            # 2. Confirm ComicInfo.xml presence
+            if "comicinfo.xml" not in namelist:
+                raise ArchiveValidationError(
+                    f"ComicInfo.xml was not found inside '{os.path.basename(archive_path)}'.",
+                    archive_path=archive_path,
+                    operation="verify_comicinfo"
+                )
 
-        # 1. Rename existing read-only volume folder to hidden backup
-        if os.path.exists(bak_dir):
-            import time
-            bak_dir = os.path.join(parent_dir, f".{vol_name}_kapowarr_bak_{int(time.time())}")
+            # 3. Confirm ComicInfo.xml is parseable
+            try:
+                xml_data = z.read([n for n in z.namelist() if n.lower() == "comicinfo.xml"][0])
+                ET.fromstring(xml_data)
+            except Exception as xe:
+                raise ArchiveValidationError(
+                    f"Generated ComicInfo.xml in '{os.path.basename(archive_path)}' is invalid XML: {xe}",
+                    archive_path=archive_path,
+                    operation="parse_comicinfo",
+                    original_exception=xe
+                )
 
-        os.rename(vol_dir, bak_dir)
+            # 4. Confirm original image files exist
+            image_files = [n for n in namelist if n.endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif'))]
+            if not image_files and len(namelist) <= 1:
+                raise ArchiveValidationError(
+                    f"Archive '{os.path.basename(archive_path)}' contains no image files after update.",
+                    archive_path=archive_path,
+                    operation="verify_images"
+                )
+    except Exception as e:
+        if isinstance(e, ArchiveValidationError):
+            raise e
+        raise ArchiveValidationError(
+            f"Failed to verify modified archive '{os.path.basename(archive_path)}': {e}",
+            archive_path=archive_path,
+            operation="verify_cbz",
+            original_exception=e
+        )
 
-        # 2. Create fresh volume folder owned by current user
-        os.makedirs(vol_dir, exist_ok=True)
-
-        # 3. Transfer all files: place newly tagged temp_path for target file, copy others
-        for f in os.listdir(bak_dir):
-            src_f = os.path.join(bak_dir, f)
-            dst_f = os.path.join(vol_dir, f)
-            if f == file_name:
-                shutil.move(temp_path, dst_f)
-            else:
-                if os.path.isfile(src_f):
-                    shutil.copy2(src_f, dst_f)
-
-        # Clean up temp file if still present
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-
-        return True
-    except Exception:
-        return False
 
 def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
     """
     Embeds or updates ComicInfo.xml inside a .cbz (ZIP) archive atomically.
     Returns the path to the updated archive.
 
-    The temp file is written to the system temp directory (/tmp) rather than
-    the source directory, so network-mounted folders (NFS/Samba) that disallow
-    creating new files don't cause Permission Denied errors.
-    Automatically handles folder permission takeover if Kapowarr created read-only dirs.
+    Uses safe atomic temporary swapping and verifies archive integrity before replacing original.
+    Does NOT rename or restructure user volume directories.
     """
     if not os.path.exists(archive_path):
-        raise FileNotFoundError(f"Archive file not found: {archive_path}")
+        raise ArchiveReadError(
+            f"Archive file not found: '{archive_path}'",
+            archive_path=archive_path,
+            operation="read_file"
+        )
 
     if not zipfile.is_zipfile(archive_path):
         ext = os.path.splitext(archive_path)[1].lower()
         if ext == ".cbr":
-            raise ValueError(
-                f"'{archive_path}' is a RAR archive (.cbr). Direct embedding is only supported for .cbz (ZIP) files. Please convert to .cbz first."
+            raise ArchiveReadError(
+                f"'{archive_path}' is a RAR archive (.cbr). Direct embedding is only supported for .cbz (ZIP) files. Please convert to .cbz first.",
+                archive_path=archive_path,
+                operation="validate_zip"
             )
-        raise ValueError(f"File '{archive_path}' is not a valid ZIP archive.")
+        raise ArchiveReadError(
+            f"File '{archive_path}' is not a valid ZIP archive.",
+            archive_path=archive_path,
+            operation="validate_zip"
+        )
 
     if isinstance(comic, bytes):
         xml_data = comic
     else:
         xml_data = generate_xml_bytes(comic)
 
-    # Always write temp file to /tmp — avoids permission issues on network mounts
-    with tempfile.NamedTemporaryFile(dir=tempfile.gettempdir(), delete=False, suffix=".cbz") as temp_file:
+    archive_dir = os.path.dirname(os.path.abspath(archive_path))
+    file_name = os.path.basename(archive_path)
+
+    # Attempt temp file creation in target directory to support atomic os.replace()
+    try:
+        temp_file = tempfile.NamedTemporaryFile(dir=archive_dir, delete=False, prefix=".tmp_", suffix=".cbz")
         temp_path = temp_file.name
+        temp_file.close()
+    except Exception:
+        # Fallback to system temp directory if target directory is restricted
+        temp_file = tempfile.NamedTemporaryFile(dir=tempfile.gettempdir(), delete=False, prefix=".tmp_", suffix=".cbz")
+        temp_path = temp_file.name
+        temp_file.close()
 
     try:
+        # 1. Copy ZIP contents to temp archive, injecting new ComicInfo.xml
         with zipfile.ZipFile(archive_path, 'r') as src_zip:
             with zipfile.ZipFile(temp_path, 'w', compression=zipfile.ZIP_DEFLATED) as dst_zip:
-                # Copy all files except existing ComicInfo.xml
                 for item in src_zip.infolist():
                     if item.filename.lower() != "comicinfo.xml":
                         data = src_zip.read(item.filename)
                         dst_zip.writestr(item, data)
 
-                # Write the new ComicInfo.xml at root
                 dst_zip.writestr("ComicInfo.xml", xml_data)
 
-        # Move finished file back to original path
+        # 2. Preserve original filesystem stats (mtime, permissions)
         try:
+            shutil.copystat(archive_path, temp_path)
+        except Exception:
+            pass
+
+        # 3. Pre-replacement integrity verification on temp file
+        verify_cbz_archive(temp_path)
+
+        # 4. Atomic replacement
+        try:
+            os.replace(temp_path, archive_path)
+        except OSError:
+            # Fallback across filesystems
             shutil.move(temp_path, archive_path)
-        except (PermissionError, OSError) as pe:
-            # Automatic takeover of Kapowarr/downloader created folder permissions
-            if _try_takeover_folder_permissions(archive_path, temp_path):
-                return archive_path
-            raise PermissionError(
-                f"Permission denied: Unable to overwrite '{os.path.basename(archive_path)}'. "
-                f"The folder/file permissions on your NAS or storage target restrict write access for files created by Kapowarr/downloader. "
-                f"Please update permissions on the NAS (e.g., chmod 777 -R on your Comics directory) or adjust Kapowarr/downloader umask/permission settings."
-            ) from pe
+
+        # 5. Post-replacement verification on target file
+        verify_cbz_archive(archive_path)
+
+    except PermissionError as pe:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise ArchiveWriteError(
+            f"Permission denied: Unable to overwrite '{file_name}'. "
+            f"The application lacks write permissions for target file or folder '{archive_dir}'. "
+            f"Please update directory permissions or umask settings.",
+            archive_path=archive_path,
+            operation="atomic_replace",
+            original_exception=pe
+        ) from pe
     except Exception as e:
         if os.path.exists(temp_path):
             os.remove(temp_path)
-        if isinstance(e, PermissionError):
+        if isinstance(e, ArchiveError):
             raise e
-        elif getattr(e, "errno", None) == 13:
-            raise PermissionError(
-                f"Permission denied: Unable to overwrite '{os.path.basename(archive_path)}'. "
-                f"The folder/file permissions on your NAS or storage target restrict write access for files created by Kapowarr/downloader. "
-                f"Please update permissions on the NAS (e.g., chmod 777 -R on your Comics directory) or adjust Kapowarr/downloader umask/permission settings."
-            ) from e
-        raise e
+        raise ArchiveWriteError(
+            f"Failed to update archive '{file_name}': {e}",
+            archive_path=archive_path,
+            operation="embed_comicinfo",
+            original_exception=e
+        ) from e
 
     return archive_path
-
-

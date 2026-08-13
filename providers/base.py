@@ -2,6 +2,30 @@ from abc import ABC, abstractmethod
 from typing import Optional, Tuple
 from models.comic import Comic
 
+# --- Provider Exceptions ---
+class ProviderError(Exception):
+    """Base exception for provider operations."""
+    def __init__(self, message: str, provider_name: str = "", original_exception: Exception = None):
+        super().__init__(message)
+        self.provider_name = provider_name
+        self.original_exception = original_exception
+
+class ProviderConnectionError(ProviderError):
+    """Raised when connecting to provider service fails."""
+
+class ProviderAuthenticationError(ProviderError):
+    """Raised when authentication/API key fails."""
+
+class ProviderRateLimitError(ProviderError):
+    """Raised when provider rate limits requests."""
+
+class ProviderParseError(ProviderError):
+    """Raised when parsing provider response fails."""
+
+class MetadataNotFoundError(ProviderError):
+    """Raised when queried metadata item is not found."""
+
+
 class BaseProvider(ABC):
     """
     Abstract Base Class for metadata providers (Kapowarr, ComicVine, GCP, etc.).

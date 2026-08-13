@@ -146,6 +146,11 @@ def parse_html(html_text: str, url: str = "") -> Comic:
         if m_cover:
             y, m, d = parse_date(m_cover.group(1))
 
+    if not y and desc_elem:
+        m_rel = re.search(r"released by\s+.*?\s+on\s+([A-Za-z]+\s+(?:\d{1,2},?\s+)?\d{4})", desc_elem.get_text(" ", strip=True), re.I)
+        if m_rel:
+            y, m, d = parse_date(m_rel.group(1))
+
     if y:
         c.year, c.month, c.day = y, m, d
 

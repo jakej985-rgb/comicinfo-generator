@@ -1,4 +1,6 @@
 from dataclasses import dataclass, field
+from typing import Optional, Dict
+from models.identity import ComicIdentity
 
 @dataclass
 class Comic:
@@ -30,6 +32,8 @@ class Comic:
     provider_name: str = ""
     provider_id: str = ""
     sha256: str = ""
+    identity: Optional[ComicIdentity] = None
+    extra_fields: Dict[str, str] = field(default_factory=dict)
 
 def merge_comics(comics: list[Comic]) -> Comic:
     """
