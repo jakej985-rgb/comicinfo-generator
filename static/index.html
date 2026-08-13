@@ -1489,10 +1489,14 @@
         const res = await fetch('/api/cache/clear', {method: 'POST'});
         const data = await res.json();
         if (data.success) {
-          alert("✅ Cache cleared.");
-          loadCacheStats();
+          alert("✅ SQLite Cache & History cleared successfully!");
+          await loadCacheStats();
+        } else {
+          alert("❌ Error: " + (data.error || "Failed to clear cache."));
         }
-      } catch (e) {}
+      } catch (e) {
+        alert("❌ Error clearing cache: " + e);
+      }
     }
 
     // --- Series Viewer Modal & Metadata Editor ---

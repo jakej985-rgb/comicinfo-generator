@@ -19,6 +19,7 @@ if repo_dir not in sys.path:
 from models.comic import Comic, merge_comics
 from config import load_config, init_config, DEFAULT_CONFIG_PATH
 from cache.db import CacheManager
+from cache.tracker import mark_file_processed
 from providers.kapowarr import KapowarrProvider
 from providers.comicvine import scrape_issue as scrape_cv_issue, scrape_volume as scrape_cv_volume, search_comicvine, ComicVineProvider
 from providers.gcp import scrape_gcp_issue, scrape_gcp_volume, search_gcp, GCPProvider
@@ -581,6 +582,12 @@ class ComicServerHandler(BaseHTTPRequestHandler):
 
             try:
                 results, kapowarr_active = search_all_providers(query, search_type)
+                try:
+                    cfg = load_config()
+                    cache_mgr = CacheManager(cfg.cache.db_path)
+                    cache_mgr.save_cached_search("Combined", search_type, query, results)
+                except Exception:
+                    pass
                 self._set_headers(200)
                 self.wfile.write(json.dumps({
                     "success": True,
@@ -765,6 +772,14 @@ class ComicServerHandler(BaseHTTPRequestHandler):
 
                     embed_comicinfo_in_cbz(target_archive, comic)
                     processed_count += 1
+
+                    try:
+                        cache_mgr = CacheManager(cfg.cache.db_path)
+                        mark_file_processed(target_archive, cache_mgr, provider_used="ComicVine")
+                        cache_mgr.save_cached_issue("ComicVine", comic.provider_id or comic.number or fname, comic)
+                    except Exception:
+                        pass
+
                     msg = f"✅ Embedded ComicInfo.xml into '{os.path.basename(target_archive)}' ({comic.series} #{comic.number})"
                     chunk = json.dumps({"current": idx + 1, "total": total_items, "file": fname, "status": "success", "message": msg, "comic": comic_to_dict(comic)}) + "\n"
                     self.wfile.write(chunk.encode("utf-8"))
@@ -939,6 +954,13 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 comic = dict_to_comic(comic_data)
                 embed_comicinfo_in_cbz(target_archive, comic)
 
+                try:
+                    cache_mgr = CacheManager(cfg.cache.db_path)
+                    mark_file_processed(target_archive, cache_mgr, provider_used="Manual")
+                    cache_mgr.save_cached_issue("Manual", comic.provider_id or comic.number or os.path.basename(target_archive), comic)
+                except Exception:
+                    pass
+
                 res_dict = comic_to_dict(comic)
                 self._set_headers(200)
                 self.wfile.write(json.dumps({
@@ -959,27 +981,12 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             raw_del = fields.get("delete_original", True)
             delete_old_cbr = True if str(raw_del).lower() in ("true", "1", "yes") else False
 
-            if not url_val:
+            if not url_val or not file_path_input:
                 self._set_headers(400)
-                self.wfile.write(json.dumps({"error": "Comic database URL(s) or page text required"}).encode("utf-8"))
+                self.wfile.write(json.dumps({"error": "Comic database URL(s) and file path required"}).encode("utf-8"))
                 return
 
-            real_file_path = ""
-            if uploaded_file and uploaded_file.get("filename"):
-                try:
-                    upload_dir = os.path.expanduser("~/Downloads")
-                    if not os.path.exists(upload_dir):
-                        upload_dir = os.getcwd()
-                    real_file_path = os.path.join(upload_dir, uploaded_file["filename"])
-                    with open(real_file_path, "wb") as f:
-                        f.write(uploaded_file["content"])
-                except Exception as e:
-                    self._set_headers(500)
-                    self.wfile.write(json.dumps({"error": f"Error saving uploaded file: {e}"}).encode("utf-8"))
-                    return
-
-            if not real_file_path and file_path_input:
-                real_file_path = find_file_path(file_path_input)
+            real_file_path = find_file_path(file_path_input)
 
             if not real_file_path:
                 self._set_headers(404)
@@ -989,6 +996,7 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 return
 
             try:
+                cfg = load_config()
                 target_archive = real_file_path
                 converted_note = ""
                 was_cbr = real_file_path.lower().endswith(".cbr")
@@ -999,6 +1007,13 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 comic = fetch_and_merge_urls(url_val)
                 provider = detect_provider(str(url_val))
                 embed_comicinfo_in_cbz(target_archive, comic)
+
+                try:
+                    cache_mgr = CacheManager(cfg.cache.db_path)
+                    mark_file_processed(target_archive, cache_mgr, provider_used=provider)
+                    cache_mgr.save_cached_issue(provider, comic.provider_id or comic.number or os.path.basename(target_archive), comic)
+                except Exception:
+                    pass
 
                 res_dict = comic_to_dict(comic)
                 res_dict["provider"] = provider
