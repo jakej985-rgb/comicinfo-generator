@@ -51,7 +51,7 @@ The guiding principle is:
 The latest review identified these remaining areas:
 
 Priority| Issue| Status
-P0| CI enforcement| Needs implementation/verification
+P0| CI enforcement| Completed
 P0| Metadata-write safety final verification| Needs final end-to-end proof
 P1| README architecture is stale| Needs update
 P1| Production configuration validation| Needs hardening
@@ -1002,10 +1002,10 @@ Final Acceptance Criteria
 
 CI
 
-- [ ] GitHub Actions automatically runs the test suite
-- [ ] Pull requests cannot silently bypass regression testing
-- [ ] Clean environment passes all tests
-- [ ] Dependency installation is reproducible
+- [x] GitHub Actions automatically runs the test suite
+- [x] Pull requests cannot silently bypass regression testing
+- [x] Clean environment passes all tests
+- [x] Dependency installation is reproducible
 
 Identity
 

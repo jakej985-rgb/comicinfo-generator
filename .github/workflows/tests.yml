@@ -1,0 +1,47 @@
+name: CI Regression & Safety Suite
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }} Regression Suite
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Static Syntax & Compilation Check
+        run: |
+          python -m compileall -q .
+
+      - name: Verify API Layer Isolation Boundary
+        run: |
+          python -m unittest tests.test_api_boundary -v
+
+      - name: Run Full Regression Test Suite
+        run: |
+          python -m unittest discover tests -v
