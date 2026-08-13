@@ -18,13 +18,8 @@ class TestDeduplicationAndWatcher(unittest.TestCase):
             f.write(b"PK\x03\x04initial_file_bytes")
 
     def tearDown(self):
-        if os.path.exists(self.sample_file):
-            os.remove(self.sample_file)
-        if os.path.exists(self.jobs_db):
-            os.remove(self.jobs_db)
-        if os.path.exists(self.cache_db):
-            os.remove(self.cache_db)
-        os.rmdir(self.temp_dir)
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_job_deduplication(self):
         store = JobStore(db_path=self.jobs_db)

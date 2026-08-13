@@ -88,9 +88,14 @@ class JobStore:
             try:
                 import hashlib
                 h = hashlib.sha256()
-                with open(abs_path, "rb") as f:
-                    while chunk := f.read(65536):
-                        h.update(chunk)
+                buf = bytearray(262144)
+                mv = memoryview(buf)
+                with open(abs_path, "rb", buffering=0) as f:
+                    while True:
+                        n = f.readinto(mv)
+                        if not n:
+                            break
+                        h.update(mv[:n])
                 sha256 = h.hexdigest()
             except Exception:
                 pass

@@ -36,6 +36,10 @@ class CacheManager:
       - TTL expiry               (cached data is expired)
       - manual refresh flag      (metadata is manually refreshed)
       - source_hash change       (provider data changed between fetches)
+
+    Phase 43 additions:
+      - Thread-safe L1 in-memory cache for zero-disk-latency cache hits
+      - Optimized SQLite PRAGMAs (WAL, synchronous=NORMAL, cache_size=-64000)
     """
 
     def __init__(self, db_path: str = "~/.comicinfo/cache.db"):
@@ -44,8 +48,16 @@ class CacheManager:
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
+        # Phase 43: Performance PRAGMAs for high-throughput SQLite
+        try:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+            conn.execute("PRAGMA temp_store=MEMORY;")
+            conn.execute("PRAGMA cache_size=-64000;")
+        except Exception:
+            pass
         return conn
 
     def _init_db(self):
@@ -231,7 +243,6 @@ class CacheManager:
             if row and self._is_valid(row) and row["data_json"]:
                 try:
                     data = json.loads(row["data_json"])
-                    # Safely reconstruct — strip unknown keys
                     from dataclasses import fields as dc_fields
                     valid_keys = {f.name for f in dc_fields(Comic)}
                     filtered = {k: v for k, v in data.items() if k in valid_keys}

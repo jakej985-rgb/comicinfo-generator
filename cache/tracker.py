@@ -1,15 +1,30 @@
+"""
+cache/tracker.py — Phase 43 Optimized
+
+Fast SHA256 calculation using preallocated memoryview buffer and 256KB chunks.
+"""
 import os
 import hashlib
 from typing import Optional, Tuple
 from cache.db import CacheManager
 
-def calculate_sha256(file_path: str, chunk_size: int = 65536) -> str:
-    """Calculates SHA256 hash of a file efficiently."""
+# Phase 43: 256KB buffer chunk size for fast I/O throughput
+DEFAULT_HASH_CHUNK_SIZE = 262144
+
+
+def calculate_sha256(file_path: str, chunk_size: int = DEFAULT_HASH_CHUNK_SIZE) -> str:
+    """Calculates SHA256 hash of a file efficiently using a preallocated buffer."""
     sha256 = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        while chunk := f.read(chunk_size):
-            sha256.update(chunk)
+    buf = bytearray(chunk_size)
+    mv = memoryview(buf)
+    with open(file_path, "rb", buffering=0) as f:
+        while True:
+            n = f.readinto(mv)
+            if not n:
+                break
+            sha256.update(mv[:n])
     return sha256.hexdigest()
+
 
 def get_file_metadata_info(file_path: str) -> Tuple[str, int, int]:
     """Returns (sha256, file_size, mtime) for a given file."""
@@ -19,6 +34,7 @@ def get_file_metadata_info(file_path: str) -> Tuple[str, int, int]:
     mtime = int(stat.st_mtime)
     sha256 = calculate_sha256(abs_path)
     return sha256, file_size, mtime
+
 
 def is_file_unchanged(file_path: str, cache_mgr: CacheManager) -> bool:
     """
@@ -40,6 +56,7 @@ def is_file_unchanged(file_path: str, cache_mgr: CacheManager) -> bool:
 
     current_sha256 = calculate_sha256(abs_path)
     return current_sha256 == rec["sha256"]
+
 
 def mark_file_processed(file_path: str, cache_mgr: CacheManager, provider_used: str = ""):
     """Calculates file stats and saves record to SQLite cache tracker."""

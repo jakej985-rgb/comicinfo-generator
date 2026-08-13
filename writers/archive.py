@@ -204,15 +204,15 @@ def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
         )
 
     try:
-        # Phase 16 Step 2: Write archive
+        # Phase 16 & 43: Write archive preserving entry compress_type (avoids re-compressing JPEGs/PNGs)
         with zipfile.ZipFile(archive_path, 'r') as src_zip:
-            with zipfile.ZipFile(temp_path, 'w', compression=zipfile.ZIP_DEFLATED) as dst_zip:
+            with zipfile.ZipFile(temp_path, 'w') as dst_zip:
                 for item in src_zip.infolist():
                     if item.filename.lower() != "comicinfo.xml":
                         data = src_zip.read(item.filename)
-                        dst_zip.writestr(item, data)
+                        dst_zip.writestr(item, data, compress_type=item.compress_type)
 
-                dst_zip.writestr("ComicInfo.xml", xml_data)
+                dst_zip.writestr("ComicInfo.xml", xml_data, compress_type=zipfile.ZIP_DEFLATED)
 
         # Phase 17: Preserve file metadata (permissions, mtime, atime, UID/GID)
         preserve_file_metadata(archive_path, temp_path)

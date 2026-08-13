@@ -10,16 +10,52 @@ from providers.kapowarr.models import KapowarrVolume, KapowarrIssue
 from config import load_config
 from cache.db import CacheManager
 
+import time
+
 class KapowarrProvider(BaseProvider):
     """
     Kapowarr metadata provider integration.
     Wraps KapowarrClient to convert API responses into application domain models.
+    Phase 43: In-memory snapshot cache (60s TTL) for fast O(1) issue & series lookups.
     """
 
     def __init__(self, url: str = "http://localhost:5656", api_key: str = ""):
         self.url = url.rstrip("/")
         self.api_key = api_key
         self.client = KapowarrClient(url=url, api_key=api_key)
+        self._snapshot_time: float = 0.0
+        self._snapshot_ttl: float = 60.0  # 60 second cache for volume/issue library snapshot
+        self._snapshot_volumes: List[KapowarrVolume] = []
+        self._issue_index: dict[str, tuple[KapowarrVolume, KapowarrIssue]] = {}
+
+    def get_library_snapshot(self, force_refresh: bool = False) -> List[KapowarrVolume]:
+        """
+        Phase 43: Returns cached library volumes snapshot and builds O(1) issue index.
+        Avoids redundant REST API roundtrips during batch operations.
+        """
+        now = time.time()
+        if not force_refresh and self._snapshot_volumes and (now - self._snapshot_time) < self._snapshot_ttl:
+            return self._snapshot_volumes
+
+        if not self.url:
+            return []
+
+        try:
+            data = self.client.get("/api/volumes")
+            series_list = data if isinstance(data, list) else []
+            volumes = [KapowarrVolume.from_dict(s, base_url=self.url) for s in series_list]
+            issue_idx = {}
+            for vol in volumes:
+                for iss in vol.issues:
+                    if iss.id:
+                        issue_idx[str(iss.id)] = (vol, iss)
+            self._snapshot_volumes = volumes
+            self._issue_index = issue_idx
+            self._snapshot_time = now
+        except Exception:
+            pass
+
+        return self._snapshot_volumes
 
     def get_name(self) -> str:
         return "Kapowarr"
@@ -97,35 +133,29 @@ class KapowarrProvider(BaseProvider):
             return {"error": str(e)}
 
     def search_issue(self, query: str) -> list[dict]:
-        """Searches issues inside monitored volumes in Kapowarr."""
+        """Phase 43: Searches issues inside monitored volumes using snapshot index."""
         results = []
         if not self.url or not query.strip():
             return results
 
-        volumes = self.search_series("")
+        volumes = self.get_library_snapshot()
         clean_q = query.strip().lower()
 
-        for v in volumes:
-            v_id = v["id"]
-            try:
-                data = self.client.get(f"/api/volumes/{v_id}")
-                vol = KapowarrVolume.from_dict(data, base_url=self.url)
-                for i in vol.issues:
-                    if clean_q in i.title.lower() or clean_q in f"issue {i.issue_number}".lower() or clean_q in f"#{i.issue_number}".lower():
-                        results.append({
-                            "title": i.title or f"Issue #{i.issue_number}",
-                            "url": i.web_url,
-                            "id": i.id,
-                            "cv_id": i.comicvine_id,
-                            "type": "kapowarr_issue",
-                            "type_label": "Kapowarr Issue",
-                            "provider": "Kapowarr",
-                            "year": "",
-                            "count": "1 issue",
-                            "description": f"Kapowarr Issue ID #{i.id}"
-                        })
-            except Exception:
-                pass
+        for vol in volumes:
+            for i in vol.issues:
+                if clean_q in i.title.lower() or clean_q in f"issue {i.issue_number}".lower() or clean_q in f"#{i.issue_number}".lower():
+                    results.append({
+                        "title": i.title or f"Issue #{i.issue_number}",
+                        "url": i.web_url,
+                        "id": i.id,
+                        "cv_id": i.comicvine_id,
+                        "type": "kapowarr_issue",
+                        "type_label": "Kapowarr Issue",
+                        "provider": "Kapowarr",
+                        "year": "",
+                        "count": "1 issue",
+                        "description": f"Kapowarr Issue ID #{i.id}"
+                    })
 
         return results
 
@@ -168,13 +198,19 @@ class KapowarrProvider(BaseProvider):
         return series_name, issue_map, issues_list
 
     def lookup_issue(self, issue_id_or_url: str) -> Optional[Comic]:
-        """Looks up a Kapowarr issue and returns a normalized Comic object or None."""
+        """Phase 43: Fast lookup of a Kapowarr issue using snapshot index with fallback."""
         m_id = re.search(r"(\d+)", str(issue_id_or_url))
         i_id = m_id.group(1) if m_id else str(issue_id_or_url)
 
         if not self.url or not i_id:
             return None
 
+        # 1. Check snapshot index if available
+        if self._issue_index and i_id in self._issue_index:
+            vol, iss = self._issue_index[i_id]
+            return self._build_comic_from_issue(vol, iss)
+
+        # 2. Fallback: Search series / volumes individually if not in snapshot
         volumes = self.search_series("")
         for v in volumes:
             v_id = v["id"]
@@ -183,31 +219,34 @@ class KapowarrProvider(BaseProvider):
                 vol = KapowarrVolume.from_dict(data, base_url=self.url)
                 for iss in vol.issues:
                     if str(iss.id) == str(i_id):
-                        c = Comic()
-                        c.provider_name = "Kapowarr"
-                        c.provider_id = str(i_id)
-                        c.web = iss.web_url
-                        c.title = iss.title
-                        c.number = iss.issue_number
-                        c.summary = iss.summary
-                        c.series = vol.name
-                        c.publisher = vol.publisher
-
-                        m_year = re.search(r"\b(19\d\d|20\d\d)\b", iss.release_date)
-                        if m_year:
-                            c.year = int(m_year.group(1))
-
-                        if iss.comicvine_id or vol.comicvine_id:
-                            c.notes = f"ComicVine ID: {iss.comicvine_id or vol.comicvine_id}"
-
-                        if not c.title and c.series:
-                            c.title = f"{c.series} #{c.number}" if c.number else c.series
-
-                        return c
+                        return self._build_comic_from_issue(vol, iss)
             except Exception:
                 pass
 
         return None
+
+    def _build_comic_from_issue(self, vol: KapowarrVolume, iss: KapowarrIssue) -> Comic:
+        c = Comic()
+        c.provider_name = "Kapowarr"
+        c.provider_id = str(iss.id)
+        c.web = iss.web_url
+        c.title = iss.title
+        c.number = iss.issue_number
+        c.summary = iss.summary
+        c.series = vol.name
+        c.publisher = vol.publisher
+
+        m_year = re.search(r"\b(19\d\d|20\d\d)\b", iss.release_date)
+        if m_year:
+            c.year = int(m_year.group(1))
+
+        if iss.comicvine_id or vol.comicvine_id:
+            c.notes = f"ComicVine ID: {iss.comicvine_id or vol.comicvine_id}"
+
+        if not c.title and c.series:
+            c.title = f"{c.series} #{c.number}" if c.number else c.series
+
+        return c
 
     def get_library_status(self, prefer_kapowarr: bool = False) -> list[dict]:
         """Fetches Kapowarr library volumes AND scans local library directories for all comic series."""
