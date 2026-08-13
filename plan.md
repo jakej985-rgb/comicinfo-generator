@@ -26,7 +26,7 @@ The goal is to:
 
 ---
 
-2. Target Architecture
+1. Target Architecture
 
 The final processing pipeline should be:
 
@@ -92,7 +92,7 @@ No provider should be allowed to implicitly decide that its first search result 
 
 ---
 
-3. Phase 0 — Freeze and Establish the Baseline
+1. Phase 0 — Freeze and Establish the Baseline
 
 Goal
 
@@ -153,7 +153,7 @@ The application operates on real comic archives, so representative archive fixtu
 
 ---
 
-4. Phase 1 — Finish the Domain Model Separation
+1. Phase 1 — Finish the Domain Model Separation
 
 Priority
 
@@ -256,7 +256,7 @@ ProcessingRecord
 
 ---
 
-5. Phase 2 — Build the Identity Extraction Layer
+1. Phase 2 — Build the Identity Extraction Layer
 
 Priority
 
@@ -332,7 +332,7 @@ Do not convert all issue numbers to integers.
 
 ---
 
-6. Phase 3 — Make Kapowarr the Library Identity Source
+1. Phase 3 — Make Kapowarr the Library Identity Source
 
 Priority
 
@@ -374,7 +374,7 @@ Converts Kapowarr information into application domain models.
 
 ---
 
-7. Phase 4 — Build a Kapowarr Snapshot
+1. Phase 4 — Build a Kapowarr Snapshot
 
 Priority
 
@@ -409,7 +409,7 @@ Refresh the snapshot when:
 
 ---
 
-8. Phase 5 — Replace "First Search Result Wins"
+1. Phase 5 — Replace "First Search Result Wins"
 
 Priority
 
@@ -447,7 +447,7 @@ The resolver evaluates all candidates.
 
 ---
 
-9. Phase 6 — Implement Candidate Scoring
+1. Phase 6 — Implement Candidate Scoring
 
 Priority
 
@@ -483,7 +483,7 @@ They must be configurable and tested against real comic examples.
 
 ---
 
-10. Phase 7 — Implement Confidence Decisions
+ 1. Phase 7 — Implement Confidence Decisions
 
 Create:
 
@@ -533,7 +533,7 @@ This should not automatically overwrite metadata simply because the filename loo
 
 ---
 
-11. Phase 8 — Build Explicit Conflict Detection
+ 1. Phase 8 — Build Explicit Conflict Detection
 
 Create:
 
@@ -568,7 +568,7 @@ FATAL
 
 ---
 
-12. Phase 9 — Separate Identity Resolution From Metadata Retrieval
+ 1. Phase 9 — Separate Identity Resolution From Metadata Retrieval
 
 The resolver should become:
 
@@ -592,7 +592,7 @@ This prevents metadata retrieval from accidentally becoming identity resolution.
 
 ---
 
-13. Phase 10 — Comic Vine Provider Refactor
+ 1. Phase 10 — Comic Vine Provider Refactor
 
 Priority
 
@@ -644,7 +644,7 @@ Responsible for:
 
 ---
 
-14. Phase 11 — Build Comic Vine HTML Fixtures
+ 1. Phase 11 — Build Comic Vine HTML Fixtures
 
 Create:
 
@@ -667,7 +667,7 @@ Tests must run without contacting Comic Vine.
 
 ---
 
-15. Phase 12 — Improve GCD Provider
+ 1. Phase 12 — Improve GCD Provider
 
 Refactor GCD/GCP similarly:
 
@@ -683,7 +683,7 @@ It should not directly modify the final "Comic".
 
 ---
 
-16. Phase 13 — Define the Provider Contract
+ 1. Phase 13 — Define the Provider Contract
 
 Create:
 
@@ -713,7 +713,7 @@ None
 
 ---
 
-17. Phase 14 — Eliminate Silent Provider Failures
+ 1. Phase 14 — Eliminate Silent Provider Failures
 
 Remove normal-path patterns like:
 
@@ -746,7 +746,7 @@ Provider parser broken
 
 ---
 
-18. Phase 15 — Finish ComicInfo Lossless Handling
+ 1. Phase 15 — Finish ComicInfo Lossless Handling
 
 Priority
 
@@ -792,7 +792,7 @@ Normalize XML before comparison.
 
 ---
 
-19. Phase 16 — Fix Archive Transaction Safety
+ 1. Phase 16 — Fix Archive Transaction Safety
 
 Priority
 
@@ -828,7 +828,7 @@ Do not downgrade to an unsafe replacement operation.
 
 ---
 
-20. Phase 17 — Preserve File Metadata
+ 1. Phase 17 — Preserve File Metadata
 
 Where supported, preserve:
 
@@ -843,7 +843,7 @@ This is particularly important for your Docker/Kapowarr/Jellyfin environment.
 
 ---
 
-21. Phase 18 — Verify Archive Contents Before Replacement
+ 1. Phase 18 — Verify Archive Contents Before Replacement
 
 The existing verification should be expanded.
 
@@ -870,7 +870,7 @@ ComicInfo.xml
 
 ---
 
-22. Phase 19 — Make CBR Conversion Safe
+ 1. Phase 19 — Make CBR Conversion Safe
 
 Current CBR processing needs its own transaction.
 
@@ -894,7 +894,7 @@ Never delete the CBR merely because conversion started successfully.
 
 ---
 
-23. Phase 20 — Build Durable Processing State
+ 1. Phase 20 — Build Durable Processing State
 
 Priority
 
@@ -943,7 +943,7 @@ FAILED
 
 ---
 
-24. Phase 21 — Make Queue Restart-Safe
+ 1. Phase 21 — Make Queue Restart-Safe
 
 On startup:
 
@@ -965,7 +965,7 @@ without losing work.
 
 ---
 
-25. Phase 22 — Deduplicate Jobs
+ 1. Phase 22 — Deduplicate Jobs
 
 Prevent the same archive from being queued multiple times simultaneously.
 
@@ -990,7 +990,7 @@ new processing job
 
 ---
 
-26. Phase 23 — Make Automation Ignore Its Own Changes
+ 1. Phase 23 — Make Automation Ignore Its Own Changes
 
 This is critical.
 
@@ -1022,7 +1022,7 @@ SKIP
 
 ---
 
-27. Phase 24 — Add Dry-Run Mode
+ 1. Phase 24 — Add Dry-Run Mode
 
 Implement:
 
@@ -1063,7 +1063,7 @@ Changes:
 
 ---
 
-28. Phase 25 — Add Manual Review Output
+ 1. Phase 25 — Add Manual Review Output
 
 For uncertain matches:
 
@@ -1083,7 +1083,7 @@ Do not modify the archive.
 
 ---
 
-29. Phase 26 — Improve TPB / Collected Edition Merging
+ 1. Phase 26 — Improve TPB / Collected Edition Merging
 
 Create:
 
@@ -1116,7 +1116,7 @@ Batman #3
 
 ---
 
-30. Phase 27 — Implement Complex Issue Ordering
+ 1. Phase 27 — Implement Complex Issue Ordering
 
 Do not sort issues using:
 
@@ -1140,7 +1140,7 @@ Represent the ordering explicitly.
 
 ---
 
-31. Phase 28 — Improve Collected Edition Metadata
+ 1. Phase 28 — Improve Collected Edition Metadata
 
 When merging issues:
 
@@ -1158,7 +1158,7 @@ Avoid blindly combining unrelated metadata.
 
 ---
 
-32. Phase 29 — Build a Real Metadata Merge Policy
+ 1. Phase 29 — Build a Real Metadata Merge Policy
 
 Create:
 
@@ -1192,7 +1192,7 @@ Do not use one global provider priority for every field.
 
 ---
 
-33. Phase 30 — Expand Cache Architecture
+ 1. Phase 30 — Expand Cache Architecture
 
 Current caching should be expanded to include:
 
@@ -1216,7 +1216,7 @@ source_hash
 
 ---
 
-34. Phase 31 — Add Cache Invalidation
+ 1. Phase 31 — Add Cache Invalidation
 
 Cache must be invalidated when:
 
@@ -1230,7 +1230,7 @@ Never let stale metadata become permanent merely because it is cached.
 
 ---
 
-35. Phase 32 — Refactor "app.py"
+ 1. Phase 32 — Refactor "app.py"
 
 Once the core domain and services are stable, split the large application module.
 
@@ -1262,7 +1262,7 @@ Providers / repositories
 
 ---
 
-36. Phase 33 — Add Structured Logging
+ 1. Phase 33 — Add Structured Logging
 
 Replace ad-hoc logging with structured events.
 
@@ -1288,7 +1288,7 @@ status=SUCCESS
 
 ---
 
-37. Phase 34 — Add Metrics
+ 1. Phase 34 — Add Metrics
 
 Track:
 
@@ -1307,7 +1307,7 @@ This will make large-library debugging much easier.
 
 ---
 
-38. Phase 35 — Add Provider Rate Limiting
+ 1. Phase 35 — Add Provider Rate Limiting
 
 Comic Vine and other external providers must not be hammered by multiple workers.
 
@@ -1319,7 +1319,7 @@ Workers can run concurrently, but external provider requests must respect provid
 
 ---
 
-39. Phase 36 — Add Provider Retry Policy
+ 1. Phase 36 — Add Provider Retry Policy
 
 Retries should only occur for retryable errors.
 
@@ -1341,7 +1341,7 @@ Use exponential backoff.
 
 ---
 
-40. Phase 37 — Add Integration Tests
+ 1. Phase 37 — Add Integration Tests
 
 Test the complete pipeline:
 
@@ -1369,7 +1369,7 @@ No live internet should be required for normal CI.
 
 ---
 
-41. Phase 38 — Add Failure-Injection Tests
+ 1. Phase 38 — Add Failure-Injection Tests
 
 Intentionally simulate:
 
@@ -1394,7 +1394,7 @@ job can be retried
 
 ---
 
-42. Phase 39 — Add Property-Based / Fuzz Testing
+ 1. Phase 39 — Add Property-Based / Fuzz Testing
 
 Particularly test:
 
@@ -1417,7 +1417,7 @@ The parser must never crash the entire processing service.
 
 ---
 
-43. Phase 40 — Create AI-Agent Documentation
+ 1. Phase 40 — Create AI-Agent Documentation
 
 Create and maintain:
 
@@ -1444,7 +1444,7 @@ Do-not-do rules
 
 ---
 
-44. Phase 41 — Add AI Coding Agent Rules
+ 1. Phase 41 — Add AI Coding Agent Rules
 
 Create a root-level:
 
@@ -1479,7 +1479,7 @@ This is particularly important if multiple AI agents will work on the repository
 
 ---
 
-45. Phase 42 — Establish Architectural Invariants
+ 1. Phase 42 — Establish Architectural Invariants
 
 Create a permanent list of rules.
 
@@ -1518,7 +1518,7 @@ Kapowarr identity is preferred when it can be reliably associated with the archi
 
 ---
 
-46. Phase 43 — Performance Optimization
+ 1. Phase 43 — Performance Optimization
 
 Only after correctness is established.
 
@@ -1537,7 +1537,7 @@ Correctness is more important than throughput.
 
 ---
 
-47. Phase 44 — Large-Library Testing
+ 1. Phase 44 — Large-Library Testing
 
 Before calling the application production-ready, test against a representative library.
 
@@ -1578,7 +1578,7 @@ That number should be driven as close to zero as practical.
 
 ---
 
-48. Phase 45 — Production Safety Mode
+ 1. Phase 45 — Production Safety Mode
 
 Before enabling automatic processing against the real Kapowarr library, require:
 
@@ -1604,7 +1604,7 @@ full library automation
 
 ---
 
-49. Recommended Implementation Order
+ 1. Recommended Implementation Order
 
 Do not implement these phases in arbitrary order.
 
@@ -1651,7 +1651,7 @@ Production rollout
 
 ---
 
-50. Definition of Done
+ 1. Definition of Done
 
 The project should not be considered production-ready until all of the following are true.
 
@@ -1731,7 +1731,7 @@ Documentation
 
 ---
 
-51. Final Architecture Goal
+ 1. Final Architecture Goal
 
 The final application should make the following decision safely:
 
