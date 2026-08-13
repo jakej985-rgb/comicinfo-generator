@@ -74,18 +74,41 @@ class JobStore:
             return count
 
     def create_job(self, file_path: str) -> dict:
-        """Creates or retrieves an existing pending/processing job for a file path."""
+        """
+        Phase 22: Deduplicates jobs using path + SHA256 as primary identity.
+        If same path and same SHA256 is already PENDING or PROCESSING, returns existing job.
+        If SHA256 changes (modified file), creates a new processing job.
+        """
         abs_path = os.path.abspath(file_path)
         size = os.path.getsize(abs_path) if os.path.exists(abs_path) else 0
         mtime = int(os.path.getmtime(abs_path)) if os.path.exists(abs_path) else 0
+        
+        sha256 = ""
+        if os.path.exists(abs_path):
+            try:
+                import hashlib
+                h = hashlib.sha256()
+                with open(abs_path, "rb") as f:
+                    while chunk := f.read(65536):
+                        h.update(chunk)
+                sha256 = h.hexdigest()
+            except Exception:
+                pass
 
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            # Check existing pending/processing job
-            cursor.execute("""
-                SELECT * FROM processing_jobs
-                WHERE path = ? AND status IN ('PENDING', 'PROCESSING');
-            """, (abs_path,))
+            # Phase 22 Deduplication check (same path + same SHA256)
+            if sha256:
+                cursor.execute("""
+                    SELECT * FROM processing_jobs
+                    WHERE path = ? AND sha256 = ? AND status IN ('PENDING', 'PROCESSING');
+                """, (abs_path, sha256))
+            else:
+                cursor.execute("""
+                    SELECT * FROM processing_jobs
+                    WHERE path = ? AND status IN ('PENDING', 'PROCESSING');
+                """, (abs_path,))
+
             existing = cursor.fetchone()
             if existing:
                 return dict(existing)
@@ -94,13 +117,14 @@ class JobStore:
             now = int(time.time())
 
             cursor.execute("""
-                INSERT INTO processing_jobs (id, path, size, mtime, status, created_at)
-                VALUES (?, ?, ?, ?, 'PENDING', ?);
-            """, (job_id, abs_path, size, mtime, now))
+                INSERT INTO processing_jobs (id, path, sha256, size, mtime, status, created_at)
+                VALUES (?, ?, ?, ?, ?, 'PENDING', ?);
+            """, (job_id, abs_path, sha256, size, mtime, now))
             conn.commit()
 
             cursor.execute("SELECT * FROM processing_jobs WHERE id = ?;", (job_id,))
             return dict(cursor.fetchone())
+
 
     def get_job(self, job_id: str) -> Optional[dict]:
         with self._get_connection() as conn:
