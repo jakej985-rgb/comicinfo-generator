@@ -1,4 +1,4 @@
-ComicInfo Generator — Final Production Hardening Plan
+# ComicInfo Generator — Final Production Hardening Plan
 
 Repository: "jakej985-rgb/comicinfo-generator"
 Branch: "main"
@@ -6,7 +6,7 @@ Purpose: Finish the remaining production-hardening issues identified during the 
 
 ---
 
-1. Mission
+## 1. Mission
 
 The project has already completed the major architectural and safety phases.
 
@@ -46,7 +46,7 @@ The guiding principle is:
 
 ---
 
-2. Current Remaining Issues
+## 2. Current Remaining Issues
 
 The latest review identified these remaining areas:
 
@@ -339,9 +339,9 @@ cache contents
 
 70.3 Execute actual command
 
-Run:
-
+```bash
 python main.py --dry-run <fixture>
+```
 
 70.4 Verify zero mutations
 
@@ -539,7 +539,9 @@ python main.py
 
 and:
 
+```bash
 python main.py --dry-run <path>
+```
 
 73.3 Document configuration
 
@@ -816,9 +818,9 @@ ambiguous filename
 
 77.2 Run dry-run
 
-Run:
-
+```bash
 python main.py --dry-run <test-library>
+```
 
 77.3 Manually inspect every decision
 
