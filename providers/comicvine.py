@@ -5,6 +5,8 @@ from typing import Optional, Tuple
 from bs4 import BeautifulSoup
 from models.comic import Comic
 from providers.base import BaseProvider
+from config import load_config
+from cache.db import CacheManager
 
 try:
     import cloudscraper
@@ -236,10 +238,31 @@ def fetch_html(url: str) -> str:
 
     return html_content
 
-def scrape_issue(url: str) -> Comic:
-    """Fetches HTML from URL and parses Comic metadata."""
-    html_content = fetch_html(url)
-    return parse_html(html_content, url)
+def scrape_issue(url: str, use_cache: bool = True) -> Comic:
+    """Fetches HTML from URL and parses Comic metadata using local SQLite cache if available."""
+    clean_url = url.strip()
+    if use_cache:
+        try:
+            cfg = load_config()
+            cache_mgr = CacheManager(cfg.cache.db_path)
+            cached = cache_mgr.get_cached_issue("ComicVine", clean_url)
+            if cached and cached.series:
+                return cached
+        except Exception:
+            pass
+
+    html_content = fetch_html(clean_url)
+    comic = parse_html(html_content, clean_url)
+
+    if comic and use_cache:
+        try:
+            cfg = load_config()
+            cache_mgr = CacheManager(cfg.cache.db_path)
+            cache_mgr.save_cached_issue("ComicVine", clean_url, comic)
+        except Exception:
+            pass
+
+    return comic
 
 def _volume_slug_from_url(volume_url: str) -> str:
     """Extracts the series name slug from a ComicVine volume URL.
@@ -313,10 +336,20 @@ def _slug_matches_series(issue_url: str, series_slug: str) -> bool:
     return False
 
 
-def scrape_volume(volume_url: str, max_pages_limit: int = 50) -> tuple[str, dict[str, str], list[dict]]:
+def scrape_volume(volume_url: str, max_pages_limit: int = 50, use_cache: bool = True) -> tuple[str, dict[str, str], list[dict]]:
     """Scrapes a Comic Vine Volume/Series page (/4050-XXXXX/).
-    Uses slug-based filtering to avoid collected editions from other series stealing issue numbers."""
+    Uses local SQLite cache to avoid repeated network scraping for series volumes."""
     clean_url = re.sub(r"\?page=\d+.*$", "", volume_url).rstrip("/") + "/"
+    if use_cache:
+        try:
+            cfg = load_config()
+            cache_mgr = CacheManager(cfg.cache.db_path)
+            cached_vol = cache_mgr.get_cached_series("ComicVine", clean_url)
+            if cached_vol and "series_name" in cached_vol and "matched_map" in cached_vol and "matched_list" in cached_vol:
+                return cached_vol["series_name"], cached_vol["matched_map"], cached_vol["matched_list"]
+        except Exception:
+            pass
+
     html_content = fetch_html(clean_url)
     soup = BeautifulSoup(html_content, "html.parser")
 
@@ -358,24 +391,18 @@ def scrape_volume(volume_url: str, max_pages_limit: int = 50) -> tuple[str, dict
             m = re.search(r"#(?:Issue\s*)?(\d+½|\d+/\d+|\d+\.\d+|\d+[a-zA-Z]?|½|1/2|0\.5)", txt, re.I)
             if not m:
                 m = re.search(r"Issue\s*#?\s*(\d+½|\d+/\d+|\d+\.\d+|\d+[a-zA-Z]?|½|1/2|0\.5)", txt, re.I)
-            if not m:
-                m = re.search(r"#(0+|\d+½|\d+/\d+|\d+\.\d+|\d+|½)", a.get_text(strip=True))
+            num_str = m.group(1) if m else ""
 
-            if m:
-                raw_num = m.group(1).strip()
-                if raw_num in ("½", "1/2", "0½", "0.5"):
-                    num_str = "0.5"
-                    label_str = "Issue #1/2"
-                elif raw_num in ("0", "00", "000"):
-                    num_str = "0"
-                    label_str = f"Issue #{raw_num}"
-                else:
-                    num_str = raw_num.lstrip("0") or "0"
-                    label_str = f"Issue #{num_str}"
+            if not num_str:
+                label = a.get_text(" ", strip=True)
+                m_label = re.search(r"#(\d+½|\d+/\d+|\d+\.\d+|\d+[a-zA-Z]?|½|1/2|0\.5)", label)
+                if m_label:
+                    num_str = m_label.group(1)
 
-                is_match = _slug_matches_series(full_url, series_slug)
-                if is_match:
+            if num_str:
+                if _slug_matches_series(full_url, series_slug):
                     if num_str not in matched_map:
+                        label_str = a.get_text(" ", strip=True)
                         matched_map[num_str] = full_url
                         matched_list.append({"number": num_str, "label": label_str, "url": full_url})
 
@@ -398,14 +425,39 @@ def scrape_volume(volume_url: str, max_pages_limit: int = 50) -> tuple[str, dict
         key=lambda x: int(re.sub(r"\D", "", x["number"])) if re.sub(r"\D", "", x["number"]) else 0
     )
 
+    if series_name and use_cache:
+        try:
+            cfg = load_config()
+            cache_mgr = CacheManager(cfg.cache.db_path)
+            cache_mgr.save_cached_series(
+                "ComicVine",
+                clean_url,
+                series_name,
+                0,
+                "",
+                {"series_name": series_name, "matched_map": issue_map, "matched_list": issues_list}
+            )
+        except Exception:
+            pass
+
     return series_name, issue_map, issues_list
 
 
-def search_comicvine(query: str, search_type: str = "all") -> list[dict]:
-    """Searches Comic Vine for series volumes or single issues."""
+def search_comicvine(query: str, search_type: str = "all", use_cache: bool = True) -> list[dict]:
+    """Searches Comic Vine for series volumes or single issues using local SQLite cache."""
     clean_query = query.strip()
     if not clean_query:
         return []
+
+    if use_cache:
+        try:
+            cfg = load_config()
+            cache_mgr = CacheManager(cfg.cache.db_path)
+            cached_res = cache_mgr.get_cached_search("ComicVine", search_type, clean_query)
+            if cached_res is not None:
+                return cached_res
+        except Exception:
+            pass
 
     encoded_query = urllib.parse.quote_plus(clean_query)
     search_url = f"https://comicvine.gamespot.com/search/?q={encoded_query}"
@@ -452,6 +504,14 @@ def search_comicvine(query: str, search_type: str = "all") -> list[dict]:
                 "count": count_str,
                 "description": text_block[:160]
             })
+
+    if use_cache:
+        try:
+            cfg = load_config()
+            cache_mgr = CacheManager(cfg.cache.db_path)
+            cache_mgr.save_cached_search("ComicVine", search_type, clean_query, results)
+        except Exception:
+            pass
 
     return results
 

@@ -5,6 +5,8 @@ from typing import Optional, Tuple
 from bs4 import BeautifulSoup
 from models.comic import Comic
 from providers.base import BaseProvider
+from config import load_config
+from cache.db import CacheManager
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -204,8 +206,8 @@ def parse_gcp_text_refined(text: str, default_url: str = "") -> Comic:
 
     return c
 
-def scrape_gcp_issue(url_or_text: str) -> Comic:
-    """Scrapes a Grand Comics Database issue page or copied text into a Comic."""
+def scrape_gcp_issue(url_or_text: str, use_cache: bool = True) -> Comic:
+    """Scrapes a Grand Comics Database issue page or copied text into a Comic using SQLite cache."""
     input_str = url_or_text.strip()
 
     if len(input_str.split("\n")) > 2 or any(k in input_str for k in ["Pencils:", "Script:", "Inks:", "Characters:", "Table of Contents"]):
@@ -213,6 +215,16 @@ def scrape_gcp_issue(url_or_text: str) -> Comic:
 
     m_url = re.search(r"https?://[^\s]+", input_str)
     url = m_url.group(0) if m_url else input_str
+
+    if use_cache:
+        try:
+            cfg = load_config()
+            cache_mgr = CacheManager(cfg.cache.db_path)
+            cached = cache_mgr.get_cached_issue("GCP", url)
+            if cached and cached.series:
+                return cached
+        except Exception:
+            pass
 
     c = Comic()
     c.provider_name = "GCP"
@@ -280,6 +292,14 @@ def scrape_gcp_issue(url_or_text: str) -> Comic:
         if not c.title and c.series:
             c.title = f"{c.series} #{c.number}" if c.number else c.series
 
+        if use_cache and c.series:
+            try:
+                cfg = load_config()
+                cache_mgr = CacheManager(cfg.cache.db_path)
+                cache_mgr.save_cached_issue("GCP", url, c)
+            except Exception:
+                pass
+
         return c
 
     html_text = fetch_gcp_html(url, timeout=2)
@@ -288,12 +308,26 @@ def scrape_gcp_issue(url_or_text: str) -> Comic:
         if res_c.series and res_c.series != "Grand Comics Database Issue":
             if not res_c.summary:
                 res_c.summary = f"Scraped Series, Publisher & Date from archive. To include full creator credits & characters, copy-paste the GCP page text into the box!"
+            if use_cache:
+                try:
+                    cfg = load_config()
+                    cache_mgr = CacheManager(cfg.cache.db_path)
+                    cache_mgr.save_cached_issue("GCP", url, res_c)
+                except Exception:
+                    pass
             return res_c
 
     c.title = f"GCP Issue #{issue_id}"
     c.series = "Grand Comics Database Issue"
     c.publisher = "Grand Comics Database (GCP)"
     c.summary = f"Metadata generated for GCP Issue #{issue_id} ({url}). Note: Direct scraping was blocked by Cloudflare anti-bot."
+    if use_cache:
+        try:
+            cfg = load_config()
+            cache_mgr = CacheManager(cfg.cache.db_path)
+            cache_mgr.save_cached_issue("GCP", url, c)
+        except Exception:
+            pass
     return c
 
 def scrape_gcp_volume(volume_url: str) -> tuple[str, dict[str, str], list[dict]]:

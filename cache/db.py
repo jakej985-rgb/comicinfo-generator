@@ -149,6 +149,41 @@ class CacheManager:
             """, (provider, str(issue_id), series_id, comic.number, comic.title, json.dumps(data_dict), now))
             conn.commit()
 
+    # --- Series Cache Operations ---
+    def get_cached_series(self, provider: str, series_id: str) -> Optional[dict]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT data_json, updated_at FROM series_cache
+                WHERE provider = ? AND series_id = ?
+            """, (provider, str(series_id)))
+            row = cursor.fetchone()
+            if row and row["data_json"]:
+                # Invalidate series volume cache if older than 7 days (604800s)
+                if int(time.time()) - row["updated_at"] < 604800:
+                    try:
+                        return json.loads(row["data_json"])
+                    except Exception:
+                        pass
+        return None
+
+    def save_cached_series(self, provider: str, series_id: str, name: str = "", year: int = 0, publisher: str = "", data: dict = None):
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            now = int(time.time())
+            data_json = json.dumps(data or {})
+            cursor.execute("""
+                INSERT INTO series_cache (provider, series_id, name, year, publisher, data_json, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(provider, series_id) DO UPDATE SET
+                    name = excluded.name,
+                    year = excluded.year,
+                    publisher = excluded.publisher,
+                    data_json = excluded.data_json,
+                    updated_at = excluded.updated_at;
+            """, (provider, str(series_id), name, year, publisher, data_json, now))
+            conn.commit()
+
     # --- Search Cache Operations ---
     def get_cached_search(self, provider: str, search_type: str, query: str) -> Optional[list[dict]]:
         with self._get_connection() as conn:

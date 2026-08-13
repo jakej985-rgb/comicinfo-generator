@@ -6,6 +6,8 @@ import urllib.parse
 from typing import Optional, Tuple
 from models.comic import Comic
 from providers.base import BaseProvider
+from config import load_config
+from cache.db import CacheManager
 
 class KapowarrProvider(BaseProvider):
     """
@@ -384,7 +386,27 @@ class KapowarrProvider(BaseProvider):
                 local_idx += 1
 
         if prefer_kapowarr:
-            return kapowarr_items + local_items
+            final_items = kapowarr_items + local_items
         else:
-            return local_items + kapowarr_items
+            final_items = local_items + kapowarr_items
+
+        if final_items:
+            try:
+                cfg = load_config()
+                cache_mgr = CacheManager(cfg.cache.db_path)
+                cache_mgr.save_cached_search("Kapowarr", "library", f"all_prefer_{prefer_kapowarr}", final_items)
+                for item in final_items:
+                    if item.get("title") and item.get("id"):
+                        cache_mgr.save_cached_series(
+                            item.get("source", "kapowarr"),
+                            str(item.get("id")),
+                            item.get("title", ""),
+                            int(item.get("year")) if str(item.get("year", "")).isdigit() else 0,
+                            "",
+                            item
+                        )
+            except Exception:
+                pass
+
+        return final_items
 
