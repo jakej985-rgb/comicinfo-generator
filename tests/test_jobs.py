@@ -1,4 +1,5 @@
 import os
+import shutil
 import tempfile
 import unittest
 from cache.jobs import JobStore, STATUS_PENDING, STATUS_PROCESSING, STATUS_SUCCESS, STATUS_SKIPPED, STATUS_REVIEW
@@ -13,11 +14,7 @@ class TestJobStoreAndRestartSafety(unittest.TestCase):
             f.write(b"PK\x03\x04fakezipcontent")
 
     def tearDown(self):
-        if os.path.exists(self.sample_file):
-            os.remove(self.sample_file)
-        if os.path.exists(self.db_path):
-            os.remove(self.db_path)
-        os.rmdir(self.temp_dir)
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_create_and_fetch_job(self):
         store = JobStore(db_path=self.db_path)

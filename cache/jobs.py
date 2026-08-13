@@ -31,8 +31,14 @@ class JobStore:
                 self._mem_conn = sqlite3.connect(":memory:", check_same_thread=False)
                 self._mem_conn.row_factory = sqlite3.Row
             return self._mem_conn
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+            conn.execute("PRAGMA busy_timeout=30000;")
+        except Exception:
+            pass
         return conn
 
     def _init_db(self):
