@@ -43,8 +43,12 @@ class ProcessingQueue:
         self.log_callback(f"[{time.strftime('%H:%M:%S')}] {msg}")
 
     def enqueue_file(self, file_path: str, url_override: str = "") -> ProcessingItem:
-        item = ProcessingItem(file_path=os.path.abspath(file_path), url_override=url_override)
+        abs_path = os.path.abspath(file_path)
         with self.lock:
+            for existing in self.results:
+                if existing.file_path == abs_path and existing.status in ("pending", "processing"):
+                    return existing
+            item = ProcessingItem(file_path=abs_path, url_override=url_override)
             self.results.append(item)
         self.work_queue.put(item)
         return item
@@ -83,7 +87,6 @@ class ProcessingQueue:
                     item.status = "skipped"
                     item.target_file = file_path
                     self.log(f"⚡ Skipped unchanged file: '{os.path.basename(file_path)}'")
-                    self.work_queue.task_done()
                     continue
 
                 # 2. Handle CBR conversion if needed
@@ -103,7 +106,6 @@ class ProcessingQueue:
                     item.status = "failed"
                     item.error_message = "No metadata found"
                     self.log(f"⚠️ Failed to resolve metadata for '{os.path.basename(target_archive)}'")
-                    self.work_queue.task_done()
                     continue
 
                 # 4. Embed ComicInfo.xml into archive
