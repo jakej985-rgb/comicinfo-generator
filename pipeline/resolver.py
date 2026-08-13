@@ -4,6 +4,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 from typing import Optional, List, Dict, Tuple
 from models.comic import Comic
+from models.identity import ComicIdentity
 from config import Config
 from cache.db import CacheManager
 from providers.kapowarr import KapowarrProvider
@@ -11,6 +12,9 @@ from providers.comicvine import ComicVineProvider
 from providers.gcp import GCPProvider
 
 from writers.comicinfo import ComicInfoParser
+from pipeline.filename_parser import parse_filename_identity
+from pipeline.identity import extract_identity_candidates
+from pipeline.confidence import evaluate_confidence, ConfidenceDecision, LEVEL_AUTO_ACCEPT, LEVEL_ACCEPT_WITH_WARNING
 
 def read_existing_comicinfo(cbz_path: str) -> Optional[Comic]:
     """Reads existing ComicInfo.xml from a .cbz archive if present and valid."""
@@ -37,11 +41,7 @@ def read_existing_comicinfo(cbz_path: str) -> Optional[Comic]:
 class MetadataResolver:
     """
     Metadata Resolution Pipeline.
-    Evaluates metadata providers according to priority:
-    1. Existing valid ComicInfo.xml
-    2. Kapowarr Provider (preferred)
-    3. ComicVine Provider
-    4. GCP Provider (fallback)
+    Strictly separates Identity Resolution (resolve_identity) from Metadata Retrieval (retrieve_metadata).
     """
 
     def __init__(self, config: Config, cache_mgr: Optional[CacheManager] = None):
@@ -52,49 +52,145 @@ class MetadataResolver:
         self.comicvine = ComicVineProvider(api_key=config.comicvine.api_key)
         self.gcp = GCPProvider()
 
-    def resolve_file_metadata(self, file_path: str, url_override: str = "", force_overwrite: bool = False) -> Tuple[Optional[Comic], str]:
+    def resolve_identity(self, file_path: str, url_override: str = "") -> Tuple[Optional[ComicIdentity], ConfidenceDecision]:
         """
-        Resolves metadata for a comic archive file according to priority hierarchy.
-        Returns (Comic_object, provider_name_used).
+        Phase 9 Step 1: Resolves comic identity candidate without retrieving full metadata details.
+        Returns (best_candidate_identity, confidence_decision).
         """
-        # Step 1: Check existing ComicInfo.xml inside archive
-        if not force_overwrite and not self.config.output.overwrite:
-            existing = read_existing_comicinfo(file_path)
-            if existing:
-                return existing, "ExistingXML"
+        parsed = parse_filename_identity(file_path)
 
-        # Step 2: Direct URL or copied page text override
+        # 1. Direct URL Override
         if url_override:
             url_str = url_override.strip()
-            if "comics.org" in url_str.lower() or "Pencils:" in url_str:
-                c = self.gcp.lookup_issue(url_str)
-                if c: return c, "GCP"
-            elif "comicvine" in url_str.lower():
-                c = self.comicvine.lookup_issue(url_str)
-                if c: return c, "CV"
-            elif "kapowarr" in url_str.lower() or url_str.isdigit():
-                c = self.kapowarr.lookup_issue(url_str)
-                if c: return c, "Kapowarr"
+            if "comicvine" in url_str.lower():
+                m = re.search(r"4000-(\d+)", url_str)
+                cand = ComicIdentity(
+                    provider="ComicVine",
+                    issue_id=f"4000-{m.group(1)}" if m else url_str,
+                    issue_provider="ComicVine",
+                    series_name=parsed.series_name,
+                    issue_number=parsed.issue_number
+                )
+                decision = evaluate_confidence(cand, parsed)
+                return cand, decision
 
-        # Step 3: Kapowarr Lookup (preferred provider)
-        if self.kapowarr.test_connection():
-            fname = os.path.basename(file_path)
-            searches = self.kapowarr.search_issue(fname)
-            if searches and searches[0].get("id"):
-                c = self.kapowarr.lookup_issue(searches[0]["id"])
-                if c: return c, "Kapowarr"
+        # 2. Existing Embedded XML identity check
+        existing = read_existing_comicinfo(file_path)
+        if existing and not self.config.output.overwrite:
+            cand = ComicIdentity(
+                provider="ExistingXML",
+                series_name=existing.series or existing.title,
+                issue_number=existing.number,
+                publication_year=existing.year,
+                publisher=existing.publisher
+            )
+            decision = evaluate_confidence(cand, parsed)
+            return cand, decision
 
-        # Step 4: ComicVine Lookup
+        # 3. Gather local identity candidates (filename + directory)
+        local_candidates = extract_identity_candidates(file_path)
+
+        # 4. Search Providers for Candidate Identity Signals
         fname = os.path.basename(file_path)
-        cv_results = self.comicvine.search_issue(fname)
-        if cv_results and cv_results[0].get("url"):
-            c = self.comicvine.lookup_issue(cv_results[0]["url"])
-            if c: return c, "CV"
+        provider_candidates: List[ComicIdentity] = []
 
-        # Step 5: GCP Fallback
-        gcp_results = self.gcp.search_issue(fname)
-        if gcp_results and gcp_results[0].get("url"):
-            c = self.gcp.lookup_issue(gcp_results[0]["url"])
-            if c: return c, "GCP"
+        # Kapowarr
+        if self.kapowarr.test_connection():
+            try:
+                searches = self.kapowarr.search_issue(fname)
+                for s in searches:
+                    if s.get("id"):
+                        provider_candidates.append(ComicIdentity(
+                            provider="Kapowarr",
+                            issue_id=str(s["id"]),
+                            issue_provider="Kapowarr",
+                            series_name=s.get("title", "").split(" #")[0] or parsed.series_name,
+                            issue_number=parsed.issue_number
+                        ))
+            except Exception:
+                pass
+
+        # ComicVine
+        try:
+            cv_results = self.comicvine.search_issue(fname)
+            for r in cv_results:
+                if r.get("url"):
+                    m_cv = re.search(r"4000-(\d+)", r["url"])
+                    provider_candidates.append(ComicIdentity(
+                        provider="ComicVine",
+                        issue_id=f"4000-{m_cv.group(1)}" if m_cv else r["url"],
+                        issue_provider="ComicVine",
+                        series_name=r.get("title", "").split(" #")[0] or parsed.series_name,
+                        issue_number=parsed.issue_number
+                    ))
+        except Exception:
+            pass
+
+        all_candidates = local_candidates + provider_candidates
+        if not all_candidates:
+            empty_cand = ComicIdentity(series_name=parsed.series_name, issue_number=parsed.issue_number)
+            return None, ConfidenceDecision(score=0.0, action="SKIP")
+
+        # 5. Evaluate Confidence Decisions for all candidates
+        scored_pairs = []
+        for cand in all_candidates:
+            dec = evaluate_confidence(cand, parsed)
+            scored_pairs.append((cand, dec))
+
+        # Sort by score descending
+        scored_pairs.sort(key=lambda p: p[1].score, reverse=True)
+        best_cand, best_dec = scored_pairs[0]
+
+        return (best_cand, best_dec) if best_dec.action != "SKIP" else (None, best_dec)
+
+    def retrieve_metadata(self, identity: ComicIdentity) -> Optional[Comic]:
+        """
+        Phase 9 Step 2: Retrieves full Comic metadata details for a resolved ComicIdentity.
+        Does NOT alter identity resolution.
+        """
+        if not identity:
+            return None
+
+        comic: Optional[Comic] = None
+
+        if identity.provider == "ExistingXML":
+            # Retain existing XML fields
+            comic = Comic(
+                series=identity.series_name,
+                number=identity.issue_number,
+                year=identity.publication_year,
+                publisher=identity.publisher,
+                provider_name="ExistingXML"
+            )
+        elif identity.provider == "Kapowarr" and identity.issue_id:
+            comic = self.kapowarr.lookup_issue(identity.issue_id)
+        elif identity.provider == "ComicVine" and identity.issue_id:
+            cv_url = f"https://comicvine.gamespot.com/issue/{identity.issue_id}/" if not identity.issue_id.startswith("http") else identity.issue_id
+            comic = self.comicvine.lookup_issue(cv_url)
+        elif identity.provider == "GCP" and identity.issue_id:
+            comic = self.gcp.lookup_issue(identity.issue_id)
+
+        # Fallback metadata generation from identity if provider lookup returns partial data
+        if not comic:
+            comic = Comic(
+                series=identity.series_name,
+                number=identity.issue_number,
+                year=identity.publication_year,
+                publisher=identity.publisher,
+                provider_name=identity.provider or "Resolver"
+            )
+
+        comic.identity = identity
+        return comic
+
+    def resolve_file_metadata(self, file_path: str, url_override: str = "", force_overwrite: bool = False) -> Tuple[Optional[Comic], str]:
+        """
+        Pipeline entry point chaining resolve_identity() and retrieve_metadata(identity).
+        Returns (Comic_object, provider_name_used).
+        """
+        identity, decision = self.resolve_identity(file_path, url_override=url_override)
+        if identity and decision.action != "SKIP":
+            comic = self.retrieve_metadata(identity)
+            return comic, identity.provider or "Resolver"
 
         return None, "None"
