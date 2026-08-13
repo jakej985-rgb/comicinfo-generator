@@ -3,7 +3,15 @@ from typing import List, Optional, Tuple
 from models.identity import ComicIdentity, IdentityEvidence
 from pipeline.filename_parser import ParsedFilename
 from pipeline.scoring import score_identity_candidate, ScoringWeights, DEFAULT_WEIGHTS, normalize_title
-from pipeline.conflicts import detect_conflicts, detect_provider_disagreements, detect_existing_xml_conflicts, Conflict, SEVERITY_FATAL, SEVERITY_ERROR
+from pipeline.conflicts import (
+    detect_conflicts,
+    detect_provider_disagreements,
+    detect_existing_xml_conflicts,
+    detect_xml_provider_conflicts,
+    Conflict,
+    SEVERITY_FATAL,
+    SEVERITY_ERROR
+)
 
 LEVEL_AUTO_ACCEPT = "AUTO_ACCEPT"
 LEVEL_ACCEPT_WITH_WARNING = "ACCEPT_WITH_WARNING"
@@ -97,18 +105,36 @@ def evaluate_candidate_pool_decision(
     if not candidates:
         return None, ConfidenceDecision(score=0.0, level=LEVEL_UNRESOLVED, action="SKIP")
 
-    # 1. Detect provider agreement
+    # 1. Detect provider agreement across series, issue number, volume, and year (Phase 58)
     agreement_groups = {}
     external_providers = {"Kapowarr", "ComicVine", "GCD", "GCP"}
     for c in candidates:
         if c.provider in external_providers and c.series_name and c.issue_number:
-            key = (normalize_title(c.series_name), c.issue_number.lstrip("0"))
+            key = (
+                normalize_title(c.series_name),
+                c.issue_number.lstrip("0"),
+                str(getattr(c, "volume", "")).strip().lower(),
+                c.publication_year if c.publication_year > 0 else 0
+            )
             agreement_groups.setdefault(key, set()).add(c.provider)
 
     for c in candidates:
         if c.provider in external_providers and c.series_name and c.issue_number:
-            key = (normalize_title(c.series_name), c.issue_number.lstrip("0"))
+            key = (
+                normalize_title(c.series_name),
+                c.issue_number.lstrip("0"),
+                str(getattr(c, "volume", "")).strip().lower(),
+                c.publication_year if c.publication_year > 0 else 0
+            )
             providers = agreement_groups.get(key, set())
+            if len(providers) < 2:
+                # Fallback check on (series, number)
+                key_fallback = (normalize_title(c.series_name), c.issue_number.lstrip("0"))
+                for k, p_set in agreement_groups.items():
+                    if k[0] == key_fallback[0] and k[1] == key_fallback[1] and len(p_set) >= 2:
+                        providers = p_set
+                        break
+
             if len(providers) >= 2:
                 c.provider_agreement = list(providers)
 
@@ -136,6 +162,17 @@ def evaluate_candidate_pool_decision(
                 dec.level = LEVEL_MANUAL_REVIEW
                 dec.action = "REVIEW"
                 dec.reasons.append("Existing ComicInfo.xml conflict detected against filename")
+
+        # XML vs candidate provider conflict check (Phase 58)
+        xml_prov_conflicts = detect_xml_provider_conflicts(existing_comic, cand)
+        if xml_prov_conflicts:
+            dec.conflicts.extend(xml_prov_conflicts)
+            dec.has_critical_conflict = True
+            if dec.level in (LEVEL_AUTO_ACCEPT, LEVEL_ACCEPT_WITH_WARNING):
+                dec.level = LEVEL_MANUAL_REVIEW
+                dec.action = "REVIEW"
+                dec.reasons.append("Existing ComicInfo.xml conflict detected against provider candidate")
+
         scored_pairs.append((cand, dec))
 
     # 5. Sort candidates: non-conflicting first, then highest score
