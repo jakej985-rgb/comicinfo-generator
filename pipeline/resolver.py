@@ -88,16 +88,23 @@ class MetadataResolver:
     Preserves provider operation states across the entire resolution pipeline.
     """
 
-    def __init__(self, config: Optional[Config] = None, cache_mgr: Optional[CacheManager] = None):
+    def __init__(
+        self,
+        config: Optional[Config] = None,
+        cache_mgr: Optional[CacheManager] = None,
+        kapowarr: Optional[KapowarrProvider] = None,
+        comicvine: Optional[ComicVineProvider] = None,
+        gcp: Optional[GCPProvider] = None
+    ):
         self.config = config
         self.cache_mgr = cache_mgr or (CacheManager(config.cache.db_path) if config and hasattr(config, "cache") else CacheManager())
         self.cache = self.cache_mgr
-        self.kapowarr = KapowarrProvider(
+        self.kapowarr = kapowarr or KapowarrProvider(
             url=self.config.kapowarr.url if self.config and hasattr(self.config, "kapowarr") else "http://localhost:5656",
             api_key=self.config.kapowarr.api_key if self.config and hasattr(self.config, "kapowarr") else ""
         )
-        self.comicvine = ComicVineProvider(api_key=self.config.comicvine.api_key if self.config and hasattr(self.config, "comicvine") else "")
-        self.gcp = GCPProvider()
+        self.comicvine = comicvine or ComicVineProvider(api_key=self.config.comicvine.api_key if self.config and hasattr(self.config, "comicvine") else "")
+        self.gcp = gcp or GCPProvider()
 
     def resolve_identity(self, file_path: str, url_override: str = "") -> Tuple[Optional[ComicIdentity], ConfidenceDecision]:
         """
@@ -151,7 +158,9 @@ class MetadataResolver:
                     provider_results["Kapowarr"] = ProviderOperationResult(provider="Kapowarr", operation="search_issue", status="NOT_FOUND")
 
                 for s in searches:
-                    if s.get("id"):
+                    if isinstance(s, ComicIdentity):
+                        provider_candidates.append(s)
+                    elif isinstance(s, dict) and s.get("id"):
                         s_year = int(s.get("year") or s.get("volume_year") or 0) if (s.get("year") or s.get("volume_year")) else 0
                         s_series = s.get("series") or (s.get("title", "").split(" #")[0] if s.get("title") else parsed.series_name)
                         s_pub = s.get("publisher", "") or s.get("pub", "")
@@ -195,7 +204,9 @@ class MetadataResolver:
                 provider_results["ComicVine"] = ProviderOperationResult(provider="ComicVine", operation="search_issue", status="NOT_FOUND")
 
             for r in cv_results:
-                if r.get("url"):
+                if isinstance(r, ComicIdentity):
+                    provider_candidates.append(r)
+                elif isinstance(r, dict) and r.get("url"):
                     m_cv = re.search(r"4000-(\d+)", r["url"])
                     r_year = int(r.get("year") or r.get("volume_year") or 0) if (r.get("year") or r.get("volume_year")) else 0
                     r_series = r.get("series") or (r.get("title", "").split(" #")[0] if r.get("title") else parsed.series_name)
@@ -232,7 +243,9 @@ class MetadataResolver:
                     provider_results["GCP"] = ProviderOperationResult(provider="GCP", operation="search_issue", status="NOT_FOUND")
 
                 for g in gcp_results:
-                    if g.get("url") or g.get("id"):
+                    if isinstance(g, ComicIdentity):
+                        provider_candidates.append(g)
+                    elif isinstance(g, dict) and (g.get("url") or g.get("id")):
                         g_year = int(g.get("year") or g.get("volume_year") or 0) if (g.get("year") or g.get("volume_year")) else 0
                         g_series = g.get("series") or (g.get("title", "").split(" #")[0] if g.get("title") else parsed.series_name)
                         g_pub = g.get("publisher", "") or g.get("pub", "")
