@@ -1009,11 +1009,11 @@ CI
 
 Identity
 
-- [ ] Identity resolution remains separate from metadata retrieval
-- [ ] Provider failure cannot become successful metadata
-- [ ] Complex issue numbers remain intact
-- [ ] Provider disagreement remains reviewable
-- [ ] Existing ComicInfo authority remains explicit
+- [x] Identity resolution remains separate from metadata retrieval
+- [x] Provider failure cannot become successful metadata
+- [x] Complex issue numbers remain intact
+- [x] Provider disagreement remains reviewable
+- [x] Existing ComicInfo authority remains explicit
 
 Metadata
 
@@ -1026,33 +1026,33 @@ Metadata
 
 Archive Safety
 
-- [ ] Original archive remains recoverable after failed writes
-- [ ] CRC verification remains enabled
-- [ ] Strict SHA256 verification works
-- [ ] fsync failures are not silently ignored
-- [ ] Archive replacement failures are reported correctly
-- [ ] Unrelated archive entries remain unchanged
+- [x] Original archive remains recoverable after failed writes
+- [x] CRC verification remains enabled
+- [x] Strict SHA256 verification works
+- [x] fsync failures are not silently ignored
+- [x] Archive replacement failures are reported correctly
+- [x] Unrelated archive entries remain unchanged
 
 Dry-Run
 
-- [ ] CLI dry-run performs zero persistent mutations
-- [ ] CLI dry-run performs zero archive mutations
-- [ ] CLI dry-run does not create processing loops
-- [ ] CLI output explains the decision
+- [x] CLI dry-run performs zero persistent mutations
+- [x] CLI dry-run performs zero archive mutations
+- [x] CLI dry-run does not create processing loops
+- [x] CLI output explains the decision
 
 Providers
 
-- [ ] NOT_FOUND differs from provider failure
-- [ ] RATE_LIMITED remains distinguishable
-- [ ] OFFLINE remains distinguishable
-- [ ] Retryable failures remain bounded
-- [ ] Provider state reaches the final result
-- [ ] Secrets never appear in logs
+- [x] NOT_FOUND differs from provider failure
+- [x] RATE_LIMITED remains distinguishable
+- [x] OFFLINE remains distinguishable
+- [x] Retryable failures remain bounded
+- [x] Provider state reaches the final result
+- [x] Secrets never appear in logs
 
 Automation
 
-- [ ] Self-writes do not cause infinite processing
-- [ ] Restart does not cause endless reprocessing
+- [x] Self-writes do not cause infinite processing
+- [x] Restart does not cause endless reprocessing
 - [ ] Rapid filesystem events are deduplicated
 - [ ] Failed jobs eventually become terminal
 - [ ] Worker crashes allow jobs to be reclaimed
