@@ -430,57 +430,60 @@
         <div id="search-results-area" class="search-results-grid"></div>
       </div>
 
-      <div class="card">
-        <div class="card-header">
-          <div class="card-title">📄 Comic File & Metadata Link</div>
-        </div>
-        
-        <div class="form-group">
-          <label class="form-label">Select Comic File (.cbz or .cbr)</label>
-          <div class="dropzone" id="file-dropzone" onclick="triggerFilePicker()">
-            📁 Click to Select File or Drag & Drop .cbz / .cbr here
-            <div id="selected-file-label" style="margin-top: 8px; font-weight: 600; color: var(--primary);"></div>
+      <!-- Unified Card: Comic Metadata Tagging Engine -->
+      <div id="tagging-engine-card" class="card">
+        <div class="card-header" style="flex-wrap: wrap; gap: 12px;">
+          <div class="card-title">🏷️ Comic Metadata Tagging Engine</div>
+          <div class="sub-tab-toggle">
+            <button id="btn-subtab-batch" class="sub-tab-btn active" onclick="switchTaggingMode('batch')">📁 Series Folder Batch</button>
+            <button id="btn-subtab-single" class="sub-tab-btn" onclick="switchTaggingMode('single')">📄 Single File</button>
           </div>
         </div>
 
-        <div class="form-group">
-          <label class="form-label">Comic Database URL or Copied GCP Page Text</label>
-          <textarea id="url-text-input" class="form-control" placeholder="Paste ComicVine URL, GCP URL (https://www.comics.org/issue/720274/), or copied GCP issue page text..."></textarea>
-        </div>
-
-        <div style="display: flex; gap: 12px;">
-          <button class="btn btn-secondary" onclick="previewMetadata()">👁️ Preview Metadata</button>
-          <button class="btn btn-success" onclick="embedMetadata()">⚡ Embed to Comic File</button>
-        </div>
-      </div>
-
-      <!-- Batch Folder Tagging Card -->
-      <div id="batch-folder-card" class="card">
-        <div class="card-header">
-          <div class="card-title">📁 Series Folder Batch Tagging</div>
-          <span class="badge badge-cv">Batch Folder Mode</span>
-        </div>
-
-        <div class="form-row">
-          <div class="form-group" style="flex: 2;">
-            <label class="form-label">Series Folder Directory</label>
-            <div style="display: flex; gap: 8px;">
-              <input type="text" id="batch-folder-path-input" class="form-control" placeholder="e.g. /mnt/disk1/Comics/Fugitoid">
-              <button class="btn btn-secondary" onclick="browseBatchFolder()">📂 Browse</button>
+        <!-- Mode 1: Batch Series Folder Tagging -->
+        <div id="mode-batch" class="tagging-mode-content">
+          <div class="form-row">
+            <div class="form-group" style="flex: 2;">
+              <label class="form-label">Series Folder Directory</label>
+              <div style="display: flex; gap: 8px;">
+                <input type="text" id="batch-folder-path-input" class="form-control" placeholder="e.g. /mnt/disk1/Comics/Fugitoid">
+                <button class="btn btn-secondary" onclick="browseBatchFolder()">📂 Browse</button>
+              </div>
+            </div>
+            <div class="form-group" style="flex: 2;">
+              <label class="form-label">Series Database / Kapowarr Volume URL</label>
+              <input type="text" id="batch-volume-url-input" class="form-control" placeholder="e.g. https://comicvine.gamespot.com/volume/4050-20294/">
             </div>
           </div>
-          <div class="form-group" style="flex: 2;">
-            <label class="form-label">Series Database / Kapowarr Volume URL</label>
-            <input type="text" id="batch-volume-url-input" class="form-control" placeholder="e.g. https://comicvine.gamespot.com/volume/4050-20294/">
+
+          <div style="display: flex; gap: 12px;">
+            <button class="btn btn-primary" onclick="previewBatchFolder()">🔍 Preview & Auto-Match Files</button>
+            <button class="btn btn-success" id="btn-run-batch-embed" onclick="runBatchEmbed()" style="display: none;">⚡ Embed ComicInfo.xml to All Files</button>
+          </div>
+
+          <div id="batch-results-area" style="margin-top: 18px; display: none;"></div>
+        </div>
+
+        <!-- Mode 2: Single File Tagging -->
+        <div id="mode-single" class="tagging-mode-content" style="display: none;">
+          <div class="form-group">
+            <label class="form-label">Select Comic File (.cbz or .cbr)</label>
+            <div class="dropzone" id="file-dropzone" onclick="triggerFilePicker()">
+              📁 Click to Select File or Drag & Drop .cbz / .cbr here
+              <div id="selected-file-label" style="margin-top: 8px; font-weight: 600; color: var(--primary);"></div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Comic Database URL or Copied GCP Page Text</label>
+            <textarea id="url-text-input" class="form-control" placeholder="Paste ComicVine URL, GCP URL (https://www.comics.org/issue/720274/), or copied GCP issue page text..."></textarea>
+          </div>
+
+          <div style="display: flex; gap: 12px;">
+            <button class="btn btn-secondary" onclick="previewMetadata()">👁️ Preview Metadata</button>
+            <button class="btn btn-success" onclick="embedMetadata()">⚡ Embed to Comic File</button>
           </div>
         </div>
-
-        <div style="display: flex; gap: 12px;">
-          <button class="btn btn-primary" onclick="previewBatchFolder()">🔍 Preview & Auto-Match Files</button>
-          <button class="btn btn-success" id="btn-run-batch-embed" onclick="runBatchEmbed()" style="display: none;">⚡ Embed ComicInfo.xml to All Files</button>
-        </div>
-
-        <div id="batch-results-area" style="margin-top: 18px; display: none;"></div>
       </div>
 
       <!-- Preview Output Card -->
@@ -817,6 +820,25 @@
       }
     }
 
+    function switchTaggingMode(mode) {
+      const batchMode = document.getElementById('mode-batch');
+      const singleMode = document.getElementById('mode-single');
+      const btnBatch = document.getElementById('btn-subtab-batch');
+      const btnSingle = document.getElementById('btn-subtab-single');
+
+      if (mode === 'single') {
+        if (batchMode) batchMode.style.display = 'none';
+        if (singleMode) singleMode.style.display = 'block';
+        if (btnBatch) btnBatch.classList.remove('active');
+        if (btnSingle) btnSingle.classList.add('active');
+      } else {
+        if (batchMode) batchMode.style.display = 'block';
+        if (singleMode) singleMode.style.display = 'none';
+        if (btnBatch) btnBatch.classList.add('active');
+        if (btnSingle) btnSingle.classList.remove('active');
+      }
+    }
+
     function useVolumeForBatch(url, folderPath) {
       if (folderPath) {
         document.getElementById('batch-folder-path-input').value = folderPath;
@@ -826,11 +848,12 @@
         document.getElementById('url-text-input').value = url;
       }
 
-      // Switch to generator tab
+      // Switch to generator tab and batch tagging mode
       switchTab('generator');
+      switchTaggingMode('batch');
 
       setTimeout(() => {
-        const targetCard = document.getElementById('batch-folder-card');
+        const targetCard = document.getElementById('tagging-engine-card') || document.getElementById('batch-folder-card');
         if (targetCard) {
           targetCard.scrollIntoView({ behavior: 'smooth' });
         }
