@@ -122,11 +122,11 @@ class DryRunContext:
         if os.path.isfile(abs_target):
             files = [abs_target]
         elif os.path.isdir(abs_target):
-            files = [
-                os.path.join(abs_target, f)
-                for f in sorted(os.listdir(abs_target))
-                if f.lower().endswith((".cbz", ".cbr"))
-            ]
+            files = []
+            for root, _, filenames in sorted(os.walk(abs_target)):
+                for f in sorted(filenames):
+                    if f.lower().endswith((".cbz", ".cbr")):
+                        files.append(os.path.join(root, f))
         else:
             return []
 
