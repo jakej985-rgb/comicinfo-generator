@@ -1,439 +1,626 @@
-# ComicInfo Generator — Remediation & Hardening Plan
 
-## 1. Objective
+ComicInfo Generator — Remaining Remediation & Hardening Plan
 
-Bring `jakej985-rgb/comicinfo-generator` from its current functional state to a safe, deterministic, library-scale metadata pipeline that can run unattended against a Kapowarr-managed comic library.
+1. Purpose
 
-Target pipeline:
+This document defines the remaining work required to take "comicinfo-generator" from its current partially hardened state to a reliable, deterministic, unattended metadata processor for a Kapowarr-managed comic library.
 
-```text
-Comic archive
-    ↓
-Parse local identity
-    ↓
-Check existing ComicInfo.xml
-    ↓
-Resolve comic identity
-    ↓
-Kapowarr metadata
-    ↓
-Comic Vine metadata
-    ↓
-GCD fallback
-    ↓
-Confidence validation
-    ↓
-Build normalized Comic model
-    ↓
-Generate ComicInfo.xml
-    ↓
-Safely update CBZ
-    ↓
-Record processing state
-```
+Repository:
 
-Core principles:
+"jakej985-rgb/comicinfo-generator"
 
-- Never guess silently.
-- Never destroy good metadata.
-- Never modify the library in a way that cannot be recovered safely.
-- Prefer Kapowarr's known identity when available.
-- Use Comic Vine/GCD to enrich or resolve missing information.
-- Make unattended processing idempotent and restart-safe.
+The goal is not to rewrite the application from scratch.
+
+The goal is to:
+
+- preserve the existing working functionality
+- make comic identity resolution deterministic
+- prevent incorrect metadata from silently replacing correct metadata
+- make CBZ modification transactionally safe
+- make automation persistent and restart-safe
+- preserve existing ComicInfo metadata
+- make provider failures distinguishable from "no match"
+- make the codebase understandable to future AI coding agents
+- provide enough tests that an AI agent cannot accidentally regress the critical behavior
 
 ---
 
-# 2. Phase 0 — Establish the Current Baseline
+2. Target Architecture
 
-## 2.1 Record the current architecture
+The final processing pipeline should be:
 
-Keep the existing high-level separation:
+CBZ/CBR
+   │
+   ▼
+Archive Inspection
+   │
+   ├── Existing ComicInfo.xml
+   ├── Filename
+   ├── Folder structure
+   └── Archive fingerprint
+   │
+   ▼
+Local Identity Extraction
+   │
+   ▼
+Kapowarr Identity
+   │
+   ▼
+Provider Candidate Generation
+   │
+   ├── Comic Vine
+   ├── GCD
+   └── Other providers later
+   │
+   ▼
+Candidate Normalization
+   │
+   ▼
+Evidence / Confidence Scoring
+   │
+   ▼
+Conflict Detection
+   │
+   ├── AUTO_ACCEPT
+   ├── REVIEW
+   └── UNRESOLVED
+   │
+   ▼
+Metadata Resolution
+   │
+   ▼
+Comic Model
+   │
+   ▼
+ComicInfo.xml Generation
+   │
+   ▼
+Safe CBZ Transaction
+   │
+   ▼
+Archive Verification
+   │
+   ▼
+Durable Processing State
 
-```text
-app.py
-cli.py
-main.py
-config.py
+The most important architectural rule is:
 
-models/
-    comic.py
+«Providers produce candidates. The resolver decides which candidate, if any, is correct.»
 
-providers/
-    base.py
-    kapowarr.py
-    comicvine.py
-    gcp.py
-    story_arc.py
+No provider should be allowed to implicitly decide that its first search result is the correct comic.
 
-pipeline/
-    resolver.py
+---
 
-cache/
-    db.py
-    tracker.py
+3. Phase 0 — Freeze and Establish the Baseline
 
-writers/
-    archive.py
-    comicinfo.py
+Goal
 
-automation/
-    queue.py
-    watcher.py
+Create a known-good baseline before further architectural changes.
 
-converters/
-    cbr_to_cbz.py
+Tasks
 
-static/
-    index.html
-    app.js
-    style.css
-```
-
-Do not rewrite the project from scratch.
-
-## 2.2 Establish a test baseline
+3.1 Run the complete test suite
 
 Run:
 
-```bash
 pytest -q
-```
 
 Record:
 
-- Tests passed
-- Tests failed
-- Tests skipped
-- Warnings
-- Known failures
+- passed
+- failed
+- skipped
+- warnings
+- missing fixtures
+- environment-dependent failures
 
-## 2.3 Add architecture documentation
+3.2 Record the current repository structure
 
-Create:
+Document the current architecture before changing it.
 
-```text
-docs/
-├── architecture.md
-├── metadata-resolution.md
-├── provider-contract.md
-├── archive-safety.md
-├── automation.md
-└── testing.md
-```
+3.3 Establish Python compatibility
 
-These documents become the design reference for future changes and AI coding agents.
+Document:
 
----
+- supported Python versions
+- operating systems
+- Docker requirements
+- external tools
+- CBR conversion requirements
+- Kapowarr requirements
 
-# 3. Phase 1 — Make Archive Modification Safe
+3.4 Create a regression fixture library
 
-**Priority: CRITICAL**
+Create test archives representing real-world cases:
 
-## Problem
+tests/fixtures/archives/
+├── simple_issue.cbz
+├── existing_comicinfo.cbz
+├── malformed_comicinfo.cbz
+├── duplicate_comicinfo.cbz
+├── alternate_cover.cbz
+├── annual.cbz
+├── decimal_issue.cbz
+├── collected_edition.cbz
+├── multi_issue_tpb.cbz
+├── empty_archive.cbz
+└── corrupt_archive.cbz
 
-`writers/archive.py` currently contains automatic folder-permission takeover behavior that can rename an entire volume directory, recreate it, and copy files back.
+Do not use only artificial unit tests.
 
-That is too destructive for an unattended metadata application.
-
-## Required behavior
-
-The application must never automatically restructure a comic directory.
-
-### Remove or disable automatic takeover
-
-Remove automatic invocation of:
-
-```python
-_try_takeover_folder_permissions()
-```
-
-If retained for diagnostics, it must be explicitly invoked by a manual/admin operation and never by normal processing.
-
-## 3.1 Create explicit archive exceptions
-
-Add:
-
-```text
-ArchiveError
-ArchiveReadError
-ArchiveWriteError
-ArchiveValidationError
-```
-
-Errors should contain:
-
-- Archive path
-- Operation
-- Original exception
-- Recommended action
-
-Example:
-
-```text
-Unable to update Batman #1.cbz.
-
-The archive is readable, but the application does not have permission
-to replace the file.
-
-Check ownership/permissions for the Kapowarr comic directory.
-```
-
-## 3.2 Use safe atomic replacement
-
-Preferred algorithm:
-
-```text
-Read original
-    ↓
-Write temporary CBZ
-    ↓
-Verify temporary CBZ
-    ↓
-Flush/sync temporary file
-    ↓
-Atomic replace
-```
-
-Use `os.replace()` where supported.
-
-## 3.3 Preserve file metadata where practical
-
-Preserve:
-
-- File permissions
-- Modification time
-- Other relevant filesystem metadata
-
-## 3.4 Verify the finished archive
-
-Before declaring success:
-
-- Confirm archive is a valid ZIP.
-- Run ZIP integrity testing.
-- Confirm `ComicInfo.xml` exists.
-- Confirm `ComicInfo.xml` parses.
-- Confirm original comic files still exist.
-- Confirm archive can be reopened.
-
-If verification fails, do not replace the original.
+The application operates on real comic archives, so representative archive fixtures are required.
 
 ---
 
-# 4. Phase 2 — Separate Identity From Metadata
+4. Phase 1 — Finish the Domain Model Separation
 
-**Priority: CRITICAL**
+Priority
 
-## Problem
+P0
 
-The current `Comic` model represents both:
+Problem
 
-1. What comic the file is.
-2. Metadata describing that comic.
+"Comic" currently contains both metadata and identity/processing information.
 
-The resolver also relies heavily on filename searching.
+The final system should separate those concepts.
 
-This can produce false matches.
-
-## 4.1 Create `ComicIdentity`
+4.1 Create "ComicIdentity"
 
 Create:
 
-```text
 models/identity.py
-```
 
-with a model conceptually like:
+The model should represent:
 
-```python
 ComicIdentity
-```
+├── provider
+├── provider_id
+├── series_provider
+├── series_id
+├── issue_provider
+├── issue_id
+├── series_name
+├── publisher
+├── publication_year
+├── volume
+├── issue_number
+├── identity_type
+├── confidence
+├── confidence_level
+└── evidence
 
-Suggested fields:
+4.2 Create identity evidence
 
-```text
-provider
-provider_id
-
-series_provider
-series_id
-
-issue_provider
-issue_id
-
-series_name
-publisher
-publication_year
-
-volume
-issue_number
-
-confidence
-confidence_reasons
-```
+Create a structure representing why a candidate matched.
 
 Example:
 
-```text
-ComicIdentity
-├── provider: ComicVine
-├── series_id: 4050-12345
-├── issue_id: 4000-98765
-├── series_name: Batman
-├── publisher: DC Comics
-├── year: 2016
-├── number: 1
-├── confidence: 0.98
-└── reasons:
-    ├── exact CV volume
-    ├── exact issue number
-    └── publisher/year match
-```
+IdentityEvidence
+├── source
+├── field
+├── expected
+├── actual
+├── score
+└── explanation
 
-## 4.2 Separate identity resolution from metadata retrieval
+Example:
 
-The architecture should become:
+Comic Vine
+issue_number
+expected: 1
+actual: 1
+score: +30
+reason: exact issue number
 
-```text
-"What comic is this?"
-        ↓
-ComicIdentity
-        ↓
-"What metadata do we know about it?"
-        ↓
-Comic
-```
-
-This distinction is fundamental.
-
----
-
-# 5. Phase 3 — Build a Real Identity Resolver
+4.3 Create "ArchiveRecord"
 
 Create:
 
-```text
+models/archive.py
+
+Represent:
+
+ArchiveRecord
+├── path
+├── filename
+├── extension
+├── sha256
+├── size
+├── mtime
+├── archive_type
+└── comicinfo_present
+
+4.4 Create processing state separately
+
+Create:
+
+models/processing.py
+
+Represent:
+
+ProcessingRecord
+├── job_id
+├── archive_path
+├── archive_sha256
+├── status
+├── provider
+├── provider_id
+├── confidence
+├── started_at
+├── completed_at
+├── attempts
+├── error_code
+├── error_message
+└── generator_version
+
+---
+
+5. Phase 2 — Build the Identity Extraction Layer
+
+Priority
+
+P0
+
+Create:
+
 pipeline/
-├── resolver.py
 ├── identity.py
 ├── filename_parser.py
-└── scoring.py
-```
+└── archive_identity.py
 
-## 5.1 Filename parser
+5.1 Parse existing ComicInfo.xml
 
-Extract candidates for:
+If valid ComicInfo contains:
 
-- Series
-- Volume
-- Issue number
-- Year
-- Publisher
-- Edition markers
+Web
+Notes
+provider identifiers
 
-Examples:
+extract usable identity information.
 
-```text
+Existing metadata should be evidence.
+
+It should not automatically override a stronger known identity.
+
+5.2 Parse filename
+
+Support:
+
 Batman (2016) #001.cbz
+Batman 001.cbz
+Batman #1.cbz
+Batman 1 - I Am Gotham.cbz
 
-Batman/
-└── Batman 001.cbz
+Extract:
+
+- series
+- year
+- issue
+- volume
+- edition
+- annual/special indicators
+
+5.3 Parse directory structure
+
+Support common Kapowarr structures such as:
 
 Batman (2016)/
-└── Batman 001 - I Am Gotham.cbz
-```
+    Batman (2016) 001.cbz
 
-## 5.2 Filename matching is evidence, not identity
+Use folder information as evidence.
 
-Filename similarity must never independently force a metadata match.
+Do not assume folder names are authoritative.
 
----
+5.4 Normalize issue numbers
 
-# 6. Phase 4 — Provider Identity Hierarchy
+Create a dedicated issue-number representation.
 
-Use the following priority:
+Support:
 
-### Tier 1 — Existing embedded identity
+1
+001
+1A
+1B
+1.5
+Annual
+Special
+0
+0.5
 
-If `ComicInfo.xml` contains a recognized provider ID, use it.
-
-### Tier 2 — Kapowarr identity
-
-Kapowarr is the library manager, so its known volume/issue relationship should have high priority.
-
-### Tier 3 — Explicit Comic Vine URL
-
-An explicitly supplied URL should be treated as authoritative unless it is invalid.
-
-### Tier 4 — Comic Vine matching
-
-Use multiple signals.
-
-### Tier 5 — GCD
-
-Use GCD as fallback.
-
-### Tier 6 — No match
-
-Return:
-
-```text
-UNRESOLVED
-```
-
-Do not invent a match.
+Do not convert all issue numbers to integers.
 
 ---
 
-# 7. Phase 5 — Add Confidence Scoring
+6. Phase 3 — Make Kapowarr the Library Identity Source
+
+Priority
+
+P0
+
+This is especially important for the intended deployment.
+
+6.1 Build a Kapowarr client
+
+Refactor:
+
+providers/kapowarr.py
+
+into:
+
+providers/kapowarr/
+├── client.py
+├── models.py
+└── provider.py
+
+"client.py"
+
+Responsible only for:
+
+- HTTP
+- authentication
+- timeout
+- retries
+- status codes
+- response decoding
+
+"models.py"
+
+Contains normalized Kapowarr API structures.
+
+"provider.py"
+
+Converts Kapowarr information into application domain models.
+
+---
+
+7. Phase 4 — Build a Kapowarr Snapshot
+
+Priority
+
+P0
+
+Do not repeatedly search the entire Kapowarr library for every archive.
 
 Create:
 
-```text
-pipeline/scoring.py
-```
+KapowarrSnapshot
+├── volumes_by_id
+├── volumes_by_provider_id
+├── issues_by_id
+├── issues_by_provider_id
+├── issues_by_volume
+└── series_by_id
 
-Every candidate gets a score.
+Workflow:
 
-Suggested starting weights:
+Kapowarr API
+     ↓
+Snapshot
+     ↓
+all archive lookups
 
-| Evidence | Score |
-|---|---:|
-| Exact provider issue ID | +100 |
-| Exact provider volume ID | +90 |
-| Exact issue number | +30 |
-| Exact normalized series | +25 |
-| Publisher match | +15 |
-| Year match | +15 |
-| Filename similarity | +10 |
-| Alternate-cover evidence | +5 |
-| Conflicting series | -50 |
-| Conflicting publisher | -25 |
-| Different volume | -50 |
+Refresh the snapshot when:
 
-Suggested thresholds:
-
-```text
-90–100  AUTO_ACCEPT
-75–89   ACCEPT_WITH_WARNING
-50–74   MANUAL_REVIEW
-0–49    UNRESOLVED
-```
-
-These values should be configurable and tuned using real library data.
-
-## Critical rule
-
-Low-confidence matches must never silently overwrite an archive.
+- application starts
+- user requests refresh
+- configured interval expires
+- Kapowarr data changes
 
 ---
 
-# 8. Phase 6 — Refactor Comic Vine Scraping
+8. Phase 5 — Replace "First Search Result Wins"
 
-The current Comic Vine provider relies heavily on HTML structure, CSS classes, flattened page text, and regular expressions.
+Priority
 
-Break parsing into independent functions:
+P0 / CRITICAL
 
-```python
+The current resolver must not do:
+
+results[0]
+
+and assume the result is correct.
+
+Required architecture
+
+Every provider search must return candidates:
+
+Candidate[]
+
+Example:
+
+Candidate 1
+  Comic Vine
+  Batman (2016)
+  Issue 1
+
+Candidate 2
+  Comic Vine
+  Batman (1940)
+  Issue 1
+
+Candidate 3
+  Batman: The Brave and the Bold
+  Issue 1
+
+The resolver evaluates all candidates.
+
+---
+
+9. Phase 6 — Implement Candidate Scoring
+
+Priority
+
+P0
+
+Create:
+
+pipeline/scoring.py
+
+Initial scoring model:
+
+Exact issue provider ID       +100
+Exact volume provider ID       +90
+Exact Kapowarr identity        +90
+Exact issue number             +30
+Exact normalized series        +25
+Publisher match               +15
+Year match                    +15
+Volume match                  +15
+Folder match                  +10
+Filename similarity            +10
+Existing metadata match        +10
+Alternate-cover evidence       +5
+
+Conflicting series             -50
+Conflicting publisher          -25
+Conflicting volume             -50
+Conflicting issue              -60
+
+These weights are starting values.
+
+They must be configurable and tested against real comic examples.
+
+---
+
+10. Phase 7 — Implement Confidence Decisions
+
+Create:
+
+pipeline/confidence.py
+
+Use explicit states:
+
+AUTO_ACCEPT
+ACCEPT_WITH_WARNING
+MANUAL_REVIEW
+UNRESOLVED
+
+Suggested starting thresholds:
+
+90+       AUTO_ACCEPT
+
+75–89     ACCEPT_WITH_WARNING
+
+50–74     MANUAL_REVIEW
+
+<50       UNRESOLVED
+
+Important:
+
+«A high score is not enough if there is a critical identity conflict.»
+
+For example:
+
+Series:
+Batman
+
+Publisher:
+DC
+
+Issue:
+1
+
+Year:
+2016
+
+BUT:
+
+Kapowarr volume:
+Batman (1940)
+
+This should not automatically overwrite metadata simply because the filename looks similar.
+
+---
+
+11. Phase 8 — Build Explicit Conflict Detection
+
+Create:
+
+pipeline/conflicts.py
+
+Detect:
+
+series conflict
+publisher conflict
+volume conflict
+issue conflict
+year conflict
+provider ID conflict
+existing ComicInfo conflict
+Kapowarr conflict
+
+Return structured results:
+
+Conflict
+├── type
+├── severity
+├── source_a
+├── source_b
+└── explanation
+
+Severity:
+
+INFO
+WARNING
+ERROR
+FATAL
+
+---
+
+12. Phase 9 — Separate Identity Resolution From Metadata Retrieval
+
+The resolver should become:
+
+resolve_identity()
+
+followed by:
+
+retrieve_metadata(identity)
+
+Never mix these responsibilities.
+
+Example:
+
+ComicIdentity
+    ↓
+Comic Vine issue ID
+    ↓
+Comic Vine metadata
+
+This prevents metadata retrieval from accidentally becoming identity resolution.
+
+---
+
+13. Phase 10 — Comic Vine Provider Refactor
+
+Priority
+
+P1
+
+Refactor the current scraper into:
+
+providers/comicvine/
+├── client.py
+├── parser.py
+├── models.py
+└── provider.py
+
+13.1 Client
+
+Responsible for:
+
+- HTTP
+- retries
+- timeout
+- rate limiting
+- response handling
+
+13.2 Parser
+
+Responsible for HTML parsing only.
+
+Create functions:
+
 parse_series()
 parse_issue_number()
 parse_title()
@@ -444,35 +631,26 @@ parse_creators()
 parse_characters()
 parse_teams()
 parse_story_arcs()
-```
 
-## 8.1 Separate scraping from parsing
+13.3 Provider
 
-Use:
+Responsible for:
 
-```text
-HTTP client
-    ↓
-raw HTML
-    ↓
-Comic Vine parser
-    ↓
-normalized provider object
-```
+- search
+- lookup
+- candidate creation
+- normalization
 
-This allows parser tests to use saved HTML without making live requests.
+---
 
-## 8.2 Build Comic Vine fixtures
+14. Phase 11 — Build Comic Vine HTML Fixtures
 
 Create:
 
-```text
 tests/fixtures/comicvine/
-```
 
-Include:
+Include real captured HTML for:
 
-```text
 batman_2016_001.html
 batman_1940_001.html
 marvel_zombies_001.html
@@ -480,964 +658,1132 @@ dead_days_001.html
 annual.html
 alternate_cover.html
 decimal_issue.html
+special.html
 cloudflare.html
-```
+missing_page.html
 
-Add tests for each fixture.
-
----
-
-# 9. Phase 7 — Replace Loose Slug Matching
-
-Do not use:
-
-```text
-issue slug starts with series slug
-```
-
-as primary identity logic.
-
-Prefer:
-
-1. Comic Vine volume ID
-2. Kapowarr volume ID
-3. Exact normalized series
-4. Publisher
-5. Publication year
-6. Issue number
-7. URL relationship
-8. Filename similarity
-
-Slug matching becomes secondary evidence only.
-
-Explicitly distinguish similar series such as:
-
-```text
-Marvel Zombies
-Marvel Zombies: Dead Days
-Marvel Zombies: Return
-Marvel Zombies Origins
-Marvel Zombies Halloween
-```
+Tests must run without contacting Comic Vine.
 
 ---
 
-# 10. Phase 8 — Refactor Kapowarr Provider
+15. Phase 12 — Improve GCD Provider
 
-## Problem
+Refactor GCD/GCP similarly:
 
-The current provider repeatedly retrieves the complete volume list and then requests individual volume details while searching.
-
-This can result in a large number of unnecessary API calls.
-
-## 10.1 Create a Kapowarr client
-
-Recommended structure:
-
-```text
-providers/kapowarr/
+providers/gcd/
 ├── client.py
+├── parser.py
 ├── models.py
 └── provider.py
-```
 
-### Client responsibilities
+The provider should produce normalized candidates.
 
-- HTTP requests
-- Authentication
-- Timeouts
-- Retries
-- HTTP error handling
-- API response validation
-
-### Provider responsibilities
-
-- Convert Kapowarr data to `ComicIdentity`
-- Convert Kapowarr data to `Comic`
-- Perform provider-specific matching
+It should not directly modify the final "Comic".
 
 ---
 
-# 11. Phase 9 — Build a Kapowarr Snapshot
+16. Phase 13 — Define the Provider Contract
 
-Create an in-memory snapshot:
+Create:
 
-```text
-KapowarrSnapshot
-├── volumes_by_id
-├── volumes_by_cv_id
-├── issues_by_id
-├── issues_by_cv_id
-└── issues_by_volume
-```
+providers/base.py
 
-Load once:
+Define a strict interface.
 
-```text
-Kapowarr API
-    ↓
-Snapshot
-    ↓
-All lookups
-```
+Conceptually:
 
-Refresh when necessary instead of repeatedly walking every volume.
+search()
+lookup()
+normalize()
 
-This is especially important for large libraries.
+Provider results should have explicit states:
 
----
-
-# 12. Phase 10 — Improve Error Handling
-
-Remove broad patterns such as:
-
-```python
-except Exception:
-    pass
-```
-
-from normal provider and processing paths.
-
-Create explicit exceptions:
-
-```text
-ProviderError
-ProviderConnectionError
-ProviderAuthenticationError
-ProviderRateLimitError
-ProviderParseError
-MetadataNotFoundError
-ArchiveReadError
-ArchiveWriteError
-ArchiveValidationError
-```
-
-Provider operations should expose meaningful states:
-
-```text
 SUCCESS
 NOT_FOUND
 CONNECTION_ERROR
 AUTH_ERROR
 RATE_LIMITED
 PARSE_ERROR
-```
+INVALID_RESPONSE
 
-The UI and logs must distinguish:
+Do not represent all of these as:
 
-```text
-"Kapowarr found nothing"
-```
-
-from:
-
-```text
-"Kapowarr was unavailable"
-```
+None
 
 ---
 
-# 13. Phase 11 — Make ComicInfo Read/Write Lossless
+17. Phase 14 — Eliminate Silent Provider Failures
 
-The `Comic` model supports fields such as:
+Remove normal-path patterns like:
 
-```text
-cover_artists
-teams
-story_arcs
-story_arc_numbers
-```
+except Exception:
+    pass
 
-The XML reader/writer must support every field represented by the model.
+Replace them with specific exceptions.
 
-## Required property
+Required exceptions:
 
-This operation:
+ProviderError
+ProviderConnectionError
+ProviderAuthenticationError
+ProviderRateLimitError
+ProviderParseError
+ProviderResponseError
+MetadataNotFoundError
 
-```text
+The application must distinguish:
+
+No result
+
+from:
+
+Provider unavailable
+
+from:
+
+Provider parser broken
+
+---
+
+18. Phase 15 — Finish ComicInfo Lossless Handling
+
+Priority
+
+P0
+
+The application must guarantee:
+
 ComicInfo.xml
     ↓
 Comic
     ↓
 ComicInfo.xml
-```
 
-must not unintentionally destroy metadata.
+does not unintentionally destroy information.
 
-Create clear components:
+18.1 Preserve known fields
 
-```text
-ComicInfoParser
-ComicInfoWriter
-```
+Ensure every field represented by "Comic" is parsed and written.
 
-## 13.1 Add round-trip tests
+18.2 Preserve unknown fields
+
+The current "extra_fields" dictionary is only a partial solution.
+
+Eventually preserve:
+
+- unknown tags
+- attributes
+- nested elements
+- duplicate elements
+- namespaces where applicable
+
+Prefer an XML-node preservation structure rather than only:
+
+Dict[str, str]
+
+18.3 Add round-trip tests
 
 Test:
 
-```text
 XML → Comic → XML
-```
 
-by comparing normalized XML trees.
-
----
-
-# 14. Phase 12 — Preserve Unknown ComicInfo Fields
-
-ComicInfo has fields beyond those currently represented by the application.
-
-Do not silently discard fields the application does not understand.
-
-Possible approaches:
-
-```python
-Comic.extra_fields
-```
-
-or preservation of unknown XML nodes.
-
-Rule:
-
-> The generator owns fields it understands and preserves fields it does not understand.
+Normalize XML before comparison.
 
 ---
 
-# 15. Phase 13 — Harden TPB/Collected-Edition Merging
+19. Phase 16 — Fix Archive Transaction Safety
 
-The merge function currently assumes all supplied issues belong together.
+Priority
 
-Before merging, validate:
+P0
 
-- Same series
-- Same provider volume
-- Same publisher where appropriate
-- Compatible numbering
-- No conflicting identities
+Keep the current temporary-file architecture.
 
-Reject:
+Remove the unsafe cross-filesystem fallback:
 
-```text
-Batman #1
-Batman #2
-Detective Comics #1
-```
+shutil.move()
 
-Warn on:
+if it compromises atomicity.
 
-```text
-Batman #1
-Batman #1A
-```
+Required behavior:
 
-Accept:
+Create temporary archive in same directory
+        ↓
+Write archive
+        ↓
+Verify archive
+        ↓
+fsync temporary file
+        ↓
+os.replace()
+        ↓
+Verify final archive
 
-```text
-Batman #1
-Batman #2
-Batman #3
-```
+If a same-filesystem atomic replacement cannot be performed:
 
-## 15.1 Support complex numbering
+FAIL
 
-Do not rely exclusively on integer sorting.
-
-Support:
-
-```text
-1
-1A
-1B
-1.5
-Annual
-Special
-```
-
-## 15.2 Preserve intended issue order
-
-Use explicit sort logic rather than converting everything to integers.
+Do not downgrade to an unsafe replacement operation.
 
 ---
 
-# 16. Phase 14 — Improve Merged Summaries
+20. Phase 17 — Preserve File Metadata
 
-Keep issue-level summaries but structure them:
+Where supported, preserve:
 
-```text
-Issue #1
-summary
+- permissions
+- modification time
+- ownership where appropriate
+- filesystem attributes
 
-Issue #2
-summary
+Do not change ownership automatically.
 
-Issue #3
-summary
-```
-
-Avoid redundant metadata when information is already represented elsewhere.
+This is particularly important for your Docker/Kapowarr/Jellyfin environment.
 
 ---
 
-# 17. Phase 15 — Expand Cache Architecture
+21. Phase 18 — Verify Archive Contents Before Replacement
 
-The existing cache system should become central to the application.
+The existing verification should be expanded.
 
-Cache:
+Before replacing the original:
 
-```text
-URL → raw HTML
-Comic Vine issue ID → metadata
-Comic Vine volume ID → metadata
-Kapowarr volume → metadata
-Kapowarr issue → metadata
-GCD issue → metadata
-filename fingerprint → identity
-archive SHA256 → processing state
-```
+Verify:
 
-Each cache record should include:
+valid ZIP
+ZIP test passes
+ComicInfo.xml exists
+ComicInfo.xml parses
+image count is valid
+original entries remain
+no unexpected deletion
 
-```text
-provider
-provider_id
-fetched_at
-expires_at
-source_hash
-schema_version
-```
+Ideally compare:
+
+original archive entries
+new archive entries
+
+and ensure the only intentional modification is:
+
+ComicInfo.xml
 
 ---
 
-# 18. Phase 16 — Add Durable Archive Processing State
+22. Phase 19 — Make CBR Conversion Safe
 
-Create a processing-state table.
+Current CBR processing needs its own transaction.
 
-Suggested fields:
+Required workflow:
 
-```text
+CBR
+ ↓
+Create CBZ
+ ↓
+Verify CBZ
+ ↓
+Embed ComicInfo
+ ↓
+Verify CBZ
+ ↓
+Record success
+ ↓
+Only then delete original CBR
+
+Never delete the CBR merely because conversion started successfully.
+
+---
+
+23. Phase 20 — Build Durable Processing State
+
+Priority
+
+P0
+
+The current in-memory queue is insufficient for unattended operation.
+
+Use SQLite as the durable job store.
+
+Create:
+
+cache/jobs.py
+
+Database table:
+
+processing_jobs
+
+Fields:
+
+id
 path
 sha256
 size
 mtime
 status
+attempts
 provider
 provider_id
 confidence
-processed_at
-error
+created_at
+started_at
+completed_at
+error_code
+error_message
 generator_version
-```
 
-States:
+Statuses:
 
-```text
 PENDING
 PROCESSING
 SUCCESS
 SKIPPED
+REVIEW
 UNRESOLVED
 FAILED
-```
-
-This allows the application to know exactly what happened to every file.
 
 ---
 
-# 19. Phase 17 — Harden Automation Watcher
+24. Phase 21 — Make Queue Restart-Safe
 
-The watcher/queue should use durable processing state.
+On startup:
 
-Desired workflow:
+PROCESSING jobs
+      ↓
+find stale jobs
+      ↓
+reset to PENDING
 
-```text
-New/changed file
-    ↓
-Queue
-    ↓
-Deduplicate
-    ↓
-Process
-    ↓
-Verify
-    ↓
-Record hash/state
-```
+The system must survive:
 
-If the same SHA256 is seen again:
+Docker restart
+machine reboot
+power failure
+application crash
+network outage
 
-```text
-SKIP
-```
-
-If the SHA256 changes:
-
-```text
-PROCESS AGAIN
-```
-
-This prevents the application from repeatedly processing its own output.
+without losing work.
 
 ---
 
-# 20. Phase 18 — Make Automation Restart-Safe
+25. Phase 22 — Deduplicate Jobs
 
-The application must survive:
+Prevent the same archive from being queued multiple times simultaneously.
 
-- Docker restart
-- Machine reboot
-- Network outage
-- Provider outage
-- Power loss
+Use:
 
-without losing queue state or corrupting archives.
+path + SHA256
 
-Queue records must be persistent.
-
-Jobs stuck in `PROCESSING` should be recoverable after restart.
-
----
-
-# 21. Phase 19 — Add Dry-Run Mode
-
-Add:
-
-```bash
-python main.py --dry-run ...
-```
-
-Dry run should show:
-
-```text
-Archive
-Identity candidate
-Provider
-Confidence
-Metadata changes
-Action
-```
+as the primary deduplication identity.
 
 Example:
 
-```text
+same path
+same SHA256
+     ↓
+already queued
+     ↓
+do not queue again
+
+If SHA256 changes:
+
+new processing job
+
+---
+
+26. Phase 23 — Make Automation Ignore Its Own Changes
+
+This is critical.
+
+After successfully modifying:
+
 Batman #1.cbz
 
-Match:
-  Comic Vine: Batman (2016) #1
-  Confidence: 97%
+the watcher will observe the changed file.
 
-Would change:
-  Title
-  Publisher
-  Date
-  Writer
-  Penciller
-  Characters
+The system must recognize:
+
+known SHA256 / known processing state
+
+and avoid immediately processing it again.
+
+Required:
+
+write
+ ↓
+new SHA256
+ ↓
+record SUCCESS
+ ↓
+watcher event
+ ↓
+recognized known result
+ ↓
+SKIP
+
+---
+
+27. Phase 24 — Add Dry-Run Mode
+
+Implement:
+
+python main.py --dry-run
+
+Dry run must never modify an archive.
+
+Example output:
+
+Archive:
+  Batman (2016) 001.cbz
+
+Identity:
+  Batman (2016)
+  Issue #1
+
+Candidate:
+  Comic Vine #4000-123456
+
+Confidence:
+  97%
+
+Evidence:
+  +90 exact volume
+  +30 exact issue
+  +25 exact series
+  +15 publisher
+  +15 year
 
 Action:
   UPDATE
-```
 
-Dry-run mode must make no filesystem modifications.
-
----
-
-# 22. Phase 20 — Add Manual Review Workflow
-
-For scores below the automatic threshold:
-
-```text
-Batman #1.cbz
-
-Candidate A — 88%
-Candidate B — 71%
-Candidate C — 42%
-```
-
-Allow:
-
-```text
-Accept A
-Accept B
-Skip
-Enter Comic Vine URL
-```
-
-Persist the selected identity so the application does not repeatedly ask about the same file.
+Changes:
+  Title
+  Publisher
+  Writer
+  Characters
 
 ---
 
-# 23. Phase 21 — Make Provider Precedence Configurable
+28. Phase 25 — Add Manual Review Output
 
-Do not permanently hard-code provider order.
+For uncertain matches:
 
-Example:
+MANUAL_REVIEW
 
-```yaml
-providers:
-  identity:
-    - kapowarr
-    - comicvine
-    - gcd
+Generate a report containing:
 
-  metadata:
-    - kapowarr
-    - comicvine
-    - gcd
+Archive
+Current metadata
+Candidates
+Scores
+Evidence
+Conflicts
+Recommended candidate
 
-matching:
-  auto_accept: 90
-  review_threshold: 70
-```
-
-This lets the behavior evolve without rewriting the resolver.
+Do not modify the archive.
 
 ---
 
-# 24. Phase 22 — Add Structured Logging
+29. Phase 26 — Improve TPB / Collected Edition Merging
 
 Create:
 
-```text
-logs/
-├── application.log
-├── resolver.log
-├── provider.log
-├── archive.log
-└── automation.log
-```
+pipeline/collection.py
+pipeline/issue_order.py
 
-Every processing job should receive a correlation ID:
+Before merging, validate:
 
-```text
-JOB-20260813-000142
-```
+same series
+compatible publisher
+same provider volume
+compatible numbering
+no conflicting identities
 
-Example:
+Reject:
 
-```text
-JOB-20260813-000142
-├── archive discovered
-├── identity parsed
-├── Kapowarr matched
-├── Comic Vine skipped
-├── ComicInfo generated
-├── archive verified
-└── SUCCESS
-```
+Batman #1
+Detective Comics #1
+
+Warn:
+
+Batman #1
+Batman #1A
+
+Accept:
+
+Batman #1
+Batman #2
+Batman #3
 
 ---
 
-# 25. Phase 23 — Build a Complete Test Suite
+30. Phase 27 — Implement Complex Issue Ordering
+
+Do not sort issues using:
+
+int(number)
+
+Create a normalized ordering system.
+
+Support:
+
+0
+0.5
+1
+1A
+1B
+1.5
+2
+Annual
+Special
+
+Represent the ordering explicitly.
+
+---
+
+31. Phase 28 — Improve Collected Edition Metadata
+
+When merging issues:
+
+Preserve:
+
+- issue identities
+- issue summaries
+- creators
+- characters
+- story arcs
+- source URLs
+- provider IDs
+
+Avoid blindly combining unrelated metadata.
+
+---
+
+32. Phase 29 — Build a Real Metadata Merge Policy
+
+Create:
+
+pipeline/merge.py
+
+Define field-level rules.
+
+Example:
+
+Title
+  explicit collection metadata > provider > filename
+
+Publisher
+  Kapowarr identity > provider
+
+Year
+  collection publication year > issue year
+
+Summary
+  collection summary > generated issue summaries
+
+Characters
+  union + deduplicate
+
+Creators
+  union + deduplicate
+
+Every field should have an explicit source priority.
+
+Do not use one global provider priority for every field.
+
+---
+
+33. Phase 30 — Expand Cache Architecture
+
+Current caching should be expanded to include:
+
+Comic Vine issue ID
+Comic Vine volume ID
+GCD issue ID
+Kapowarr volume ID
+Kapowarr issue ID
+URL
+filename fingerprint
+archive SHA256
+
+Every cached provider result should contain:
+
+provider
+provider_id
+fetched_at
+expires_at
+schema_version
+source_hash
+
+---
+
+34. Phase 31 — Add Cache Invalidation
+
+Cache must be invalidated when:
+
+- provider schema changes
+- parser version changes
+- metadata is manually refreshed
+- cached data is expired
+- provider data changes
+
+Never let stale metadata become permanent merely because it is cached.
+
+---
+
+35. Phase 32 — Refactor "app.py"
+
+Once the core domain and services are stable, split the large application module.
 
 Target:
 
-```text
-tests/
-├── fixtures/
-│   ├── comicvine/
-│   ├── gcd/
-│   └── comicinfo/
-│
-├── test_identity.py
-├── test_filename_parser.py
-├── test_matching.py
-├── test_scoring.py
-├── test_comicvine.py
-├── test_kapowarr.py
-├── test_gcd.py
-├── test_comic_model.py
-├── test_comicinfo.py
-├── test_archive_writer.py
-├── test_merge.py
-├── test_cache.py
-├── test_pipeline.py
-└── test_automation.py
-```
+api/
+├── server.py
+├── handlers.py
+└── serializers.py
+
+services/
+├── metadata.py
+├── processing.py
+└── search.py
+
+"app.py" should not contain business logic.
+
+Target architecture:
+
+HTTP/UI
+   ↓
+API handlers
+   ↓
+Services
+   ↓
+Domain models
+   ↓
+Providers / repositories
 
 ---
 
-# 26. Phase 24 — Build Regression Cases From the Real Library
+36. Phase 33 — Add Structured Logging
 
-Use difficult real-world cases as permanent fixtures.
+Replace ad-hoc logging with structured events.
+
+Each processing job should include:
+
+job_id
+archive
+sha256
+provider
+provider_id
+confidence
+status
+duration
+
+Example:
+
+job=1234
+archive=Batman_001.cbz
+provider=ComicVine
+issue=4000-123456
+confidence=97
+status=SUCCESS
+
+---
+
+37. Phase 34 — Add Metrics
+
+Track:
+
+files processed
+files skipped
+files successfully resolved
+files unresolved
+manual reviews
+provider failures
+archive failures
+average processing time
+provider response time
+cache hit rate
+
+This will make large-library debugging much easier.
+
+---
+
+38. Phase 35 — Add Provider Rate Limiting
+
+Comic Vine and other external providers must not be hammered by multiple workers.
+
+Implement:
+
+per-provider rate limiter
+
+Workers can run concurrently, but external provider requests must respect provider limits.
+
+---
+
+39. Phase 36 — Add Provider Retry Policy
+
+Retries should only occur for retryable errors.
+
+Retry:
+
+timeout
+connection reset
+HTTP 429
+temporary 5xx
+
+Do not retry indefinitely for:
+
+404
+invalid response
+authentication failure
+parse failure
+
+Use exponential backoff.
+
+---
+
+40. Phase 37 — Add Integration Tests
+
+Test the complete pipeline:
+
+CBZ
+ ↓
+identity
+ ↓
+Kapowarr
+ ↓
+Comic Vine
+ ↓
+scoring
+ ↓
+ComicInfo
+ ↓
+archive replacement
+ ↓
+verification
+ ↓
+processing state
+
+Use mocked providers.
+
+No live internet should be required for normal CI.
+
+---
+
+41. Phase 38 — Add Failure-Injection Tests
+
+Intentionally simulate:
+
+permission denied
+provider timeout
+provider 429
+provider 500
+malformed HTML
+invalid XML
+corrupt CBZ
+disk full
+temporary file failure
+os.replace failure
+application crash
+
+The expected result should always be:
+
+original archive remains safe
+job state records failure
+useful error is logged
+job can be retried
+
+---
+
+42. Phase 39 — Add Property-Based / Fuzz Testing
+
+Particularly test:
+
+- filenames
+- issue numbers
+- XML
+- provider HTML
+- archive contents
+
+Examples:
+
+Batman #1
+Batman #001
+Batman 1A
+Batman 1.5
+Batman Annual 1
+Batman Special
+
+The parser must never crash the entire processing service.
+
+---
+
+43. Phase 40 — Create AI-Agent Documentation
+
+Create and maintain:
+
+docs/
+├── architecture.md
+├── metadata-resolution.md
+├── provider-contract.md
+├── archive-safety.md
+├── automation.md
+└── testing.md
+
+These documents should describe the actual implemented architecture, not merely the intended architecture.
+
+Each document should contain:
+
+Purpose
+Responsibilities
+Inputs
+Outputs
+Invariants
+Failure modes
+Testing requirements
+Do-not-do rules
+
+---
+
+44. Phase 41 — Add AI Coding Agent Rules
+
+Create a root-level:
+
+AGENTS.md
+
+or equivalent project-specific AI instructions.
+
+It should explicitly state:
+
+Do not rewrite the application from scratch.
+
+Do not bypass the identity resolver.
+
+Do not accept the first provider search result automatically.
+
+Do not modify archives without archive verification.
+
+Do not delete CBR until converted CBZ is verified.
+
+Do not silently swallow provider exceptions.
+
+Do not change Kapowarr ownership/permissions.
+
+Do not remove unknown ComicInfo fields.
+
+Do not add provider-specific logic to the domain model.
+
+Every identity-resolution change requires tests.
+Every archive-writing change requires safety tests.
+
+This is particularly important if multiple AI agents will work on the repository.
+
+---
+
+45. Phase 42 — Establish Architectural Invariants
+
+Create a permanent list of rules.
+
+Identity
+
+A filename is never sufficient proof of identity.
+
+Providers
+
+Providers return candidates.
+Providers do not select the final identity.
+
+Metadata
+
+Identity and metadata are separate concepts.
+
+Archives
+
+Never replace an original archive with an unverified archive.
+
+Existing metadata
+
+Existing valid metadata is never destroyed merely because new metadata exists.
+
+Automation
+
+Every processing operation is restart-safe.
+
+Errors
+
+No match != provider failure.
+
+Kapowarr
+
+Kapowarr identity is preferred when it can be reliably associated with the archive.
+
+---
+
+46. Phase 43 — Performance Optimization
+
+Only after correctness is established.
+
+Optimize:
+
+Kapowarr snapshot lookup
+provider cache
+HTML parsing
+SHA256 calculation
+archive copying
+database queries
+
+Do not optimize by weakening validation.
+
+Correctness is more important than throughput.
+
+---
+
+47. Phase 44 — Large-Library Testing
+
+Before calling the application production-ready, test against a representative library.
 
 Include:
 
-- Alternate covers
-- Different volume years
-- Relaunches
-- TPBs
-- Omnibus editions
-- Annuals
-- Specials
-- Decimal issues
-- Lettered issues
-- Marvel Zombies
-- Batman
-- TMNT
-- Archie
-- Mirage
-- Collections
-- Crossovers
-- Story arcs
+single issues
+old comics
+modern comics
+Marvel
+DC
+independent publishers
+annuals
+specials
+decimal issues
+variant covers
+TPBs
+omnibuses
+collections
+missing metadata
+incorrect existing metadata
+duplicate filenames
+similar series names
 
-Every discovered bad match should result in:
+Measure:
 
-```text
-Real-world failure
-    ↓
-Fixture
-    ↓
-Regression test
-    ↓
-Resolver fix
-```
+auto-accept rate
+manual-review rate
+unresolved rate
+false-positive rate
+provider failures
+processing speed
 
-This continuously improves matching accuracy.
+The most important metric is:
 
----
+«false positive identity matches»
 
-# 27. Phase 25 — Security and Operational Hardening
-
-Review:
-
-- API key handling
-- Filesystem traversal
-- Untrusted archive contents
-- ZIP bombs
-- Oversized XML
-- Symlinks
-- Path traversal inside archives
-- HTTP timeouts
-- Retry limits
-- Provider rate limits
-
-Never allow archive extraction or temporary processing to escape its intended directory.
-
-Reject archive paths containing traversal such as:
-
-```text
-../../somewhere
-```
+That number should be driven as close to zero as practical.
 
 ---
 
-# 28. Phase 26 — Centralize Configuration
+48. Phase 45 — Production Safety Mode
 
-Move defaults into configuration.
+Before enabling automatic processing against the real Kapowarr library, require:
 
-Example:
+dry-run
 
-```yaml
-storage:
-  watch_folder: /mnt/disk1/Comics
+first.
 
-kapowarr:
-  url: http://kapowarr:5656
+Then:
 
-comicvine:
-  enabled: true
+manual review
 
-gcd:
-  enabled: true
+Then:
 
-processing:
-  overwrite_existing: false
-  minimum_confidence: 90
-  dry_run: false
+limited test directory
 
-automation:
-  enabled: true
-```
+Then:
 
-Avoid scattering provider URLs, paths, thresholds, and processing flags throughout the codebase.
+small real library subset
+
+Only after successful validation:
+
+full library automation
 
 ---
 
-# 29. Phase 27 — Update UI Around the Actual Pipeline
+49. Recommended Implementation Order
 
-For every archive, show:
-
-```text
-Identity
-Metadata
-Confidence
-Provider
-Changes
-Processing status
-```
-
-Example:
-
-```text
-Batman #001.cbz
-
-Identity
-Batman (2016) #1
-
-Source
-Kapowarr
-
-Confidence
-98%
-
-ComicInfo
-✓ Existing file
-✓ Valid XML
-
-Changes
-Publisher: DC Comics
-Year: 2016
-Writer: Tom King
-
-Action
-No changes required
-```
-
----
-
-# 30. Phase 28 — Add Provider Debugging
-
-For difficult matches, expose:
-
-```text
-Filename
-Directory
-Parsed series
-Parsed issue
-Kapowarr candidates
-Comic Vine candidates
-GCD candidates
-Scores
-Rejected candidates
-Final decision
-```
-
-This will make real-world matching problems much easier to diagnose.
-
----
-
-# 31. Phase 29 — Version the Metadata Schema
-
-Record:
-
-```text
-generator_version
-metadata_schema_version
-```
-
-in processing state.
-
-This allows future versions of the application to identify archives processed by older versions.
-
----
-
-# 32. Phase 30 — Release Process
-
-Before enabling unattended processing:
-
-## Stage 1 — Dry run
-
-Run against the entire library.
-
-## Stage 2 — Generate report
-
-Report:
-
-```text
-Total
-Already tagged
-Would update
-Skipped
-Unresolved
-Low confidence
-Failed
-```
-
-## Stage 3 — Test directory
-
-Run against a small isolated comic directory.
-
-## Stage 4 — One real series
-
-Run against one known-good series.
-
-## Stage 5 — Enable watcher
-
-Enable automatic processing.
-
-## Stage 6 — Enable unattended mode
-
-Only after archive safety, identity resolution, and regression tests are passing.
-
----
-
-# 33. Recommended Implementation Order
-
-Do not implement everything simultaneously.
+Do not implement these phases in arbitrary order.
 
 Use this order:
 
-```text
-1. Archive safety
-2. ComicInfo lossless read/write
-3. ComicIdentity model
-4. Filename parser
-5. Confidence scoring
-6. Resolver refactor
-7. Kapowarr snapshot/cache
-8. Comic Vine parser refactor
-9. GCD integration cleanup
-10. Merge validation
-11. Processing-state database
-12. Automation hardening
-13. Error handling
-14. Comprehensive tests
-15. Dry-run mode
-16. Manual review
-17. UI updates
-18. Documentation
-19. Full-library validation
-```
+P0-1  Establish tests/baseline
+P0-2  Domain model separation
+P0-3  Identity extraction
+P0-4  Kapowarr snapshot/identity
+P0-5  Candidate system
+P0-6  Scoring
+P0-7  Conflict detection
+P0-8  Identity → metadata separation
+P0-9  Archive transaction hardening
+P0-10 Durable processing state
+P0-11 Restart-safe queue
+P0-12 TPB validation
+
+Then:
+
+P1-1  Comic Vine refactor
+P1-2  GCD refactor
+P1-3  Provider contracts
+P1-4  Error handling
+P1-5  ComicInfo preservation
+P1-6  Cache improvements
+P1-7  Rate limiting
+P1-8  Retry policies
+
+Then:
+
+P2-1  app.py decomposition
+P2-2  structured logging
+P2-3  metrics
+P2-4  dry-run UI
+P2-5  manual review UI
+P2-6  performance optimization
+
+Finally:
+
+P3
+Large-library validation
+Production rollout
 
 ---
 
-# 34. Definition of Done
+50. Definition of Done
 
-The project is not production-ready until all of these are true:
+The project should not be considered production-ready until all of the following are true.
 
-- [ ] Existing ComicInfo is never silently destroyed.
-- [ ] Archive replacement is atomic/safe.
-- [ ] No automatic directory renaming/copy takeover occurs.
+Identity
+
+- [ ] Filename parsing works.
+- [ ] Folder parsing works.
+- [ ] Existing ComicInfo identity can be extracted.
+- [ ] Kapowarr identity can be associated reliably.
+- [ ] Providers return candidates.
+- [ ] Candidates are scored.
+- [ ] Conflicts are detected.
+- [ ] Low-confidence matches are not automatically written.
+- [ ] First-result selection has been eliminated.
+
+Metadata
+
 - [ ] Identity is separate from metadata.
-- [ ] Provider IDs are preserved.
-- [ ] Filename matching cannot directly force a match.
-- [ ] Confidence scoring exists.
-- [ ] Low-confidence matches require review.
-- [ ] Kapowarr data is cached.
-- [ ] Comic Vine requests are cached.
-- [ ] Provider errors are visible.
-- [ ] ComicInfo round-trip is lossless.
-- [ ] TPB merging validates inputs.
-- [ ] Processing state survives restart.
-- [ ] Watcher is idempotent.
-- [ ] Dry-run mode works.
-- [ ] Real-library regression tests exist.
-- [ ] Archive corruption is detected.
-- [ ] ZIP path traversal is handled safely.
-- [ ] Full-library dry run completes without modifying files.
+- [ ] Provider metadata is normalized.
+- [ ] Field-level merge rules exist.
+- [ ] TPB/collection metadata is validated.
+
+ComicInfo
+
+- [ ] All supported fields round-trip.
+- [ ] Unknown fields are preserved.
+- [ ] Existing metadata is not silently destroyed.
+- [ ] XML validation exists.
+
+Archives
+
+- [ ] Temporary archive is created on the same filesystem.
+- [ ] Temporary archive is validated.
+- [ ] Atomic replacement is used.
+- [ ] Unsafe cross-filesystem replacement is not silently used.
+- [ ] Final archive is verified.
+- [ ] Original content entries are preserved.
+- [ ] CBR deletion occurs only after successful CBZ verification.
+
+Automation
+
+- [ ] Jobs are stored durably.
+- [ ] Queue survives restart.
+- [ ] Processing jobs can recover after crashes.
+- [ ] Duplicate jobs are prevented.
+- [ ] Watcher does not repeatedly process its own output.
+- [ ] SHA256 state is recorded.
+
+Providers
+
+- [ ] Provider contracts are defined.
+- [ ] Provider failures are typed.
+- [ ] Rate limiting exists.
+- [ ] Retry policy exists.
+- [ ] Provider responses are cached.
+- [ ] Parser fixtures exist.
+
+Testing
+
+- [ ] Unit tests pass.
+- [ ] Integration tests pass.
+- [ ] Archive tests pass.
+- [ ] Provider fixture tests pass.
+- [ ] Failure-injection tests pass.
+- [ ] Restart/recovery tests pass.
+- [ ] Large-library test set passes.
+
+Documentation
+
+- [ ] Architecture documentation exists.
+- [ ] Metadata resolution documentation exists.
+- [ ] Provider contract documentation exists.
+- [ ] Archive safety documentation exists.
+- [ ] Automation documentation exists.
+- [ ] Testing documentation exists.
+- [ ] AI-agent instructions exist.
 
 ---
 
-# 35. Target Architecture
+51. Final Architecture Goal
 
-```text
-                         ┌─────────────────┐
-                         │   File Watcher   │
-                         └────────┬────────┘
-                                  │
-                                  ▼
-                         ┌─────────────────┐
-                         │ Processing Queue │
-                         └────────┬────────┘
-                                  │
-                                  ▼
-                       ┌─────────────────────┐
-                       │ Archive Inspector   │
-                       └──────────┬──────────┘
-                                  │
-                                  ▼
-                       ┌─────────────────────┐
-                       │ Filename / Folder   │
-                       │ Identity Parser     │
-                       └──────────┬──────────┘
-                                  │
-                                  ▼
-                       ┌─────────────────────┐
-                       │ Identity Resolver   │
-                       └──────────┬──────────┘
-                                  │
-              ┌───────────────────┼───────────────────┐
-              ▼                   ▼                   ▼
-        ┌───────────┐       ┌───────────┐       ┌──────────┐
-        │ Kapowarr  │       │ Comic Vine│       │   GCD    │
-        └─────┬─────┘       └─────┬─────┘       └────┬─────┘
-              └───────────────────┼───────────────────┘
-                                  ▼
-                         ┌─────────────────┐
-                         │ Confidence      │
-                         │ Scoring         │
-                         └────────┬────────┘
-                                  │
-                    ┌─────────────┴──────────────┐
-                    │                            │
-                    ▼                            ▼
-              AUTO ACCEPT                  MANUAL REVIEW
-                    │
-                    ▼
-             ┌──────────────┐
-             │ Comic Model  │
-             └──────┬───────┘
-                    │
-                    ▼
-             ┌──────────────┐
-             │ ComicInfo    │
-             │ Generator    │
-             └──────┬───────┘
-                    │
-                    ▼
-             ┌──────────────┐
-             │ Safe Archive │
-             │ Replacement  │
-             └──────┬───────┘
-                    │
-                    ▼
-             ┌──────────────┐
-             │ Verify +     │
-             │ SHA256       │
-             └──────┬───────┘
-                    │
-                    ▼
-             ┌──────────────┐
-             │ Processing DB│
-             └──────────────┘
-```
+The final application should make the following decision safely:
 
----
+Batman (2016) 001.cbz
 
-# 36. End Goal
+The system should not think:
 
-The finished application should function as a reliable metadata normalization layer for the Kapowarr library:
+"Search Batman 001 and use whatever comes first."
 
-```text
-Kapowarr downloads comic
-        ↓
-Watcher detects CBZ
-        ↓
-Existing ComicInfo checked
-        ↓
-Kapowarr identity used when available
-        ↓
-Comic Vine enriches metadata when needed
-        ↓
-GCD provides fallback data
-        ↓
-Identity confidence calculated
-        ↓
-High-confidence result automatically accepted
-        ↓
-Low-confidence result sent to review
-        ↓
-ComicInfo.xml generated
-        ↓
-CBZ safely replaced
-        ↓
-Archive integrity verified
-        ↓
-Processing state recorded
-        ↓
-Komga/Kavita/Jellyfin can consume the updated metadata
-```
+It should think:
 
-The guiding rule throughout the implementation is:
+Archive
+ ↓
+Existing metadata
+ ↓
+Filename evidence
+ ↓
+Folder evidence
+ ↓
+Kapowarr identity
+ ↓
+Comic Vine candidates
+ ↓
+GCD candidates
+ ↓
+Normalize candidates
+ ↓
+Compare evidence
+ ↓
+Detect conflicts
+ ↓
+Calculate confidence
+ ↓
+Select identity
+ ↓
+Retrieve metadata
+ ↓
+Merge according to field policy
+ ↓
+Generate ComicInfo.xml
+ ↓
+Build temporary archive
+ ↓
+Verify archive
+ ↓
+Atomic replace
+ ↓
+Verify final archive
+ ↓
+Record SHA256 + identity + result
 
-> **Kapowarr data first → external metadata when needed → verify identity → preserve existing information → make safe changes only → record exactly what happened.**
+The desired end state is:
+
+«If the application is unsure, it stops. It never guesses.»
+
+That principle should drive every remaining implementation decision.
