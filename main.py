@@ -43,6 +43,9 @@ def run_dry_run(target_path: str):
                     sign = "+" if ev.score > 0 else ""
                     print(f"  {sign}{ev.score:.0f} {ev.explanation}")
 
+                print("\nMetadata State:")
+                print(f"  {res.metadata_state}")
+
                 print("\nAction:")
                 print(f"  {res.decision.action}")
 
@@ -55,6 +58,8 @@ def run_dry_run(target_path: str):
                 print("  None")
                 print("\nConfidence:")
                 print(f"  {res.decision.score:.1f}% ({res.decision.level})")
+                print("\nMetadata State:")
+                print(f"  {res.metadata_state}")
                 print("\nAction:")
                 print(f"  {res.decision.action}")
 

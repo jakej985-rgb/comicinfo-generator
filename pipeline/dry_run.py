@@ -34,6 +34,7 @@ class DryRunResult:
     decision: ConfidenceDecision
     proposed_comic: Optional[Comic]
     fields_to_change: List[str] = field(default_factory=list)
+    metadata_state: str = "METADATA_NOT_FOUND"
 
 
 class DryRunContext:
@@ -84,10 +85,13 @@ class DryRunContext:
         identity, decision = self.resolver.resolve_identity(abs_path)
         comic = None
         fields_to_change = []
+        metadata_state = "METADATA_NOT_FOUND"
 
         if identity and decision.action != "SKIP":
-            comic = self.resolver.retrieve_metadata(identity)
-            if comic:
+            meta_res = self.resolver.retrieve_metadata_result(identity, file_path=abs_path)
+            metadata_state = meta_res.state
+            if meta_res.state == "METADATA_FOUND" and meta_res.comic:
+                comic = meta_res.comic
                 if comic.title: fields_to_change.append("Title")
                 if comic.series: fields_to_change.append("Series")
                 if comic.number: fields_to_change.append("Number")
@@ -106,7 +110,8 @@ class DryRunContext:
             candidate=identity,
             decision=decision,
             proposed_comic=comic,
-            fields_to_change=fields_to_change
+            fields_to_change=fields_to_change,
+            metadata_state=metadata_state
         )
         self.results.append(result)
         return result
