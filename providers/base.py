@@ -1,11 +1,21 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 from models.comic import Comic
+
+# --- Provider Response Status States ---
+STATE_SUCCESS = "SUCCESS"
+STATE_NOT_FOUND = "NOT_FOUND"
+STATE_CONNECTION_ERROR = "CONNECTION_ERROR"
+STATE_AUTH_ERROR = "AUTH_ERROR"
+STATE_RATE_LIMITED = "RATE_LIMITED"
+STATE_PARSE_ERROR = "PARSE_ERROR"
+STATE_INVALID_RESPONSE = "INVALID_RESPONSE"
+
 
 # --- Provider Exceptions ---
 class ProviderError(Exception):
     """Base exception for provider operations."""
-    def __init__(self, message: str, provider_name: str = "", original_exception: Exception = None):
+    def __init__(self, message: str, provider_name: str = "", original_exception: Optional[Exception] = None):
         super().__init__(message)
         self.provider_name = provider_name
         self.original_exception = original_exception
@@ -21,6 +31,9 @@ class ProviderRateLimitError(ProviderError):
 
 class ProviderParseError(ProviderError):
     """Raised when parsing provider response fails."""
+
+class ProviderResponseError(ProviderError):
+    """Raised when provider returns an invalid or malformed response."""
 
 class MetadataNotFoundError(ProviderError):
     """Raised when queried metadata item is not found."""
