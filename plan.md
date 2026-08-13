@@ -52,7 +52,7 @@ The latest review identified these remaining areas:
 
 Priority| Issue| Status
 P0| CI enforcement| Completed
-P0| Metadata-write safety final verification| Needs final end-to-end proof
+P0| Metadata-write safety final verification| Completed
 P1| README architecture is stale| Needs update
 P1| Production configuration validation| Needs hardening
 P1| Dependency reproducibility| Needs improvement
@@ -1017,12 +1017,12 @@ Identity
 
 Metadata
 
-- [ ] "METADATA_FOUND" can update automatically when confidence requirements are met
-- [ ] "METADATA_PARTIAL" cannot automatically update
-- [ ] "METADATA_NOT_FOUND" cannot automatically update
-- [ ] "METADATA_PROVIDER_ERROR" cannot automatically update
-- [ ] "METADATA_INVALID" cannot automatically update
-- [ ] Wrong metadata is always treated as worse than missing metadata
+- [x] "METADATA_FOUND" can update automatically when confidence requirements are met
+- [x] "METADATA_PARTIAL" cannot automatically update
+- [x] "METADATA_NOT_FOUND" cannot automatically update
+- [x] "METADATA_PROVIDER_ERROR" cannot automatically update
+- [x] "METADATA_INVALID" cannot automatically update
+- [x] Wrong metadata is always treated as worse than missing metadata
 
 Archive Safety
 
