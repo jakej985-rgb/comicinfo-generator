@@ -1,9 +1,10 @@
+import hashlib
 import os
 import shutil
 import tempfile
 import zipfile
 import xml.etree.ElementTree as ET
-from typing import Optional, Set
+from typing import Optional, Set, Dict, Tuple
 from models.comic import Comic
 from writers.comicinfo import generate_xml_bytes
 
@@ -26,16 +27,36 @@ class ArchiveValidationError(ArchiveError):
     """Raised when post-replacement verification fails."""
 
 
+def compute_archive_sha256_manifest(archive_path: str) -> Dict[str, str]:
+    """
+    Phase 60: Computes SHA256 hashes for all non-ComicInfo archive entries.
+    """
+    manifest = {}
+    if not os.path.exists(archive_path):
+        return manifest
+    try:
+        with zipfile.ZipFile(archive_path, 'r') as z:
+            for item in z.infolist():
+                if item.filename.lower() != "comicinfo.xml" and not item.is_dir():
+                    data = z.read(item.filename)
+                    manifest[item.filename.lower()] = hashlib.sha256(data).hexdigest()
+    except Exception:
+        pass
+    return manifest
+
+
 def verify_cbz_archive(
     archive_path: str,
     original_entries: Optional[Set[str]] = None,
-    original_manifest: Optional[dict] = None
+    original_manifest: Optional[dict] = None,
+    strict: bool = False,
+    original_sha256_manifest: Optional[dict] = None
 ):
     """
-    Phase 18 & Phase 47: Expands archive verification before and after replacement.
+    Phase 18, 47 & 60: Archive integrity verification before and after replacement.
     Ensures valid ZIP format, no corrupted files, presence and parseability of ComicInfo.xml,
-    valid image count, zero unexpected entry deletions, and exact CRC/size matching
-    for untouched non-ComicInfo entries (original CRC == temporary CRC).
+    valid image count, zero unexpected entry deletions, exact CRC/size matching
+    for untouched non-ComicInfo entries, and strict SHA256 verification when configured.
     """
     if not os.path.exists(archive_path) or os.path.getsize(archive_path) == 0:
         raise ArchiveValidationError(
@@ -120,6 +141,32 @@ def verify_cbz_archive(
                             operation="verify_entry_integrity"
                         )
 
+            # 7. Phase 60: Strict SHA256 verification of untouched non-ComicInfo entries
+            if strict and original_sha256_manifest:
+                new_sha256_map = {}
+                for item in z.infolist():
+                    if item.filename.lower() != "comicinfo.xml" and not item.is_dir():
+                        data = z.read(item.filename)
+                        new_sha256_map[item.filename.lower()] = hashlib.sha256(data).hexdigest()
+
+                for orig_name, orig_hash in original_sha256_manifest.items():
+                    if orig_name.lower() == "comicinfo.xml":
+                        continue
+                    new_hash = new_sha256_map.get(orig_name.lower())
+                    if not new_hash:
+                        raise ArchiveValidationError(
+                            f"Missing original entry '{orig_name}' during strict verification.",
+                            archive_path=archive_path,
+                            operation="verify_entry_sha256"
+                        )
+                    if orig_hash != new_hash:
+                        raise ArchiveValidationError(
+                            f"Strict entry SHA256 mismatch for '{orig_name}': original SHA256={orig_hash} "
+                            f"vs new SHA256={new_hash}.",
+                            archive_path=archive_path,
+                            operation="verify_entry_sha256"
+                        )
+
     except Exception as e:
         if isinstance(e, ArchiveValidationError):
             raise e
@@ -181,17 +228,17 @@ def fsync_directory(dir_path: str):
         pass
 
 
-def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
+def embed_comicinfo_in_cbz(archive_path: str, comic: Comic, strict: bool = False) -> str:
     """
     Embeds or updates ComicInfo.xml inside a .cbz (ZIP) archive atomically.
     Returns the path to the updated archive.
 
     Guarantees strict same-filesystem atomic transactions:
-    1. Record original archive entries and CRC manifest (Phase 18 & 47)
+    1. Record original archive entries, CRC manifest, and optional SHA256 manifest (Phase 18, 47, 60)
     2. Create temporary archive in same target directory
     3. Write updated ZIP contents preserving ZipInfo metadata & image compression
     4. Preserve permissions & timestamps (Phase 17)
-    5. Pre-replacement integrity verification & entry comparison (Phase 18 & 47)
+    5. Pre-replacement integrity verification & entry comparison (Phase 18, 47, 60)
     6. fsync temporary file to storage media (Phase 16)
     7. os.replace() atomic swap (Phase 16)
     8. fsync directory durability (Phase 47)
@@ -226,13 +273,19 @@ def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
     archive_dir = os.path.dirname(os.path.abspath(archive_path))
     file_name = os.path.basename(archive_path)
 
-    # Phase 18 & 47: Record original archive entries and CRC manifest
+    # Phase 18, 47 & 60: Record original archive entries, CRC manifest, and SHA256 manifest
     original_entries = set()
     original_manifest = {}
+    original_sha256_manifest = {}
     try:
         with zipfile.ZipFile(archive_path, 'r') as src_z:
             original_entries = set(src_z.namelist())
             original_manifest = {item.filename: (item.CRC, item.file_size) for item in src_z.infolist()}
+            if strict:
+                for item in src_z.infolist():
+                    if item.filename.lower() != "comicinfo.xml" and not item.is_dir():
+                        data = src_z.read(item.filename)
+                        original_sha256_manifest[item.filename.lower()] = hashlib.sha256(data).hexdigest()
     except Exception:
         pass
 
@@ -264,8 +317,14 @@ def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
         # Phase 17: Preserve file metadata (permissions, mtime, atime, UID/GID)
         preserve_file_metadata(archive_path, temp_path)
 
-        # Phase 18 & 47: Pre-replacement integrity verification on temp file comparing original entries & CRC manifest
-        verify_cbz_archive(temp_path, original_entries=original_entries, original_manifest=original_manifest)
+        # Phase 18, 47 & 60: Pre-replacement integrity verification on temp file
+        verify_cbz_archive(
+            temp_path,
+            original_entries=original_entries,
+            original_manifest=original_manifest,
+            strict=strict,
+            original_sha256_manifest=original_sha256_manifest
+        )
 
         # Phase 16 Step 4: fsync temporary file
         fsync_file(temp_path)
@@ -285,8 +344,14 @@ def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
         fsync_file(archive_path)
         fsync_directory(archive_dir)
 
-        # Phase 16 Step 6: Post-replacement verification on final file
-        verify_cbz_archive(archive_path, original_entries=original_entries, original_manifest=original_manifest)
+        # Phase 16 & 60 Step 6: Post-replacement verification on final file
+        verify_cbz_archive(
+            archive_path,
+            original_entries=original_entries,
+            original_manifest=original_manifest,
+            strict=strict,
+            original_sha256_manifest=original_sha256_manifest
+        )
 
     except PermissionError as pe:
         if os.path.exists(temp_path):

@@ -59,6 +59,7 @@ class OutputConfig:
     embed_xml: bool = True
     overwrite: bool = False
     delete_cbr: bool = True
+    strict_archive_verification: bool = False
 
 @dataclass
 class LoggingConfig:
@@ -126,6 +127,7 @@ def load_config(config_path: Optional[str] = None, cli_overrides: Optional[dict]
     cfg.output.embed_xml = bool(out_yaml.get("embed_xml", cfg.output.embed_xml))
     cfg.output.overwrite = bool(out_yaml.get("overwrite", cfg.output.overwrite))
     cfg.output.delete_cbr = bool(out_yaml.get("delete_cbr", cfg.output.delete_cbr))
+    cfg.output.strict_archive_verification = bool(out_yaml.get("strict_archive_verification", cfg.output.strict_archive_verification))
 
     log_yaml = yaml_data.get("logging", {})
     cfg.logging.level = str(log_yaml.get("level", cfg.logging.level) or "INFO").upper()
@@ -148,6 +150,8 @@ def load_config(config_path: Optional[str] = None, cli_overrides: Optional[dict]
         cfg.cache.enabled = os.environ["COMICINFO_CACHE_ENABLED"].lower() in ("true", "1", "yes")
     if os.environ.get("COMICINFO_LOG_LEVEL"):
         cfg.logging.level = os.environ["COMICINFO_LOG_LEVEL"].upper()
+    if os.environ.get("COMICINFO_STRICT_ARCHIVE_VERIFICATION"):
+        cfg.output.strict_archive_verification = os.environ["COMICINFO_STRICT_ARCHIVE_VERIFICATION"].lower() in ("true", "1", "yes")
 
     # 3. Parse CLI Overrides (Overrides Environment & YAML)
     if cli_overrides:
@@ -161,6 +165,8 @@ def load_config(config_path: Optional[str] = None, cli_overrides: Optional[dict]
             cfg.automation.workers = int(cli_overrides["workers"])
         if "overwrite" in cli_overrides and cli_overrides["overwrite"] is not None:
             cfg.output.overwrite = bool(cli_overrides["overwrite"])
+        if "strict_archive_verification" in cli_overrides and cli_overrides["strict_archive_verification"] is not None:
+            cfg.output.strict_archive_verification = bool(cli_overrides["strict_archive_verification"])
         if "log_level" in cli_overrides and cli_overrides["log_level"] is not None:
             cfg.logging.level = str(cli_overrides["log_level"]).upper()
 
