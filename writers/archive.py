@@ -27,7 +27,7 @@ class ArchiveValidationError(ArchiveError):
 
 def verify_cbz_archive(archive_path: str):
     """
-    Verifies the integrity of a updated CBZ archive.
+    Verifies the integrity of a modified CBZ archive.
     Ensures valid ZIP format, no corrupted files, presence and parseability of ComicInfo.xml,
     and presence of original content files.
     """
@@ -90,13 +90,31 @@ def verify_cbz_archive(archive_path: str):
         )
 
 
+def fsync_file(file_path: str):
+    """Fsyncs a file descriptor to ensure bytes are committed to persistent disk media."""
+    try:
+        fd = os.open(file_path, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except Exception:
+        pass
+
+
 def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
     """
     Embeds or updates ComicInfo.xml inside a .cbz (ZIP) archive atomically.
     Returns the path to the updated archive.
 
-    Uses safe atomic temporary swapping and verifies archive integrity before replacing original.
-    Does NOT rename or restructure user volume directories.
+    Guarantees strict same-filesystem atomic transactions:
+    1. Create temporary archive in same target directory
+    2. Write updated ZIP contents
+    3. Preserve permissions & timestamps (Phase 17)
+    4. Pre-replacement integrity verification
+    5. fsync temporary file to storage media
+    6. os.replace() atomic swap
+    7. Post-replacement verification
     """
     if not os.path.exists(archive_path):
         raise ArchiveReadError(
@@ -127,19 +145,22 @@ def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
     archive_dir = os.path.dirname(os.path.abspath(archive_path))
     file_name = os.path.basename(archive_path)
 
-    # Attempt temp file creation in target directory to support atomic os.replace()
+    # Phase 16 Step 1: Create temporary archive strictly in same directory to guarantee atomic os.replace()
     try:
         temp_file = tempfile.NamedTemporaryFile(dir=archive_dir, delete=False, prefix=".tmp_", suffix=".cbz")
         temp_path = temp_file.name
         temp_file.close()
-    except Exception:
-        # Fallback to system temp directory if target directory is restricted
-        temp_file = tempfile.NamedTemporaryFile(dir=tempfile.gettempdir(), delete=False, prefix=".tmp_", suffix=".cbz")
-        temp_path = temp_file.name
-        temp_file.close()
+    except Exception as e:
+        raise ArchiveWriteError(
+            f"Unable to create temporary file in target directory '{archive_dir}': {e}. "
+            f"Same-filesystem atomic replacement is required.",
+            archive_path=archive_path,
+            operation="create_temp_file",
+            original_exception=e
+        )
 
     try:
-        # 1. Copy ZIP contents to temp archive, injecting new ComicInfo.xml
+        # Phase 16 Step 2: Write archive
         with zipfile.ZipFile(archive_path, 'r') as src_zip:
             with zipfile.ZipFile(temp_path, 'w', compression=zipfile.ZIP_DEFLATED) as dst_zip:
                 for item in src_zip.infolist():
@@ -149,23 +170,30 @@ def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
 
                 dst_zip.writestr("ComicInfo.xml", xml_data)
 
-        # 2. Preserve original filesystem stats (mtime, permissions)
+        # Phase 17: Preserve file metadata (permissions, mtime, atime, stat)
         try:
             shutil.copystat(archive_path, temp_path)
         except Exception:
             pass
 
-        # 3. Pre-replacement integrity verification on temp file
+        # Phase 16 Step 3: Verify temp archive
         verify_cbz_archive(temp_path)
 
-        # 4. Atomic replacement
+        # Phase 16 Step 4: fsync temporary file
+        fsync_file(temp_path)
+
+        # Phase 16 Step 5: Atomic replacement (no cross-filesystem downgrade)
         try:
             os.replace(temp_path, archive_path)
-        except OSError:
-            # Fallback across filesystems
-            shutil.move(temp_path, archive_path)
+        except Exception as re_err:
+            raise ArchiveWriteError(
+                f"Atomic replacement failed for '{file_name}': {re_err}.",
+                archive_path=archive_path,
+                operation="os.replace",
+                original_exception=re_err
+            )
 
-        # 5. Post-replacement verification on target file
+        # Phase 16 Step 6: Verify final archive
         verify_cbz_archive(archive_path)
 
     except PermissionError as pe:
@@ -173,8 +201,7 @@ def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
             os.remove(temp_path)
         raise ArchiveWriteError(
             f"Permission denied: Unable to overwrite '{file_name}'. "
-            f"The application lacks write permissions for target file or folder '{archive_dir}'. "
-            f"Please update directory permissions or umask settings.",
+            f"The application lacks write permissions for target file or folder '{archive_dir}'.",
             archive_path=archive_path,
             operation="atomic_replace",
             original_exception=pe
