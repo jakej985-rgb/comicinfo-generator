@@ -26,17 +26,12 @@ from providers.story_arc import search_story_arcs, get_story_arc_details, parse_
 from writers.archive import embed_comicinfo_in_cbz
 from writers.comicinfo import write_xml, generate_xml_bytes
 from converters.cbr_to_cbz import convert_cbr_to_cbz
-from automation.watcher import LibraryWatcher
 from automation.queue import ProcessingQueue
 from pipeline.resolver import MetadataResolver, read_existing_comicinfo
 
 
 PORT = 5005
 STATIC_DIR = os.path.join(repo_dir, "static")
-
-# Global Watcher state for Web UI
-global_watcher: Optional[LibraryWatcher] = None
-global_watcher_folder: str = ""
 
 def comic_to_dict(c: Comic) -> dict:
     return {
@@ -355,7 +350,6 @@ class ComicServerHandler(BaseHTTPRequestHandler):
         self._set_headers(200)
 
     def do_GET(self):
-        global global_watcher, global_watcher_folder
         parsed = urlparse(self.path)
         path = parsed.path
         if path in ("/", "/index.html"):
@@ -375,7 +369,7 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 "config": {
                     "comicvine": {"api_key": cfg.comicvine.api_key},
                     "kapowarr": {"url": cfg.kapowarr.url, "api_key": cfg.kapowarr.api_key},
-                    "automation": {"mode": cfg.automation.mode, "workers": cfg.automation.workers, "watch_folder": cfg.automation.watch_folder, "prefer_kapowarr": cfg.automation.prefer_kapowarr},
+                    "automation": {"mode": cfg.automation.mode, "workers": cfg.automation.workers, "prefer_kapowarr": cfg.automation.prefer_kapowarr},
                     "cache": {"enabled": cfg.cache.enabled, "db_path": cfg.cache.db_path},
                     "output": {"embed_xml": cfg.output.embed_xml, "overwrite": cfg.output.overwrite, "delete_cbr": cfg.output.delete_cbr},
                     "logging": {"level": cfg.logging.level, "log_file": cfg.logging.log_file}
@@ -386,7 +380,7 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             try:
                 cfg = load_config()
                 kap = KapowarrProvider(url=cfg.kapowarr.url, api_key=cfg.kapowarr.api_key)
-                items = kap.get_library_status(watch_folder=cfg.automation.watch_folder, prefer_kapowarr=cfg.automation.prefer_kapowarr)
+                items = kap.get_library_status(prefer_kapowarr=cfg.automation.prefer_kapowarr)
                 self._set_headers(200)
                 self.wfile.write(json.dumps({"online": kap.test_connection(), "items": items}).encode("utf-8"))
             except Exception as e:
@@ -458,22 +452,12 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             query_params = parse_qs(parsed.query)
             arc_url = query_params.get("url", [""])[0]
             try:
-                cfg = load_config()
-                details = get_story_arc_details(arc_url, watch_folder=cfg.automation.watch_folder)
+                details = get_story_arc_details(arc_url)
                 self._set_headers(200)
                 self.wfile.write(json.dumps({"success": True, "data": details}).encode("utf-8"))
             except Exception as e:
                 self._set_headers(500)
                 self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
-            return
-        elif path == "/api/watch/status":
-            is_active = global_watcher is not None and global_watcher.observer is not None and global_watcher.observer.is_alive()
-            self._set_headers(200)
-            self.wfile.write(json.dumps({
-                "success": True,
-                "is_active": is_active,
-                "watch_folder": global_watcher_folder
-            }).encode("utf-8"))
             return
         elif path == "/api/cache/stats":
             cfg = load_config()
@@ -496,7 +480,6 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"404 File Not Found")
 
     def do_POST(self):
-        global global_watcher, global_watcher_folder
         parsed = urlparse(self.path)
 
         if parsed.path == "/api/browse-file":
@@ -566,7 +549,6 @@ class ComicServerHandler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/provider/test":
             cfg = load_config()
             kap = KapowarrProvider(url=cfg.kapowarr.url, api_key=cfg.kapowarr.api_key)
-            cv = ComicVineProvider(api_key=cfg.comicvine.api_key)
             gcp = GCPProvider()
 
             self._set_headers(200)
@@ -576,43 +558,6 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 "comicvine": {"name": "ComicVine", "ready": True},
                 "gcp": {"name": "Grand Comics Database", "ready": True}
             }).encode("utf-8"))
-
-        elif parsed.path == "/api/watch/start":
-            folder = fields.get("folder_path", "").strip()
-            if not folder:
-                cfg = load_config()
-                folder = cfg.automation.watch_folder or os.getcwd()
-
-            folder_abs = os.path.abspath(folder)
-            if not os.path.exists(folder_abs):
-                os.makedirs(folder_abs, exist_ok=True)
-
-            try:
-                if global_watcher:
-                    global_watcher.stop()
-                
-                cfg = load_config()
-                global_watcher = LibraryWatcher(cfg)
-                global_watcher.start_watching(folder_abs)
-                global_watcher_folder = folder_abs
-
-                self._set_headers(200)
-                self.wfile.write(json.dumps({"success": True, "message": f"Started watching '{folder_abs}'", "watch_folder": folder_abs}).encode("utf-8"))
-            except Exception as e:
-                self._set_headers(500)
-                self.wfile.write(json.dumps({"error": f"Failed to start watcher: {e}"}).encode("utf-8"))
-
-        elif parsed.path == "/api/watch/stop":
-            try:
-                if global_watcher:
-                    global_watcher.stop()
-                    global_watcher = None
-                global_watcher_folder = ""
-                self._set_headers(200)
-                self.wfile.write(json.dumps({"success": True, "message": "Folder Watcher stopped."}).encode("utf-8"))
-            except Exception as e:
-                self._set_headers(500)
-                self.wfile.write(json.dumps({"error": f"Failed to stop watcher: {e}"}).encode("utf-8"))
 
         elif parsed.path == "/api/cache/clear":
             try:
@@ -894,8 +839,7 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 arc_name = "Marvel Zombies Complete Chronological Saga (71 Issues Crossover)"
 
             try:
-                cfg = load_config()
-                data = parse_custom_chronological_reading_order(text_data, arc_name=arc_name, watch_folder=cfg.automation.watch_folder)
+                data = parse_custom_chronological_reading_order(text_data, arc_name=arc_name)
                 self._set_headers(200)
                 self.wfile.write(json.dumps({"success": True, "data": data}).encode("utf-8"))
             except Exception as e:

@@ -4,7 +4,6 @@ import argparse
 from config import load_config, init_config
 from cache.db import CacheManager
 from automation.queue import ProcessingQueue
-from automation.watcher import LibraryWatcher
 from providers.kapowarr import KapowarrProvider
 from providers.comicvine import ComicVineProvider
 from providers.gcp import GCPProvider
@@ -46,11 +45,6 @@ def handle_generate(args, cfg):
     q.wait_completion()
     q.stop()
     print("✅ Generation complete.")
-
-def handle_watch(args, cfg):
-    folder = getattr(args, "folder", "") or cfg.automation.watch_folder or os.getcwd()
-    watcher = LibraryWatcher(cfg)
-    watcher.start_watching(folder)
 
 def handle_repair(args, cfg):
     target = getattr(args, "target", "") or os.getcwd()
@@ -122,10 +116,6 @@ def run_cli():
     p_gen.add_argument("--overwrite", action="store_true", help="Overwrite existing ComicInfo.xml")
     p_gen.add_argument("--workers", type=int, help="Number of parallel workers")
 
-    # watch
-    p_watch = subparsers.add_parser("watch", help="Watch library directory for new comics")
-    p_watch.add_argument("folder", nargs="?", help="Folder directory to watch")
-
     # repair
     p_repair = subparsers.add_parser("repair", help="Repair and regenerate missing ComicInfo.xml files in library")
     p_repair.add_argument("target", nargs="?", help="Folder directory to repair")
@@ -158,8 +148,6 @@ def run_cli():
         handle_config_init(args)
     elif args.command == "generate":
         handle_generate(args, cfg)
-    elif args.command == "watch":
-        handle_watch(args, cfg)
     elif args.command == "repair":
         handle_repair(args, cfg)
     elif args.command == "cache":

@@ -253,8 +253,8 @@ class KapowarrProvider(BaseProvider):
 
         return None
 
-    def get_library_status(self, watch_folder: str = "", prefer_kapowarr: bool = False) -> list[dict]:
-        """Fetches Kapowarr library volumes AND scans local watch_folder for all comic series."""
+    def get_library_status(self, prefer_kapowarr: bool = False) -> list[dict]:
+        """Fetches Kapowarr library volumes AND scans local library directories for all comic series."""
         kapowarr_items = []
         local_items = []
         existing_paths = set()
@@ -274,11 +274,6 @@ class KapowarrProvider(BaseProvider):
                         s_year = str(s.get("year", ""))
                         cv_id = str(s.get("comicvine_id", "") or s.get("cv_id", ""))
                         folder_path = s.get("folder") or s.get("path") or ""
-
-                        if not folder_path and watch_folder:
-                            candidate = os.path.join(watch_folder, s_name)
-                            if os.path.exists(candidate):
-                                folder_path = candidate
 
                         if folder_path:
                             existing_paths.add(os.path.realpath(folder_path))
@@ -328,13 +323,12 @@ class KapowarrProvider(BaseProvider):
             except Exception:
                 pass
 
-        # 2. Discover local series directories in watch_folder
-        if not watch_folder:
-            watch_folder = "/mnt/disk1/Comics"
+        # 2. Discover local series directories in default comics directory
+        library_dir = "/mnt/disk1/Comics"
 
-        if watch_folder and os.path.exists(watch_folder):
+        if os.path.exists(library_dir):
             local_idx = 1
-            for root, dirs, files in os.walk(watch_folder):
+            for root, dirs, files in os.walk(library_dir):
                 cbz_cbr_files = [f for f in files if f.lower().endswith((".cbz", ".cbr"))]
                 if not cbz_cbr_files:
                     continue
@@ -344,7 +338,7 @@ class KapowarrProvider(BaseProvider):
                     continue
                 existing_paths.add(real_root)
 
-                rel_path = os.path.relpath(root, watch_folder)
+                rel_path = os.path.relpath(root, library_dir)
                 parts = rel_path.split(os.sep)
                 series_title = parts[0]
                 if len(parts) > 1 and "volume" in parts[1].lower():

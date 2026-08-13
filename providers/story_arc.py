@@ -132,7 +132,7 @@ def search_story_arcs(query: str, api_key: str = "") -> list[dict]:
 
     return results
 
-def get_story_arc_details(arc_url: str, watch_folder: str = "") -> dict:
+def get_story_arc_details(arc_url: str) -> dict:
     """Parses a Story Arc reading order and cross-references against local disk & Kapowarr."""
     if not arc_url.strip():
         return {"error": "Story Arc URL is required."}
@@ -187,7 +187,7 @@ def get_story_arc_details(arc_url: str, watch_folder: str = "") -> dict:
                         "file_path": ""
                     })
 
-        _cross_reference_issues(issues, story_arc_name=arc_title, watch_folder=watch_folder)
+        _cross_reference_issues(issues, story_arc_name=arc_title)
 
         found_count = sum(1 for i in issues if i["is_found"])
         tagged_count = sum(1 for i in issues if i["is_tagged"])
@@ -209,7 +209,7 @@ def get_story_arc_details(arc_url: str, watch_folder: str = "") -> dict:
     except Exception as e:
         return {"error": f"Error loading story arc: {e}"}
 
-def parse_custom_chronological_reading_order(text: str, arc_name: str = "Chronological Story Arc Crossover", watch_folder: str = "") -> dict:
+def parse_custom_chronological_reading_order(text: str, arc_name: str = "Chronological Story Arc Crossover") -> dict:
     """Expands multi-series range lists into issue entries and checks disk and Kapowarr."""
     lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
     expanded = []
@@ -220,54 +220,56 @@ def parse_custom_chronological_reading_order(text: str, arc_name: str = "Chronol
             ser = m_range.group(1).strip()
             start_n = int(m_range.group(2))
             end_n = int(m_range.group(3))
-            for num in range(start_n, end_n + 1):
-                expanded.append({
-                    "title": f"{ser} #{num}",
-                    "series": ser,
-                    "number": str(num),
-                    "url": f"https://comicvine.gamespot.com/search/?q={urllib.parse.quote(ser + ' ' + str(num))}",
-                    "cv_issue_id": "",
-                    "is_found": False,
-                    "is_tagged": False,
-                    "story_arc_tag": "",
-                    "story_arc_num": "",
-                    "has_matching_arc": False,
-                    "file_path": ""
-                })
-        else:
-            m_single = re.search(r"(.+?)\s*(?: issue| )?#?(\d+[a-zA-Z]?)", l, re.IGNORECASE)
-            if m_single:
-                ser = m_single.group(1).strip()
-                num = m_single.group(2).strip()
-                expanded.append({
-                    "title": f"{ser} #{num}",
-                    "series": ser,
-                    "number": num,
-                    "url": f"https://comicvine.gamespot.com/search/?q={urllib.parse.quote(ser + ' ' + num)}",
-                    "cv_issue_id": "",
-                    "is_found": False,
-                    "is_tagged": False,
-                    "story_arc_tag": "",
-                    "story_arc_num": "",
-                    "has_matching_arc": False,
-                    "file_path": ""
-                })
-            else:
-                expanded.append({
-                    "title": l,
-                    "series": l,
-                    "number": "1",
-                    "url": f"https://comicvine.gamespot.com/search/?q={urllib.parse.quote(l)}",
-                    "cv_issue_id": "",
-                    "is_found": False,
-                    "is_tagged": False,
-                    "story_arc_tag": "",
-                    "story_arc_num": "",
-                    "has_matching_arc": False,
-                    "file_path": ""
-                })
+            if start_n <= end_n:
+                for n in range(start_n, end_n + 1):
+                    expanded.append({
+                        "title": f"{ser} #{n}",
+                        "series": ser,
+                        "number": str(n),
+                        "url": "",
+                        "cv_issue_id": "",
+                        "is_found": False,
+                        "is_tagged": False,
+                        "story_arc_tag": "",
+                        "story_arc_num": "",
+                        "has_matching_arc": False,
+                        "file_path": ""
+                    })
+                continue
 
-    _cross_reference_issues(expanded, story_arc_name=arc_name, watch_folder=watch_folder)
+        m_single = re.search(r"(.+?)\s*(?: issue|,)?\s*#?(\d+[a-zA-Z]?|\d+\.\d+|½|1/2|0\.5)", l, re.IGNORECASE)
+        if m_single:
+            ser = m_single.group(1).strip()
+            num = m_single.group(2).strip()
+            expanded.append({
+                "title": f"{ser} #{num}",
+                "series": ser,
+                "number": num,
+                "url": "",
+                "cv_issue_id": "",
+                "is_found": False,
+                "is_tagged": False,
+                "story_arc_tag": "",
+                "story_arc_num": "",
+                "has_matching_arc": False,
+                "file_path": ""
+            })
+        else:
+            expanded.append({
+                "title": l,
+                "series": l,
+                "number": "1",
+                "url": "",
+                "cv_issue_id": "",
+                "is_found": False,
+                "is_tagged": False,
+                "story_arc_tag": "",
+                "story_arc_num": "",
+                "has_matching_arc": False,
+                "file_path": ""
+            })
+
+    _cross_reference_issues(expanded, story_arc_name=arc_name)
 
     found_count = sum(1 for i in expanded if i["is_found"])
     tagged_count = sum(1 for i in expanded if i["is_tagged"])
@@ -276,7 +278,7 @@ def parse_custom_chronological_reading_order(text: str, arc_name: str = "Chronol
 
     return {
         "title": arc_name,
-        "deck": f"Full Chronological Crossover Saga ({len(expanded)} total issues across tie-in series)",
+        "deck": f"Custom Chronological Reading Order ({len(expanded)} issues)",
         "url": "",
         "image": "",
         "total_issues": len(expanded),
@@ -287,16 +289,14 @@ def parse_custom_chronological_reading_order(text: str, arc_name: str = "Chronol
         "issues": expanded
     }
 
-def _cross_reference_issues(issues_list: list[dict], story_arc_name: str = "", watch_folder: str = "") -> None:
-    """Indexes local watch_folder AND Kapowarr monitored volume directories for issue matching."""
+def _cross_reference_issues(issues_list: list[dict], story_arc_name: str = "") -> None:
+    """Indexes local comics directories AND Kapowarr monitored volume directories for issue matching."""
     cfg = load_config()
-    if not watch_folder:
-        watch_folder = cfg.automation.watch_folder or "/mnt/disk1/Comics"
 
-    # Query Kapowarr volume folder paths
     search_folders = set()
-    if watch_folder and os.path.exists(watch_folder):
-        search_folders.add(watch_folder)
+    default_dir = "/mnt/disk1/Comics"
+    if os.path.exists(default_dir):
+        search_folders.add(default_dir)
 
     if cfg.kapowarr.url:
         try:

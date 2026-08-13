@@ -16,9 +16,8 @@ kapowarr:
   api_key: ""
 
 automation:
-  mode: "batch"  # batch | watch
+  mode: "batch"  # batch
   workers: 4
-  watch_folder: ""
   prefer_kapowarr: false
 
 cache:
@@ -48,7 +47,6 @@ class KapowarrConfig:
 class AutomationConfig:
     mode: str = "batch"
     workers: int = 4
-    watch_folder: str = ""
     prefer_kapowarr: bool = False
 
 @dataclass
@@ -117,7 +115,6 @@ def load_config(config_path: Optional[str] = None, cli_overrides: Optional[dict]
     auto_yaml = yaml_data.get("automation", {})
     cfg.automation.mode = str(auto_yaml.get("mode", cfg.automation.mode) or "batch")
     cfg.automation.workers = int(auto_yaml.get("workers", cfg.automation.workers) or 4)
-    cfg.automation.watch_folder = str(auto_yaml.get("watch_folder", cfg.automation.watch_folder) or "")
     cfg.automation.prefer_kapowarr = bool(auto_yaml.get("prefer_kapowarr", False))
 
     cache_yaml = yaml_data.get("cache", {})

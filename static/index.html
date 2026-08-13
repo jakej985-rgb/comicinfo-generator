@@ -393,7 +393,6 @@
         <button class="tab-btn active" data-tab="generator" onclick="switchTab('generator')">🏷️ Generator & Search</button>
         <button class="tab-btn" data-tab="kapowarr" onclick="switchTab('kapowarr')">⚡ Kapowarr Library</button>
         <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')">⚙️ Settings & Config</button>
-        <button class="tab-btn" data-tab="watcher" onclick="switchTab('watcher')">👁️ Folder Watcher</button>
         <button class="tab-btn" data-tab="storyarc" onclick="switchTab('storyarc')">📚 Story Arc Tracker</button>
         <button class="tab-btn" data-tab="stats" onclick="switchTab('stats')">📊 Cache & Stats</button>
       </nav>
@@ -556,23 +555,14 @@
           </div>
 
           <h3 style="font-size: 15px; color: var(--primary); margin-top: 12px; margin-bottom: 12px;">Automation & Output Options</h3>
-          <div class="form-row">
-            <div class="form-group">
-              <label class="form-label">Parallel Worker Threads</label>
-              <input type="number" id="cfg-workers" class="form-control" min="1" max="16" value="4">
-            </div>
-            <div class="form-group">
-              <label class="form-label">Default Watch Folder Path</label>
-              <div style="display: flex; gap: 8px;">
-                <input type="text" id="cfg-watch-folder" class="form-control" placeholder="/mnt/disk1/Comics">
-                <button type="button" class="btn btn-secondary" onclick="browseWatchFolderInSettings()">📂 Browse</button>
-              </div>
-            </div>
+          <div class="form-group" style="max-width: 300px;">
+            <label class="form-label">Parallel Worker Threads</label>
+            <input type="number" id="cfg-workers" class="form-control" min="1" max="16" value="4">
           </div>
 
           <div class="form-group">
             <label class="checkbox-label">
-              <input type="checkbox" id="cfg-prefer-kapowarr"> Prefer Kapowarr library entries over local watch folder scanner (Default OFF)
+              <input type="checkbox" id="cfg-prefer-kapowarr"> Prefer Kapowarr library entries over local folder scanner (Default OFF)
             </label>
           </div>
           <div class="form-group">
@@ -588,38 +578,6 @@
 
           <button type="submit" class="btn btn-primary" style="margin-top: 12px;">💾 Save Configuration</button>
         </form>
-      </div>
-    </div>
-
-    <!-- TAB 3: FOLDER WATCHER & BATCH MODE -->
-    <div id="tab-watcher" class="tab-content">
-      <div class="card">
-        <div class="card-header">
-          <div class="card-title">👁️ Continuous Library Folder Watcher Daemon</div>
-          <div style="display: flex; gap: 12px; align-items: center;">
-            <div id="watcher-status-badge" class="badge badge-offline">🔴 Inactive</div>
-            <label class="checkbox-label" style="font-weight: 600; font-size: 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; background: rgba(15,23,42,0.6); padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border-card);">
-              <input type="checkbox" id="watcher-toggle-checkbox" onchange="toggleWatcherDaemon(this)">
-              <span>Daemon ON / OFF</span>
-            </label>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Target Library Directory Path</label>
-          <div style="display: flex; gap: 8px;">
-            <input type="text" id="watcher-folder-input" class="form-control" placeholder="/mnt/disk1/Comics">
-            <button class="btn btn-secondary" onclick="browseWatcherFolder()">📂 Browse</button>
-          </div>
-        </div>
-
-        <div style="display: flex; gap: 12px;">
-          <button id="btn-start-watcher" class="btn btn-success" onclick="startWatcher()">▶️ Start Watcher Daemon</button>
-          <button id="btn-stop-watcher" class="btn btn-danger" onclick="stopWatcher()" style="display: none;">🛑 Stop Watcher</button>
-        </div>
-
-        <h3 style="font-size: 14px; font-weight: 600; color: var(--text-muted); margin-top: 20px;">Live Watcher Event Stream</h3>
-        <div id="watcher-log-box" class="log-box">[System] Folder Watcher initialized. Ready to monitor.</div>
       </div>
     </div>
 
@@ -759,7 +717,6 @@
       try {
         if (tabId === 'settings') loadConfiguration();
         else if (tabId === 'stats') loadCacheStats();
-        else if (tabId === 'watcher') checkWatcherStatus();
         else if (tabId === 'kapowarr') loadKapowarrLibrary();
       } catch (e) {
         console.error("Tab handler error:", e);
@@ -863,7 +820,6 @@
     function useVolumeForBatch(url, folderPath) {
       if (folderPath) {
         document.getElementById('batch-folder-path-input').value = folderPath;
-        document.getElementById('watcher-folder-input').value = folderPath;
       }
       if (url) {
         document.getElementById('batch-volume-url-input').value = url;
@@ -1447,23 +1403,11 @@
           document.getElementById('cfg-kapowarr-key').value = cfg.kapowarr.api_key || '';
           document.getElementById('cfg-comicvine-key').value = cfg.comicvine.api_key || '';
           document.getElementById('cfg-workers').value = cfg.automation.workers || 4;
-          document.getElementById('cfg-watch-folder').value = cfg.automation.watch_folder || '';
           document.getElementById('cfg-prefer-kapowarr').checked = !!cfg.automation.prefer_kapowarr;
           document.getElementById('cfg-overwrite').checked = !!cfg.output.overwrite;
           document.getElementById('cfg-delete-cbr').checked = !!cfg.output.delete_cbr;
         }
       } catch (e) {}
-    }
-
-    async function browseWatchFolderInSettings() {
-      fetch('/api/browse-folder', {method: 'POST'})
-        .then(r => r.json())
-        .then(d => {
-          if (d.folder_path) {
-            document.getElementById('cfg-watch-folder').value = d.folder_path;
-            document.getElementById('watcher-folder-input').value = d.folder_path;
-          }
-        });
     }
 
     async function saveConfiguration(e) {
@@ -1478,7 +1422,6 @@
         },
         automation: {
           workers: parseInt(document.getElementById('cfg-workers').value) || 4,
-          watch_folder: document.getElementById('cfg-watch-folder').value.trim(),
           prefer_kapowarr: document.getElementById('cfg-prefer-kapowarr').checked
         },
         output: {
@@ -1522,80 +1465,6 @@
       } catch (e) {
         statusBar.innerHTML = `<span class="badge badge-offline">Error testing providers: ${e}</span>`;
       }
-    }
-
-    // --- Watcher ---
-    async function checkWatcherStatus() {
-      try {
-        const res = await fetch('/api/watch/status');
-        const data = await res.json();
-        const badge = document.getElementById('watcher-status-badge');
-        const startBtn = document.getElementById('btn-start-watcher');
-        const stopBtn = document.getElementById('btn-stop-watcher');
-        const toggleBox = document.getElementById('watcher-toggle-checkbox');
-
-        if (data.is_active) {
-          badge.className = 'badge badge-online';
-          badge.innerText = '🟢 Daemon Active';
-          if (startBtn) startBtn.style.display = 'none';
-          if (stopBtn) stopBtn.style.display = 'inline-flex';
-          if (toggleBox) toggleBox.checked = true;
-          document.getElementById('watcher-folder-input').value = data.watch_folder;
-        } else {
-          badge.className = 'badge badge-offline';
-          badge.innerText = '🔴 Daemon Inactive';
-          if (startBtn) startBtn.style.display = 'inline-flex';
-          if (stopBtn) stopBtn.style.display = 'none';
-          if (toggleBox) toggleBox.checked = false;
-        }
-      } catch (e) {}
-    }
-
-    function toggleWatcherDaemon(checkbox) {
-      if (checkbox.checked) {
-        startWatcher();
-      } else {
-        stopWatcher();
-      }
-    }
-
-    async function browseWatcherFolder() {
-      fetch('/api/browse-folder', {method: 'POST'})
-        .then(r => r.json())
-        .then(d => {
-          if (d.folder_path) document.getElementById('watcher-folder-input').value = d.folder_path;
-        });
-    }
-
-    async function startWatcher() {
-      const folder = document.getElementById('watcher-folder-input').value.trim();
-      try {
-        const res = await fetch('/api/watch/start', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({folder_path: folder})
-        });
-        const data = await res.json();
-        if (data.success) {
-          alert("✅ " + data.message);
-          checkWatcherStatus();
-        } else {
-          alert("❌ Error: " + data.error);
-        }
-      } catch (e) {
-        alert("❌ Error: " + e);
-      }
-    }
-
-    async function stopWatcher() {
-      try {
-        const res = await fetch('/api/watch/stop', {method: 'POST'});
-        const data = await res.json();
-        if (data.success) {
-          alert("✅ Watcher stopped.");
-          checkWatcherStatus();
-        }
-      } catch (e) {}
     }
 
     // --- Cache Stats ---
