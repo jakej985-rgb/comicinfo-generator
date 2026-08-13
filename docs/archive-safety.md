@@ -1,67 +1,140 @@
-# Actual Archive Safety — ComicInfo Generator
+# Archive Safety — ComicInfo Generator
 
-## 1. Overview
+## Purpose
 
-Archive modification and file updates are handled in [`writers/archive.py`](file:///home/m3tal/apps/comicinfo-generator/writers/archive.py) and [`converters/cbr_to_cbz.py`](file:///home/m3tal/apps/comicinfo-generator/converters/cbr_to_cbz.py).
+Describes every safety guarantee that `writers/archive.py` provides  
+and the invariants that must be maintained for all archive operations.
 
 ---
 
-## 2. Current Implementation (`embed_comicinfo_in_cbz`)
+## Responsibilities
 
-The `embed_comicinfo_in_cbz(archive_path, comic)` function updates or embeds a `ComicInfo.xml` file inside a `.cbz` archive:
+`writers/archive.py → embed_comicinfo_in_cbz(archive_path, comic)`
+
+1. Record original archive entry list (Phase 18)
+2. Create a temporary `.cbz` in the **same directory** as the target
+3. Write all original entries (except old `ComicInfo.xml`) into the temp file
+4. Write the new `ComicInfo.xml`
+5. Preserve file permissions, timestamps, and ownership (Phase 17)
+6. Verify the temp file before replacement (Phase 18)
+7. `fsync` the temp file to stable storage (Phase 16)
+8. `os.replace()` — atomic swap (Phase 16)
+9. Verify the final file after replacement (Phase 18)
+
+---
+
+## The Atomic Write Contract
 
 ```text
-Target Archive (.cbz)
-        │
-        ▼
-Validation Checks:
-  - Check file exists (FileNotFoundError)
-  - Verify zipfile.is_zipfile(archive_path) (ValueError)
-        │
-        ▼
-Generate XML Bytes (writers/comicinfo.py generate_xml_bytes)
-        │
-        ▼
-Create Temporary File in System Temp Directory (/tmp):
-  tempfile.NamedTemporaryFile(dir=tempfile.gettempdir(), suffix=".cbz")
-        │
-        ▼
-Copy Archive Contents:
-  - Open source ZIP ('r') and target temp ZIP ('w')
-  - Copy all files EXCEPT existing 'comicinfo.xml'
-  - Write new 'ComicInfo.xml' at ZIP root
-        │
-        ▼
-Replace Original Archive:
-  shutil.move(temp_path, archive_path)
+[original.cbz]  ──read──▶  [.tmp_XXXXXX.cbz]
+                                    │
+                            verify_cbz_archive()
+                                    │
+                               fsync()
+                                    │
+                           os.replace(tmp → original)
+                                    │
+                            verify_cbz_archive()
 ```
+
+`os.replace()` is atomic on POSIX systems when source and destination are on the same filesystem.  
+The temp file is **always created in the same directory** as the target to guarantee this.
 
 ---
 
-## 3. Permission Fallback & Takeover Behavior (`_try_takeover_folder_permissions`)
+## Verification (`verify_cbz_archive`)
 
-If `shutil.move()` raises a `PermissionError` or `OSError` (e.g. when network shares mounted from NAS/Kapowarr create read-only directories), `writers/archive.py` calls `_try_takeover_folder_permissions()`:
+Every archive is verified at two checkpoints:
 
-```text
-_try_takeover_folder_permissions(archive_path, temp_path)
-        │
-        ▼
-1. Locate parent volume directory (vol_dir = os.path.dirname(archive_path))
-2. Rename vol_dir to hidden backup folder:
-   .{vol_name}_kapowarr_bak
-3. Re-create fresh volume directory (os.makedirs(vol_dir)) owned by current user
-4. Move newly embedded temp_path file into vol_dir
-5. Copy all other files from .bak folder into new vol_dir
-```
+| Step | What is verified |
+|---|---|
+| Pre-replace (temp file) | ZIP integrity, ComicInfo.xml present, XML parseable, images present, no entry deletions |
+| Post-replace (final file) | Same checks again on the written file |
 
-> **Warning / Security Note**:
-> This folder takeover mechanism modifies parent directory structures and file ownership on disk. It is flagged in `plan.md` as unsafe for unattended library automation and must be disabled or replaced with explicit error handling.
+Verification failure raises `ArchiveValidationError` and aborts.
 
 ---
 
-## 4. CBR (RAR) to CBZ (ZIP) Conversion (`converters/cbr_to_cbz.py`)
+## CBR → CBZ Conversion Safety
 
-When an input comic is in `.cbr` (RAR) format:
-1. `convert_cbr_to_cbz(cbr_path, delete_original=True)` extracts RAR entries using `patool` or system archive utilities (`unrar` / `bsdtar`) into a temporary working folder.
-2. Creates a clean `.cbz` ZIP archive containing all extracted page images.
-3. If `delete_original` is True, removes the original `.cbr` file on success.
+Defined in `converters/cbr_to_cbz.py`:
+
+> **The original `.cbr` must never be deleted until:**
+> 1. The `.cbz` file has been fully written
+> 2. The `.cbz` has been verified (`verify_cbz_archive`)
+> 3. The `.cbz` has been embedded with `ComicInfo.xml`
+> 4. Post-embed verification has passed
+
+`delete_original=True` is only honoured after all four conditions are met.
+
+---
+
+## Exception Hierarchy
+
+| Exception | When raised |
+|---|---|
+| `ArchiveReadError` | Archive does not exist, is not a ZIP, or cannot be opened |
+| `ArchiveWriteError` | Temp file creation fails, disk full, `os.replace` fails, permission denied |
+| `ArchiveValidationError` | Integrity check fails before or after replacement |
+
+All three inherit from `ArchiveError`. Callers should catch `ArchiveError` to handle all archive failures.
+
+---
+
+## Temp File Cleanup
+
+If any step between temp-file creation and `os.replace` fails:
+- The temp file is **always deleted** in the `except` block
+- The original archive is **never touched**
+
+This is tested by Phase 38 failure-injection tests.
+
+---
+
+## Dry-Run Mode
+
+When `--dry-run` is passed to `main.py`:
+- `embed_comicinfo_in_cbz` is **never called**
+- No archive, temp file, or file hash is modified
+- Dry-run mode logs what would have happened without doing it
+
+---
+
+## Invariants
+
+1. The original archive is never modified in-place — only replaced atomically.
+2. Temp files are always created in the same directory as the target.
+3. Verification runs before **and** after every replacement.
+4. A failed verification leaves the original archive intact.
+5. `.cbr` originals are never deleted until their `.cbz` replacement is fully verified.
+6. `fsync` is called before `os.replace` to ensure the temp file is on stable storage.
+
+---
+
+## Failure Modes
+
+| Failure | Result |
+|---|---|
+| Permission denied | `ArchiveWriteError` raised, temp deleted, original safe |
+| Disk full (ENOSPC) | `ArchiveWriteError` raised, temp deleted, original size unchanged |
+| `os.replace` failure | `ArchiveWriteError` raised, temp deleted, original safe |
+| Invalid XML generated | `ArchiveValidationError` on pre-replace verify, temp deleted, original safe |
+| Corrupt image entry in original | `ArchiveValidationError` on `testzip()`, aborts before replacement |
+
+---
+
+## Testing Requirements
+
+- Every archive write path must have a corresponding failure-injection test (Phase 38).
+- Tests must assert: original archive exists and has the same size after a failed embed.
+- Temp file leak tests must confirm zero `.tmp_*` files remain after failure.
+
+---
+
+## Do-Not-Do Rules
+
+- Do not write directly to the target archive — always use temp + `os.replace`.
+- Do not skip `verify_cbz_archive` before or after replacement.
+- Do not delete the original `.cbr` before the `.cbz` is fully verified.
+- Do not use cross-filesystem temp directories (e.g. `/tmp`) — must be same directory.
+- Do not catch `ArchiveError` silently — always log and record job failure.
