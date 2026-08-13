@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Describes the **actual, implemented** architecture of `comicinfo-generator` as of Phase 67.  
+Describes the implemented architecture of `comicinfo-generator`.  
 This document reflects real code and enforced boundaries.
 
 ---

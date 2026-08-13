@@ -73,7 +73,7 @@ Every provider operation is classified and recorded in `ProviderOperationResult`
 
 ---
 
-## Rate Limiting (Phase 35)
+## Rate Limiting
 
 All providers route through `observability/rate_limiter.py` before making HTTP requests.
 
@@ -91,7 +91,7 @@ rate_limiter.acquire("ComicVine")
 
 ---
 
-## Retry Policy (Phase 36)
+## Retry Policy
 
 Use `@with_retry` from `observability/retry.py` on any provider HTTP call.
 

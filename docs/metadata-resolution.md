@@ -10,8 +10,8 @@ Describes the **actual, implemented** two-phase metadata resolution and validati
 
 `pipeline/resolver.py → MetadataResolver`
 
-1. **Phase 1 — Identity Resolution** (`resolve_identity`): determines *what* the comic is and produces a `ComicIdentity` with `CanonicalIdentityKey`.
-2. **Phase 2 — Metadata Retrieval & Validation** (`retrieve_metadata_result`): fetches full details for a resolved identity and returns a structured `MetadataRetrievalResult` (`SUCCESS`, `NOT_FOUND`, `INVALID`, `PROVIDER_ERROR`).
+1. **Stage 1 — Identity Resolution** (`resolve_identity`): determines *what* the comic is and produces a `ComicIdentity` with `CanonicalIdentityKey`.
+2. **Stage 2 — Metadata Retrieval & Validation** (`retrieve_metadata_result`): fetches full details for a resolved identity and returns a structured `MetadataRetrievalResult` (`SUCCESS`, `NOT_FOUND`, `INVALID`, `PROVIDER_ERROR`).
 3. **Pipeline Orchestration** (`resolve_file_pipeline`): executes the full end-to-end flow returning a structured `ResolutionResult` capturing provider operation outcomes, identity decisions, conflict lists, and candidate objects.
 
 These phases are strictly separated. No metadata retrieval occurs before identity is confirmed, and no archive write occurs without successful metadata validation.
