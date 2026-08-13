@@ -1023,105 +1023,105 @@ The project is production-ready only when all of these are true.
 
 Identity
 
-[ ] Filename alone cannot produce an automatic identity.
+[x] Filename alone cannot produce an automatic identity.
 
-[ ] Identity resolution and metadata retrieval are separate states.
+[x] Identity resolution and metadata retrieval are separate states.
 
-[ ] Metadata failure cannot become successful metadata.
+[x] Metadata failure cannot become successful metadata.
 
-[ ] Provider disagreement causes review.
+[x] Provider disagreement causes review.
 
-[ ] Critical identity conflicts cannot auto-update.
+[x] Critical identity conflicts cannot auto-update.
 
-[ ] Score margin is enforced.
+[x] Score margin is enforced.
 
-[ ] Complex issue numbers remain intact.
+[x] Complex issue numbers remain intact.
 
-[ ] Variants/editions are distinguishable.
+[x] Variants/editions are distinguishable.
 
-[ ] Existing XML authority is explicitly evaluated.
+[x] Existing XML authority is explicitly evaluated.
 
 Providers
 
-[ ] NOT_FOUND differs from provider failure.
+[x] NOT_FOUND differs from provider failure.
 
-[ ] Rate limiting is preserved.
+[x] Rate limiting is preserved.
 
-[ ] Retryable errors are distinguished.
+[x] Retryable errors are distinguished.
 
-[ ] Provider state survives into the final job result.
+[x] Provider state survives into the final job result.
 
-[ ] No provider exception is silently discarded.
+[x] No provider exception is silently discarded.
 
-[ ] No live provider requests occur in unit tests.
+[x] No live provider requests occur in unit tests.
 
 Metadata
 
-[ ] Successful identity does not imply successful metadata.
+[x] Successful identity does not imply successful metadata.
 
-[ ] Partial metadata cannot silently become a full Comic.
+[x] Partial metadata cannot silently become a full Comic.
 
-[ ] Invalid metadata cannot be written.
+[x] Invalid metadata cannot be written.
 
-[ ] Provider lookup failure leaves the archive untouched.
+[x] Provider lookup failure leaves the archive untouched.
 
 Archives
 
-[ ] Temporary archive is on the same filesystem.
+[x] Temporary archive is on the same filesystem.
 
-[ ] Pre-replacement verification passes.
+[x] Pre-replacement verification passes.
 
-[ ] Atomic replacement is used.
+[x] Atomic replacement is used.
 
-[ ] File fsync is performed.
+[x] File fsync is performed.
 
-[ ] Directory fsync is performed.
+[x] Directory fsync is performed.
 
-[ ] fsync failures are handled explicitly.
+[x] fsync failures are handled explicitly.
 
-[ ] Existing entries are preserved.
+[x] Existing entries are preserved.
 
-[ ] CRC/size verification passes.
+[x] CRC/size verification passes.
 
-[ ] Strict SHA256 verification is available.
+[x] Strict SHA256 verification is available.
 
-[ ] Post-replacement verification passes.
+[x] Post-replacement verification passes.
 
 Queue
 
-[ ] Jobs cannot be double-claimed.
+[x] Jobs cannot be double-claimed.
 
-[ ] Worker leases work.
+[x] Worker leases work.
 
-[ ] Crashed workers are recoverable.
+[x] Crashed workers are recoverable.
 
-[ ] Poison jobs stop retrying.
+[x] Poison jobs stop retrying.
 
-[ ] Multiple workers can safely operate concurrently.
+[x] Multiple workers can safely operate concurrently.
 
 Automation
 
-[ ] Self-written archives are ignored.
+[x] Self-written archives are ignored.
 
-[ ] Restart does not cause duplicate processing.
+[x] Restart does not cause duplicate processing.
 
-[ ] Rapid file changes are deduplicated.
+[x] Rapid file changes are deduplicated.
 
-[ ] Failed jobs do not loop forever.
+[x] Failed jobs do not loop forever.
 
 Dry Run
 
-[ ] No archive modification.
+[x] No archive modification.
 
-[ ] No cache modification.
+[x] No cache modification.
 
-[ ] No job modification.
+[x] No job modification.
 
-[ ] No temporary files.
+[x] No temporary files.
 
-[ ] No persistent database writes.
+[x] No persistent database writes.
 
-[ ] Before/after filesystem state is identical.
+[x] Before/after filesystem state is identical.
 
 ---
 
