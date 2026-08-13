@@ -2,6 +2,17 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 @dataclass
+class IdentityEvidence:
+    """Represents a specific evidence signal that contributed to identity candidate scoring."""
+    source: str = ""        # e.g. "Comic Vine", "Filename", "Kapowarr"
+    field: str = ""         # e.g. "issue_number", "series_name", "publisher"
+    expected: str = ""      # Expected value from target file
+    actual: str = ""        # Actual value from provider candidate
+    score: float = 0.0      # Score points (+30, -50, etc.)
+    explanation: str = ""   # Human-readable explanation
+
+
+@dataclass
 class ComicIdentity:
     """
     Represents the resolved identity of a comic issue/volume
@@ -18,13 +29,16 @@ class ComicIdentity:
     publication_year: int = 0         # Primary publication year
     volume: str = ""                  # Volume number/year
     issue_number: str = ""            # Issue number string (e.g. "1", "1A", "0.5")
-    confidence: float = 0.0           # Confidence score (0.0 to 1.0)
+    identity_type: str = "Issue"      # "Issue", "Volume", "TPB", "Collected"
+    confidence: float = 0.0           # Confidence score (0.0 to 100.0)
+    confidence_level: str = "UNRESOLVED" # "AUTO_ACCEPT", "MANUAL_REVIEW", "UNRESOLVED"
     confidence_reasons: List[str] = field(default_factory=list)
+    evidence: List[IdentityEvidence] = field(default_factory=list)
 
     @property
     def is_resolved(self) -> bool:
         """Returns True if identity confidence meets threshold."""
-        return self.confidence >= 0.5 and bool(self.series_name)
+        return self.confidence >= 50.0 and bool(self.series_name)
 
     def to_dict(self) -> dict:
         """Converts identity instance to dictionary."""
@@ -40,7 +54,10 @@ class ComicIdentity:
             "publication_year": self.publication_year,
             "volume": self.volume,
             "issue_number": self.issue_number,
+            "identity_type": self.identity_type,
             "confidence": self.confidence,
+            "confidence_level": self.confidence_level,
             "confidence_reasons": self.confidence_reasons,
+            "evidence": [e.__dict__ for e in self.evidence],
             "is_resolved": self.is_resolved
         }
