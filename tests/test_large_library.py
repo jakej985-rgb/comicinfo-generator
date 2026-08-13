@@ -711,14 +711,14 @@ class TestLargeLibraryValidation(unittest.TestCase):
         Phase 44: Verifies similar series disambiguation:
         Batman (1940) vs Batman (2011) vs Batman (2016) vs Batman Adventures vs Batman Beyond vs Batman Superman
         """
-        resolver = MetadataResolver(config=self.config, cache_mgr=self.cache_mgr)
-
         with patch("pipeline.resolver.KapowarrProvider") as MockKap, \
              patch("pipeline.resolver.ComicVineProvider") as MockCV, \
              patch("pipeline.resolver.GCPProvider"):
 
             MockKap.return_value.test_connection.return_value = False
             MockCV.return_value.search_issue.side_effect = lambda q: self._mock_provider_search(q)
+
+            resolver = MetadataResolver(config=self.config, cache_mgr=self.cache_mgr)
 
             # 1. Batman Beyond #1 (1999) must NOT match Batman (1940) #1
             path_bb = self._create_test_cbz("Batman Beyond (1999)/Batman Beyond #001 (1999).cbz")
