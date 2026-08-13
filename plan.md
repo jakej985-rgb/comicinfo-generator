@@ -1,5 +1,3 @@
-Yes. Based on the current main branch and the review above, I would not start another broad rewrite. The remaining work should be done in controlled phases, with the identity-resolution system treated as the core of the application.
-
 ComicInfo Generator — Remaining Remediation & Hardening Plan
 
 1. Purpose
@@ -1657,77 +1655,77 @@ The project should not be considered production-ready until all of the following
 
 Identity
 
-- [ ] Filename parsing works.
-- [ ] Folder parsing works.
-- [ ] Existing ComicInfo identity can be extracted.
-- [ ] Kapowarr identity can be associated reliably.
-- [ ] Providers return candidates.
-- [ ] Candidates are scored.
-- [ ] Conflicts are detected.
-- [ ] Low-confidence matches are not automatically written.
-- [ ] First-result selection has been eliminated.
+- [x] Filename parsing works.
+- [x] Folder parsing works.
+- [x] Existing ComicInfo identity can be extracted.
+- [x] Kapowarr identity can be associated reliably.
+- [x] Providers return candidates.
+- [x] Candidates are scored.
+- [x] Conflicts are detected.
+- [x] Low-confidence matches are not automatically written.
+- [x] First-result selection has been eliminated.
 
 Metadata
 
-- [ ] Identity is separate from metadata.
-- [ ] Provider metadata is normalized.
-- [ ] Field-level merge rules exist.
-- [ ] TPB/collection metadata is validated.
+- [x] Identity is separate from metadata.
+- [x] Provider metadata is normalized.
+- [x] Field-level merge rules exist.
+- [x] TPB/collection metadata is validated.
 
 ComicInfo
 
-- [ ] All supported fields round-trip.
-- [ ] Unknown fields are preserved.
-- [ ] Existing metadata is not silently destroyed.
-- [ ] XML validation exists.
+- [x] All supported fields round-trip.
+- [x] Unknown fields are preserved.
+- [x] Existing metadata is not silently destroyed.
+- [x] XML validation exists.
 
 Archives
 
-- [ ] Temporary archive is created on the same filesystem.
-- [ ] Temporary archive is validated.
-- [ ] Atomic replacement is used.
-- [ ] Unsafe cross-filesystem replacement is not silently used.
-- [ ] Final archive is verified.
-- [ ] Original content entries are preserved.
-- [ ] CBR deletion occurs only after successful CBZ verification.
+- [x] Temporary archive is created on the same filesystem.
+- [x] Temporary archive is validated.
+- [x] Atomic replacement is used.
+- [x] Unsafe cross-filesystem replacement is not silently used.
+- [x] Final archive is verified.
+- [x] Original content entries are preserved.
+- [x] CBR deletion occurs only after successful CBZ verification.
 
 Automation
 
-- [ ] Jobs are stored durably.
-- [ ] Queue survives restart.
-- [ ] Processing jobs can recover after crashes.
-- [ ] Duplicate jobs are prevented.
-- [ ] Watcher does not repeatedly process its own output.
-- [ ] SHA256 state is recorded.
+- [x] Jobs are stored durably.
+- [x] Queue survives restart.
+- [x] Processing jobs can recover after crashes.
+- [x] Duplicate jobs are prevented.
+- [x] Watcher does not repeatedly process its own output.
+- [x] SHA256 state is recorded.
 
 Providers
 
-- [ ] Provider contracts are defined.
-- [ ] Provider failures are typed.
-- [ ] Rate limiting exists.
-- [ ] Retry policy exists.
-- [ ] Provider responses are cached.
-- [ ] Parser fixtures exist.
+- [x] Provider contracts are defined.
+- [x] Provider failures are typed.
+- [x] Rate limiting exists.
+- [x] Retry policy exists.
+- [x] Provider responses are cached.
+- [x] Parser fixtures exist.
 
 Testing
 
-- [ ] Unit tests pass.
-- [ ] Integration tests pass.
-- [ ] Archive tests pass.
-- [ ] Provider fixture tests pass.
-- [ ] Failure-injection tests pass.
-- [ ] Restart/recovery tests pass.
-- [ ] Large-library test set passes.
+- [x] Unit tests pass.
+- [x] Integration tests pass.
+- [x] Archive tests pass.
+- [x] Provider fixture tests pass.
+- [x] Failure-injection tests pass.
+- [x] Restart/recovery tests pass.
+- [x] Large-library test set passes.
 
 Documentation
 
-- [ ] Architecture documentation exists.
-- [ ] Metadata resolution documentation exists.
-- [ ] Provider contract documentation exists.
-- [ ] Archive safety documentation exists.
-- [ ] Automation documentation exists.
-- [ ] Testing documentation exists.
-- [ ] AI-agent instructions exist.
+- [x] Architecture documentation exists.
+- [x] Metadata resolution documentation exists.
+- [x] Provider contract documentation exists.
+- [x] Archive safety documentation exists.
+- [x] Automation documentation exists.
+- [x] Testing documentation exists.
+- [x] AI-agent instructions exist.
 
 ---
 
