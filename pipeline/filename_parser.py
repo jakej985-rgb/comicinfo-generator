@@ -54,8 +54,8 @@ def parse_filename_identity(file_path: str) -> ParsedFilename:
         # Fallback to issue keyword Issue 01
         m_num = re.search(r"\bissue\s*#?\s*(\d+½|\d+/\d+|\d+\.\d+|\d+[a-zA-Z]?|½|1/2|0\.5|0)", name_no_ext, re.I)
     if not m_num:
-        # Fallback to trailing space number e.g. "Batman 001"
-        m_num = re.search(r"\b(\d{1,4}[a-zA-Z]?)\b(?=[^\d]*$)", name_no_ext)
+        # Fallback to trailing space/underscore/dash number e.g. "Batman 001", "Batman_001"
+        m_num = re.search(r"(?:^|[\s_\-#])(\d{1,4}[a-zA-Z]?)\b(?=[^\d]*$)", name_no_ext)
 
     if m_num:
         raw_num = m_num.group(1).strip()

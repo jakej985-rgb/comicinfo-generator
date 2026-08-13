@@ -26,11 +26,16 @@ class ArchiveValidationError(ArchiveError):
     """Raised when post-replacement verification fails."""
 
 
-def verify_cbz_archive(archive_path: str, original_entries: Optional[Set[str]] = None):
+def verify_cbz_archive(
+    archive_path: str,
+    original_entries: Optional[Set[str]] = None,
+    original_manifest: Optional[dict] = None
+):
     """
-    Phase 18: Expands archive verification before and after replacement.
+    Phase 18 & Phase 47: Expands archive verification before and after replacement.
     Ensures valid ZIP format, no corrupted files, presence and parseability of ComicInfo.xml,
-    valid image count, and zero unexpected entry deletions compared to original archive entries.
+    valid image count, zero unexpected entry deletions, and exact CRC/size matching
+    for untouched non-ComicInfo entries (original CRC == temporary CRC).
     """
     if not os.path.exists(archive_path) or os.path.getsize(archive_path) == 0:
         raise ArchiveValidationError(
@@ -93,6 +98,28 @@ def verify_cbz_archive(archive_path: str, original_entries: Optional[Set[str]] =
                         operation="verify_entry_preservation"
                     )
 
+            # 6. Phase 47: Verify CRC and file size of every untouched non-ComicInfo entry
+            if original_manifest is not None:
+                new_info_map = {item.filename.lower(): (item.CRC, item.file_size) for item in z.infolist()}
+                for orig_name, (orig_crc, orig_size) in original_manifest.items():
+                    if orig_name.lower() == "comicinfo.xml":
+                        continue
+                    new_meta = new_info_map.get(orig_name.lower())
+                    if not new_meta:
+                        raise ArchiveValidationError(
+                            f"Missing original entry '{orig_name}' in modified archive.",
+                            archive_path=archive_path,
+                            operation="verify_entry_manifest"
+                        )
+                    new_crc, new_size = new_meta
+                    if orig_crc != new_crc or orig_size != new_size:
+                        raise ArchiveValidationError(
+                            f"Entry integrity mismatch for '{orig_name}': original CRC={orig_crc}, size={orig_size} "
+                            f"vs new CRC={new_crc}, size={new_size}.",
+                            archive_path=archive_path,
+                            operation="verify_entry_integrity"
+                        )
+
     except Exception as e:
         if isinstance(e, ArchiveValidationError):
             raise e
@@ -137,20 +164,38 @@ def fsync_file(file_path: str):
         pass
 
 
+def fsync_directory(dir_path: str):
+    """
+    Phase 47: Fsyncs directory descriptor to ensure directory entry changes are committed to disk media.
+    """
+    try:
+        flags = os.O_RDONLY
+        if hasattr(os, "O_DIRECTORY"):
+            flags |= os.O_DIRECTORY
+        fd = os.open(dir_path, flags)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except Exception:
+        pass
+
+
 def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
     """
     Embeds or updates ComicInfo.xml inside a .cbz (ZIP) archive atomically.
     Returns the path to the updated archive.
 
     Guarantees strict same-filesystem atomic transactions:
-    1. Record original archive entries (Phase 18)
+    1. Record original archive entries and CRC manifest (Phase 18 & 47)
     2. Create temporary archive in same target directory
-    3. Write updated ZIP contents
+    3. Write updated ZIP contents preserving ZipInfo metadata & image compression
     4. Preserve permissions & timestamps (Phase 17)
-    5. Pre-replacement integrity verification & entry comparison (Phase 18)
+    5. Pre-replacement integrity verification & entry comparison (Phase 18 & 47)
     6. fsync temporary file to storage media (Phase 16)
     7. os.replace() atomic swap (Phase 16)
-    8. Post-replacement verification
+    8. fsync directory durability (Phase 47)
+    9. Post-replacement verification
     """
     if not os.path.exists(archive_path):
         raise ArchiveReadError(
@@ -181,11 +226,13 @@ def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
     archive_dir = os.path.dirname(os.path.abspath(archive_path))
     file_name = os.path.basename(archive_path)
 
-    # Phase 18: Record original archive entries
+    # Phase 18 & 47: Record original archive entries and CRC manifest
     original_entries = set()
+    original_manifest = {}
     try:
         with zipfile.ZipFile(archive_path, 'r') as src_z:
             original_entries = set(src_z.namelist())
+            original_manifest = {item.filename: (item.CRC, item.file_size) for item in src_z.infolist()}
     except Exception:
         pass
 
@@ -217,8 +264,8 @@ def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
         # Phase 17: Preserve file metadata (permissions, mtime, atime, UID/GID)
         preserve_file_metadata(archive_path, temp_path)
 
-        # Phase 18: Pre-replacement integrity verification on temp file comparing original entries
-        verify_cbz_archive(temp_path, original_entries=original_entries)
+        # Phase 18 & 47: Pre-replacement integrity verification on temp file comparing original entries & CRC manifest
+        verify_cbz_archive(temp_path, original_entries=original_entries, original_manifest=original_manifest)
 
         # Phase 16 Step 4: fsync temporary file
         fsync_file(temp_path)
@@ -234,8 +281,12 @@ def embed_comicinfo_in_cbz(archive_path: str, comic: Comic) -> str:
                 original_exception=re_err
             )
 
+        # Phase 47: Directory durability (fsync file + fsync parent directory)
+        fsync_file(archive_path)
+        fsync_directory(archive_dir)
+
         # Phase 16 Step 6: Post-replacement verification on final file
-        verify_cbz_archive(archive_path, original_entries=original_entries)
+        verify_cbz_archive(archive_path, original_entries=original_entries, original_manifest=original_manifest)
 
     except PermissionError as pe:
         if os.path.exists(temp_path):

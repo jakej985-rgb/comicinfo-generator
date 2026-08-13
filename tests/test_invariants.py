@@ -197,5 +197,30 @@ class TestArchitecturalInvariants(unittest.TestCase):
             self.assertEqual(provider, "Kapowarr")
 
 
+    # 9. API Handler Invariant: Handlers route to services, never directly importing providers.
+    def test_invariant_9_api_handlers_no_direct_provider_imports(self):
+        import ast
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        handlers_path = os.path.join(repo_root, "api", "handlers.py")
+        with open(handlers_path, "r", encoding="utf-8") as f:
+            tree = ast.parse(f.read(), filename=handlers_path)
+
+        violating_imports = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.startswith("providers.") or alias.name == "providers":
+                        violating_imports.append((node.lineno, alias.name))
+            elif isinstance(node, ast.ImportFrom):
+                if node.module and (node.module.startswith("providers.") or node.module == "providers"):
+                    violating_imports.append((node.lineno, node.module))
+
+        self.assertEqual(
+            len(violating_imports), 0,
+            f"api/handlers.py violates boundary invariant by importing providers: {violating_imports}"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
+

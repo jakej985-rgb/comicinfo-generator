@@ -16,10 +16,13 @@ import yaml
 
 from config import load_config, init_config, DEFAULT_CONFIG_PATH
 from cache.db import CacheManager
-from providers.kapowarr import KapowarrProvider
-from providers.gcp import GCPProvider
-from providers.story_arc import (
+from services.kapowarr import (
+    get_kapowarr_library_status, test_kapowarr_connection, request_kapowarr_issue_download
+)
+from services.story_arc import (
     search_story_arcs, get_story_arc_details,
+    fix_story_arcs_on_device, clean_duplicate_story_arcs_on_device,
+    rename_story_arc_on_device, update_issue_arc_number_on_device,
     parse_custom_chronological_reading_order, MARVEL_ZOMBIES_PRESET_TEXT
 )
 from pipeline.resolver import MetadataResolver, read_existing_comicinfo
@@ -99,9 +102,8 @@ class ComicServerHandler(BaseHTTPRequestHandler):
         elif path == "/api/kapowarr/library":
             try:
                 cfg = load_config()
-                kap = KapowarrProvider(url=cfg.kapowarr.url, api_key=cfg.kapowarr.api_key)
-                items = kap.get_library_status(prefer_kapowarr=cfg.automation.prefer_kapowarr)
-                self._json(200, {"online": kap.test_connection(), "items": items})
+                res = get_kapowarr_library_status(cfg)
+                self._json(200, res)
             except Exception as e:
                 self._json(500, {"error": str(e)})
 
@@ -245,10 +247,10 @@ class ComicServerHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/provider/test":
             cfg = load_config()
-            kap = KapowarrProvider(url=cfg.kapowarr.url, api_key=cfg.kapowarr.api_key)
+            online = test_kapowarr_connection(cfg.kapowarr.url, cfg.kapowarr.api_key)
             self._json(200, {
                 "success": True,
-                "kapowarr": {"name": "Kapowarr", "url": cfg.kapowarr.url, "online": kap.test_connection()},
+                "kapowarr": {"name": "Kapowarr", "url": cfg.kapowarr.url, "online": online},
                 "comicvine": {"name": "ComicVine", "ready": True},
                 "gcp": {"name": "Grand Comics Database", "ready": True}
             })
@@ -454,8 +456,8 @@ class ComicServerHandler(BaseHTTPRequestHandler):
         elif path == "/api/kapowarr/request-issue":
             try:
                 cfg = load_config()
-                kap = KapowarrProvider(url=cfg.kapowarr.url, api_key=cfg.kapowarr.api_key)
-                res = kap.request_issue_download(
+                res = request_kapowarr_issue_download(
+                    cfg,
                     issue_id=fields.get("issue_id", ""),
                     cv_volume_id=fields.get("cv_volume_id", ""),
                     issue_title=fields.get("issue_title", "")
@@ -501,7 +503,6 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             story_arc_name = (fields.get("story_arc_name") or fields.get("arc_name")
                               or fields.get("title") or "Story Arc")
             try:
-                from providers.story_arc import fix_story_arcs_on_device
                 self._json(200, fix_story_arcs_on_device(
                     fields.get("issues", []), story_arc_name=story_arc_name))
             except Exception as e:
@@ -509,7 +510,6 @@ class ComicServerHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/story-arc/clean-duplicate-tags":
             try:
-                from providers.story_arc import clean_duplicate_story_arcs_on_device
                 self._json(200, clean_duplicate_story_arcs_on_device(fields.get("issues", [])))
             except Exception as e:
                 self._json(500, {"error": str(e)})
@@ -521,7 +521,6 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 self._json(400, {"error": "old_name and new_name are required."})
                 return
             try:
-                from providers.story_arc import rename_story_arc_on_device
                 self._json(200, rename_story_arc_on_device(
                     fields.get("issues", []), old_name=old_name, new_name=new_name))
             except Exception as e:
@@ -536,7 +535,6 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                     "error": "file_path, story_arc_name, and new_arc_number are required."})
                 return
             try:
-                from providers.story_arc import update_issue_arc_number_on_device
                 self._json(200, update_issue_arc_number_on_device(
                     file_path, story_arc_name, new_arc_number))
             except Exception as e:

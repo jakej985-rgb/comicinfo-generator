@@ -1,80 +1,62 @@
 import sys
 import os
 from config import load_config
-from pipeline.resolver import MetadataResolver
-from pipeline.filename_parser import parse_filename_identity
+from pipeline.dry_run import DryRunContext
 from app import run_server
 
 def run_dry_run(target_path: str):
     """
-    Phase 24: Executes a dry-run evaluation on a file or folder directory,
+    Phase 24 & 50: Executes a true side-effect-free dry-run evaluation on a file or folder directory,
     displaying resolved identity, confidence, evidence list, action, and changes
-    without modifying any archive files.
+    without modifying any archive files or persistent database state.
     """
     cfg = load_config()
-    resolver = MetadataResolver(cfg)
     target = os.path.abspath(target_path)
 
     print("=" * 65)
     print(f" DRY-RUN MODE: Evaluating '{target}'")
-    print(" NO ARCHIVE FILES WILL BE MODIFIED")
+    print(" NO ARCHIVE FILES OR PERSISTENT DATABASES WILL BE MODIFIED")
     print("=" * 65)
 
-    if os.path.isfile(target):
-        files = [target]
-    elif os.path.isdir(target):
-        files = [os.path.join(target, f) for f in sorted(os.listdir(target)) if f.lower().endswith(('.cbz', '.cbr'))]
-    else:
-        print(f"Error: Path '{target}' not found.")
-        return
+    with DryRunContext(config=cfg) as ctx:
+        results = ctx.evaluate_target(target)
+        if not results:
+            print(f"Error: Path '{target}' not found or contains no eligible comic archives.")
+            return
 
-    for idx, fpath in enumerate(files, 1):
-        filename = os.path.basename(fpath)
-        parsed = parse_filename_identity(fpath)
-        identity, decision = resolver.resolve_identity(fpath)
-        comic = resolver.retrieve_metadata(identity) if (identity and decision.action != "SKIP") else None
+        for idx, res in enumerate(results, 1):
+            print(f"\n[{idx}/{len(results)}] Archive:")
+            print(f"  {res.filename}")
+            print("\nIdentity:")
+            print(f"  Series: {res.parsed_series}")
+            print(f"  Issue: #{res.parsed_issue}")
+            print(f"  Year: {res.parsed_year or 'Unknown'}")
 
-        print(f"\n[{idx}/{len(files)}] Archive:")
-        print(f"  {filename}")
-        print("\nIdentity:")
-        print(f"  Series: {parsed.series_name}")
-        print(f"  Issue: #{parsed.issue_number}")
-        print(f"  Year: {parsed.year or 'Unknown'}")
+            if res.candidate:
+                print("\nCandidate:")
+                print(f"  {res.candidate.provider} #{res.candidate.issue_id or res.candidate.series_id or 'Resolved'}")
+                print("\nConfidence:")
+                print(f"  {res.decision.score:.1f}% ({res.decision.level})")
 
-        if identity:
-            print("\nCandidate:")
-            print(f"  {identity.provider} #{identity.issue_id or identity.series_id or 'Resolved'}")
-            print("\nConfidence:")
-            print(f"  {decision.score:.1f}% ({decision.level})")
+                print("\nEvidence:")
+                for ev in res.decision.evidence:
+                    sign = "+" if ev.score > 0 else ""
+                    print(f"  {sign}{ev.score:.0f} {ev.explanation}")
 
-            print("\nEvidence:")
-            for ev in decision.evidence:
-                sign = "+" if ev.score > 0 else ""
-                print(f"  {sign}{ev.score:.0f} {ev.explanation}")
+                print("\nAction:")
+                print(f"  {res.decision.action}")
 
-            print("\nAction:")
-            print(f"  {decision.action}")
-
-            if comic:
-                print("\nChanges:")
-                fields = []
-                if comic.title: fields.append("Title")
-                if comic.series: fields.append("Series")
-                if comic.number: fields.append("Number")
-                if comic.publisher: fields.append("Publisher")
-                if comic.year: fields.append("Year")
-                if comic.writers: fields.append("Writer")
-                if comic.pencillers: fields.append("Penciller")
-                if comic.characters: fields.append("Characters")
-                for fld in fields:
-                    print(f"  - {fld}")
-        else:
-            print("\nCandidate:")
-            print("  None")
-            print("\nConfidence:")
-            print(f"  {decision.score:.1f}% ({decision.level})")
-            print("\nAction:")
-            print(f"  {decision.action}")
+                if res.proposed_comic:
+                    print("\nChanges:")
+                    for fld in res.fields_to_change:
+                        print(f"  - {fld}")
+            else:
+                print("\nCandidate:")
+                print("  None")
+                print("\nConfidence:")
+                print(f"  {res.decision.score:.1f}% ({res.decision.level})")
+                print("\nAction:")
+                print(f"  {res.decision.action}")
 
     print("\n" + "=" * 65)
     print(" DRY-RUN COMPLETE: 0 files were modified.")

@@ -170,5 +170,6 @@ Run `./venv/bin/python -m unittest discover tests` and confirm `OK` before commi
 | ComicInfo | Strip unrecognised XML fields |
 | Automation | Let dry-run mode modify files |
 | Automation | Re-process self-written files |
+| API Layer | Import or call providers from `api/` directly |
 | Issue Numbers | Use `int()` on issue strings |
 | Testing | Write tests that make live HTTP requests |

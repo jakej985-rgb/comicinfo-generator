@@ -21,7 +21,7 @@ These rules govern design decisions across all subsystems (pipeline, providers, 
 
 - `KapowarrProvider`, `ComicVineProvider`, and `GCPProvider` are candidate generators.
 - Providers query external or local databases and return raw candidate identities.
-- The pipeline (`pipeline/resolver.py` & `pipeline/scoring.py`) scores all candidates against identity signals and selects the best candidate based on explicit threshold rules (`AUTO_ACCEPT`, `MANUAL_REVIEW`, `UNRESOLVED`).
+- The pipeline (`pipeline/resolver.py` & `pipeline/confidence.py`) evaluates candidate pools with score-margin protection (`margin <= 10.0` triggering `MANUAL_REVIEW`) and multi-provider agreement bonuses (+15.0).
 
 ---
 
@@ -39,8 +39,8 @@ These rules govern design decisions across all subsystems (pipeline, providers, 
 
 > **Never replace an original archive with an unverified archive.**
 
-- Every archive update (`writers/archive.py → embed_comicinfo_in_cbz`) uses the atomic swap pattern: `temp file → fsync → os.replace`.
-- Pre-replacement verification (`verify_cbz_archive`) tests the temporary archive for ZIP integrity, image preservation, and parseable `ComicInfo.xml` BEFORE replacing the original.
+- Every archive update (`writers/archive.py → embed_comicinfo_in_cbz`) executes an atomic 9-step transaction: `temp file → fsync temp file → fsync directory → os.replace`.
+- Pre-replacement verification (`verify_cbz_archive`) tests the temporary archive for ZIP integrity, entry-by-entry CRC and size manifest matching, image preservation, and parseable `ComicInfo.xml` BEFORE replacing the original.
 - Post-replacement verification runs on the final file. If any check fails, the transaction is aborted and the original archive remains untouched.
 - Conversion from `.cbr` to `.cbz` (`converters/cbr_to_cbz.py`) deletes the original `.cbr` ONLY after the `.cbz` is created, embedded, and fully verified.
 
@@ -50,7 +50,7 @@ These rules govern design decisions across all subsystems (pipeline, providers, 
 
 > **Existing valid metadata is never destroyed merely because new metadata exists.**
 
-- Existing embedded `ComicInfo.xml` fields are parsed (`read_existing_comicinfo()`).
+- Existing embedded `ComicInfo.xml` fields are inspected and classified (`inspect_existing_comicinfo()`).
 - Unless `force_overwrite` / `overwrite=True` is explicitly requested, existing metadata is preserved or merged using explicit field-level priority policies (`pipeline/merge.py`).
 - Unrecognised XML elements in existing `ComicInfo.xml` files are preserved during re-embedding.
 
@@ -58,12 +58,12 @@ These rules govern design decisions across all subsystems (pipeline, providers, 
 
 ## 6. Automation Invariant
 
-> **Every processing operation is restart-safe.**
+> **Every processing operation is restart-safe and concurrency-safe.**
 
 - Job states (`PENDING`, `PROCESSING`, `DONE`, `FAILED`) are persisted in SQLite (`cache/jobs.py`).
-- On application restart, stuck `PROCESSING` jobs are automatically reset to `PENDING`.
-- File processing uses SHA256 fingerprinting (`cache/tracker.py` & `cache/db.py → file_hashes`).
-- Re-running the pipeline or restarting the watcher will not cause duplicate embeds or re-processing of already processed, unchanged files.
+- Concurrent workers claim jobs via SQLite `BEGIN IMMEDIATE` exclusive locking with worker lease timeouts.
+- On restart or worker timeout, expired leases (`lease_until < now`) are automatically recovered, while poison-pill jobs exceeding `max_attempts` transition to `FAILED`.
+- File processing uses SHA256 fingerprinting (`cache/tracker.py` & `cache/db.py → file_hashes`). The pipeline's own writes are recognized and dropped to prevent modification loops.
 
 ---
 
@@ -72,8 +72,8 @@ These rules govern design decisions across all subsystems (pipeline, providers, 
 > **No match != provider failure.**
 
 - A provider search returning zero results for a query is a valid negative match (`None` or empty list), NOT a system failure or network error.
-- Provider failures are reserved for network timeouts, rate limit breaches (HTTP 429), server errors (HTTP 5xx), and non-retryable errors (HTTP 404, auth failure, parse errors).
-- Zero matches result in an `UNRESOLVED` identity decision, allowing graceful degradation or manual review without raising unhandled exceptions.
+- Provider failures are classified into typed exceptions: retryable (`ProviderUnavailable`, `ProviderRateLimited`, `ProviderTimeout`) and non-retryable (`ProviderNotFound`, `ProviderAuthError`, `ProviderParseError`, `ProviderInvalidResponse`).
+- Zero matches result in an `UNRESOLVED` identity decision, allowing graceful degradation without raising unhandled exceptions.
 
 ---
 
@@ -86,15 +86,36 @@ These rules govern design decisions across all subsystems (pipeline, providers, 
 
 ---
 
+## 9. API Boundary Invariant
+
+> **API routes must never import or query external providers directly.**
+
+- `api/handlers.py` routes requests exclusively to the service layer (`services/kapowarr.py`, `services/story_arc.py`), `pipeline.resolver`, or `cache/`.
+- Direct imports from `providers/` are forbidden in `api/` and strictly enforced by static AST analysis in `tests/test_api_boundary.py`.
+
+---
+
+## 10. True Dry-Run Isolation Invariant
+
+> **Dry-run execution must guarantee zero modifications to archives or persistent databases.**
+
+- When `--dry-run` is active, all processing executes within `DryRunContext` (`pipeline/dry_run.py`).
+- Cache and job operations are routed to `:memory:` SQLite instances.
+- Archive write operations are completely intercepted, leaving physical file mtimes, sizes, hashes, and directory structures 100% untouched.
+
+---
+
 ## Summary Matrix
 
 | Invariant | Enforced In | Key Mechanism / Class |
 |---|---|---|
 | 1. Identity | `pipeline/filename_parser.py`, `pipeline/resolver.py` | `parse_filename_identity()` signal extraction |
-| 2. Providers | `pipeline/resolver.py`, `pipeline/scoring.py` | Candidates gathered & scored independently |
+| 2. Providers | `pipeline/resolver.py`, `pipeline/confidence.py` | Candidate pool scoring, agreement bonus, score margin |
 | 3. Metadata | `pipeline/resolver.py`, `models/` | `resolve_identity()` vs `retrieve_metadata()` |
-| 4. Archives | `writers/archive.py`, `converters/cbr_to_cbz.py` | `verify_cbz_archive()`, atomic `os.replace` |
-| 5. Existing Metadata | `pipeline/merge.py`, `writers/comicinfo.py` | Field-level provenance & unrecognised tag preservation |
-| 6. Automation | `cache/jobs.py`, `cache/tracker.py` | SQLite durable queue, SHA256 file hashes |
+| 4. Archives | `writers/archive.py`, `converters/cbr_to_cbz.py` | CRC manifest verification, directory fsync, atomic `os.replace` |
+| 5. Existing Metadata | `pipeline/merge.py`, `pipeline/existing_metadata.py` | `inspect_existing_comicinfo()`, tag preservation |
+| 6. Automation | `cache/jobs.py`, `automation/watcher.py` | `BEGIN IMMEDIATE` lease claims, SHA256 self-write guard |
 | 7. Errors | `observability/retry.py`, `pipeline/resolver.py` | Typed exceptions vs `UNRESOLVED` decisions |
-| 8. Kapowarr | `pipeline/resolver.py`, `services/metadata.py` | Kapowarr connection test & preferred lookup |
+| 8. Kapowarr | `pipeline/resolver.py`, `services/kapowarr.py` | Connection test & preferred lookup fallback |
+| 9. API Boundary | `api/handlers.py`, `services/` | Service delegation, AST static analysis validation |
+| 10. Dry-Run Isolation | `pipeline/dry_run.py`, `main.py` | In-memory SQLite & archive write interceptor |

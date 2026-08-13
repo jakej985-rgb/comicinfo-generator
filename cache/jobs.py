@@ -20,11 +20,17 @@ class JobStore:
 
     def __init__(self, db_path: str = "~/.comicinfo/jobs.db"):
         self.db_path = os.path.expanduser(db_path)
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        if self.db_path != ":memory:" and os.path.dirname(self.db_path):
+            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._init_db()
         self.reset_stale_processing_jobs()
 
     def _get_connection(self) -> sqlite3.Connection:
+        if self.db_path == ":memory:":
+            if not hasattr(self, "_mem_conn") or self._mem_conn is None:
+                self._mem_conn = sqlite3.connect(":memory:", check_same_thread=False)
+                self._mem_conn.row_factory = sqlite3.Row
+            return self._mem_conn
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
@@ -42,6 +48,10 @@ class JobStore:
                     mtime INTEGER,
                     status TEXT NOT NULL DEFAULT 'PENDING',
                     attempts INTEGER DEFAULT 0,
+                    max_attempts INTEGER DEFAULT 3,
+                    worker_id TEXT,
+                    claimed_at INTEGER,
+                    lease_until INTEGER,
                     provider TEXT,
                     provider_id TEXT,
                     confidence REAL,
@@ -55,6 +65,7 @@ class JobStore:
             """)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status ON processing_jobs(status);")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_path ON processing_jobs(path);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_lease ON processing_jobs(status, lease_until);")
             conn.commit()
 
     def reset_stale_processing_jobs(self) -> int:
@@ -66,7 +77,7 @@ class JobStore:
             cursor = conn.cursor()
             cursor.execute("""
                 UPDATE processing_jobs
-                SET status = 'PENDING', started_at = NULL
+                SET status = 'PENDING', started_at = NULL, worker_id = NULL, lease_until = NULL
                 WHERE status = 'PROCESSING';
             """)
             count = cursor.rowcount
@@ -138,32 +149,111 @@ class JobStore:
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def fetch_next_pending_job(self) -> Optional[dict]:
-        """Atomically fetches the next PENDING job and marks it as PROCESSING."""
+    def claim_job(self, worker_id: str = "default_worker", lease_seconds: float = 300.0, max_attempts: int = 3) -> Optional[dict]:
+        """
+        Phase 48: Atomically claims the next eligible job for a specific worker.
+        Uses SQLite exclusive transaction semantics (BEGIN IMMEDIATE) to guarantee
+        that two concurrent workers cannot claim the same job.
+        Eligible jobs:
+        - status == 'PENDING' and attempts < max_attempts
+        - status == 'PROCESSING' and lease_until < now and attempts < max_attempts (expired lease recovery)
+        """
+        now = time.time()
+        lease_until = now + lease_seconds
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("BEGIN IMMEDIATE;")
+
+            # 1. Fail expired leases where attempts >= max_attempts
+            cursor.execute("""
+                UPDATE processing_jobs
+                SET status = 'FAILED', error_code = 'MAX_ATTEMPTS_EXCEEDED', error_message = 'Job exceeded maximum retry attempts'
+                WHERE status = 'PROCESSING' AND lease_until IS NOT NULL AND lease_until < ? AND attempts >= ?;
+            """, (now, max_attempts))
+
+            # 2. Reclaim expired leases where attempts < max_attempts back to PENDING
+            cursor.execute("""
+                UPDATE processing_jobs
+                SET status = 'PENDING', worker_id = NULL, lease_until = NULL
+                WHERE status = 'PROCESSING' AND lease_until IS NOT NULL AND lease_until < ? AND attempts < ?;
+            """, (now, max_attempts))
+
+            # 3. Find next available PENDING job
+            cursor.execute("""
+                SELECT id FROM processing_jobs
+                WHERE status = 'PENDING' AND attempts < ?
+                ORDER BY created_at ASC
+                LIMIT 1;
+            """, (max_attempts,))
+            row = cursor.fetchone()
+
+            if not row:
+                conn.commit()
+                return None
+
+            job_id = row["id"]
+            cursor.execute("""
+                UPDATE processing_jobs
+                SET status = 'PROCESSING',
+                    worker_id = ?,
+                    claimed_at = ?,
+                    started_at = ?,
+                    lease_until = ?,
+                    attempts = attempts + 1
+                WHERE id = ? AND status = 'PENDING';
+            """, (worker_id, int(now), int(now), lease_until, job_id))
+
+            if cursor.rowcount > 0:
+                cursor.execute("SELECT * FROM processing_jobs WHERE id = ?;", (job_id,))
+                claimed_job = dict(cursor.fetchone())
+                conn.commit()
+                return claimed_job
+
+            conn.commit()
+            return None
+
+    def renew_lease(self, job_id: str, worker_id: str, lease_seconds: float = 300.0) -> bool:
+        """
+        Phase 48: Renews the active lease for a job currently claimed by worker_id.
+        """
+        now = time.time()
+        lease_until = now + lease_seconds
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT * FROM processing_jobs
-                WHERE status = 'PENDING'
-                ORDER BY created_at ASC
-                LIMIT 1;
-            """)
-            row = cursor.fetchone()
-            if not row:
-                return None
+                UPDATE processing_jobs
+                SET lease_until = ?
+                WHERE id = ? AND worker_id = ? AND status = 'PROCESSING';
+            """, (lease_until, job_id, worker_id))
+            conn.commit()
+            return cursor.rowcount > 0
 
-            job = dict(row)
-            now = int(time.time())
+    def reclaim_expired_leases(self, max_attempts: int = 3) -> int:
+        """
+        Phase 48: Reclaims expired leases, resetting recoverables to PENDING and failing poison pills.
+        """
+        now = time.time()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
             cursor.execute("""
                 UPDATE processing_jobs
-                SET status = 'PROCESSING', started_at = ?, attempts = attempts + 1
-                WHERE id = ?;
-            """, (now, job["id"]))
+                SET status = 'PENDING', worker_id = NULL, lease_until = NULL
+                WHERE status = 'PROCESSING' AND lease_until IS NOT NULL AND lease_until < ? AND attempts < ?;
+            """, (now, max_attempts))
+            reclaimed = cursor.rowcount
+
+            cursor.execute("""
+                UPDATE processing_jobs
+                SET status = 'FAILED', error_code = 'MAX_ATTEMPTS_EXCEEDED', error_message = 'Job exceeded maximum retry attempts'
+                WHERE status = 'PROCESSING' AND lease_until IS NOT NULL AND lease_until < ? AND attempts >= ?;
+            """, (now, max_attempts))
             conn.commit()
-            job["status"] = STATUS_PROCESSING
-            job["started_at"] = now
-            job["attempts"] += 1
-            return job
+            return reclaimed
+
+    def fetch_next_pending_job(self, worker_id: str = "default_worker") -> Optional[dict]:
+        """Atomically fetches the next PENDING job and marks it as PROCESSING for worker_id."""
+        return self.claim_job(worker_id=worker_id)
 
     def update_job_status(
         self,

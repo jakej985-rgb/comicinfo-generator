@@ -44,10 +44,16 @@ class CacheManager:
 
     def __init__(self, db_path: str = "~/.comicinfo/cache.db"):
         self.db_path = os.path.expanduser(db_path)
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        if self.db_path != ":memory:" and os.path.dirname(self.db_path):
+            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
+        if self.db_path == ":memory:":
+            if not hasattr(self, "_mem_conn") or self._mem_conn is None:
+                self._mem_conn = sqlite3.connect(":memory:", check_same_thread=False)
+                self._mem_conn.row_factory = sqlite3.Row
+            return self._mem_conn
         conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
         # Phase 43: Performance PRAGMAs for high-throughput SQLite

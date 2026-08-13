@@ -73,22 +73,37 @@ def score_identity_candidate(
         evidence.append(ev)
         reasons.append(ev.explanation)
     elif candidate.issue_id:
-        score += weights.exact_issue_provider_id
+        prov_score = 20.0
+        score += prov_score
         ev = IdentityEvidence(
             source=candidate.provider, field="issue_id",
             expected="", actual=candidate.issue_id,
-            score=weights.exact_issue_provider_id,
-            explanation=f"Exact provider issue ID matched (+{weights.exact_issue_provider_id})"
+            score=prov_score,
+            explanation=f"Provider candidate issue ID matched (+{prov_score})"
         )
         evidence.append(ev)
         reasons.append(ev.explanation)
     elif candidate.series_id:
-        score += weights.exact_volume_provider_id
+        prov_score = 15.0
+        score += prov_score
         ev = IdentityEvidence(
             source=candidate.provider, field="series_id",
             expected="", actual=candidate.series_id,
-            score=weights.exact_volume_provider_id,
-            explanation=f"Exact provider volume ID matched (+{weights.exact_volume_provider_id})"
+            score=prov_score,
+            explanation=f"Provider candidate volume ID matched (+{prov_score})"
+        )
+        evidence.append(ev)
+        reasons.append(ev.explanation)
+
+    # Provider Agreement Bonus (+15)
+    if getattr(candidate, "provider_agreement", None) and len(candidate.provider_agreement) >= 2:
+        prov_list = ", ".join(sorted(candidate.provider_agreement))
+        score += 15.0
+        ev = IdentityEvidence(
+            source="ProviderAgreement", field="provider_agreement",
+            expected="", actual=prov_list,
+            score=15.0,
+            explanation=f"Independent providers agree on identity: {prov_list} (+15.0)"
         )
         evidence.append(ev)
         reasons.append(ev.explanation)
