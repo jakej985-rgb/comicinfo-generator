@@ -30,6 +30,7 @@ class ComicIdentity:
     volume: str = ""                  # Volume number/year
     issue_number: str = ""            # Issue number string (e.g. "1", "1A", "0.5")
     identity_type: str = "Issue"      # "Issue", "Volume", "TPB", "Collected"
+    volume_id: str = ""               # Provider-specific volume/series ID for cross-issue grouping
     confidence: float = 0.0           # Confidence score (0.0 to 100.0)
     confidence_level: str = "UNRESOLVED" # "AUTO_ACCEPT", "MANUAL_REVIEW", "UNRESOLVED"
     confidence_reasons: List[str] = field(default_factory=list)
