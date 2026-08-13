@@ -1,100 +1,176 @@
 ComicInfo Generator — Final Production Hardening Plan
 
-Repository: jakej985-rgb/comicinfo-generator
-Branch: main
-Starting point: Phase 55 / commit fef25afc
-Goal: Eliminate the remaining paths that could cause incorrect ComicInfo metadata to be automatically written to a real comic library.
+Repository: "jakej985-rgb/comicinfo-generator"
+Branch: "main"
+Purpose: Finish the remaining production-hardening issues identified during the latest repository review.
 
 ---
 
 1. Mission
 
-The project has already implemented:
+The project has already completed the major architectural and safety phases.
 
-centralized identity resolution
+The current repository contains:
 
-confidence scoring
+- centralized identity resolution
+- confidence scoring
+- candidate-margin protection
+- existing ComicInfo inspection
+- provider failure classification
+- archive transaction safety
+- CRC/archive verification
+- strict archive integrity support
+- durable queue leases
+- automation self-write protection
+- multi-worker stress testing
+- dry-run isolation
+- provider-state propagation
+- conflict detection
+- extensive regression testing
+- 294 passing tests
 
-candidate-margin protection
+The latest commits explicitly report the final acceptance criteria as complete and the regression suite passing 294/294. The project should not be redesigned from scratch.
 
-existing ComicInfo classification
+The remaining work is to make the repository:
 
-provider error classification
+1. reproducibly testable
+2. correctly documented
+3. production-configurable
+4. easier to maintain
+5. safe at the user-facing CLI boundary
+6. explicit about what is and is not guaranteed
 
-archive transaction safety
+The guiding principle is:
 
-ZIP entry verification
-
-durable job leases
-
-API/service separation
-
-dry-run isolation
-
-automation self-write protection
-
-end-to-end resolution tests
-
-performance benchmarking
-
-architectural invariants
-
-245 passing tests
-
-Do not redesign these systems.
-
-The remaining work is to close the final correctness gaps.
-
-The most important principle is:
-
-> A resolved identity is not the same thing as successfully retrieved metadata.
-
-The system must never automatically modify a CBZ merely because it has a plausible identity if the metadata needed to safely construct ComicInfo.xml could not be retrieved or validated.
+«Do not add new complexity unless it directly improves correctness, reproducibility, maintainability, or operational safety.»
 
 ---
 
-Phase 56 — Separate Identity Resolution From Metadata Success
+2. Current Remaining Issues
 
-Priority: 🔴 P0
+The latest review identified these remaining areas:
 
-Problem
-
-The current resolver can successfully identify a comic and then fail to retrieve provider metadata.
-
-The implementation currently has a fallback similar to:
-
-if not comic:
-    comic = Comic(
-        series=identity.series_name,
-        number=identity.issue_number,
-        year=identity.publication_year,
-        publisher=identity.publisher,
-        provider_name=identity.provider or "Resolver"
-    )
-
-This is dangerous.
-
-A provider lookup failure can therefore become:
-
-Provider lookup failed
-        ↓
-Comic object synthesized
-        ↓
-Pipeline thinks metadata exists
-        ↓
-ComicInfo.xml may be written
-
-That behavior must be eliminated for automatic processing.
+Priority| Issue| Status
+P0| CI enforcement| Needs implementation/verification
+P0| Metadata-write safety final verification| Needs final end-to-end proof
+P1| README architecture is stale| Needs update
+P1| Production configuration validation| Needs hardening
+P1| Dependency reproducibility| Needs improvement
+P1| CLI dry-run integration test| Needs addition
+P1| Provider abstraction maintainability| Review/refactor only if justified
+P2| Documentation guarantee audit| Needs final pass
+P2| Release/production checklist| Needs creation
 
 ---
 
-56.1 Create explicit metadata states
+Phase 68 — GitHub Actions CI Enforcement
 
-Introduce a clear metadata result model.
+Priority: P0
+Goal: Make the 294-test regression requirement enforceable automatically.
 
-Use the existing architecture where possible rather than creating duplicate models.
+68.1 Inspect current CI state
 
-The result must distinguish:
+First verify whether GitHub Actions currently exists.
+
+Search for:
+
+.github/
+.github/workflows/
+*.yml
+*.yaml
+
+Do not assume CI exists merely because the tests have been run manually.
+
+If no workflow exists, create one.
+
+68.2 Create test workflow
+
+Add:
+
+.github/
+└── workflows/
+    └── tests.yml
+
+The workflow should run on:
+
+push:
+  branches:
+    - main
+
+pull_request:
+  branches:
+    - main
+
+68.3 Python version
+
+Use the project's supported Python version.
+
+If the project does not formally declare one, determine the version actually required by the code/dependencies and document it.
+
+Do not unnecessarily test a huge Python matrix.
+
+A reasonable initial matrix is:
+
+Python 3.x
+
+with the exact supported version(s) established from the project.
+
+68.4 Install dependencies
+
+CI must install the same dependency set developers use.
+
+The workflow must not silently use a different environment from local development.
+
+68.5 Run complete regression suite
+
+Run:
+
+python -m unittest discover tests
+
+The workflow must fail on:
+
+failure
+error
+test discovery failure
+dependency installation failure
+
+68.6 Add static checks
+
+If practical, add lightweight checks for:
+
+- syntax errors
+- import errors
+- accidental provider imports in "api/"
+- existing architectural invariants
+
+Do not introduce a large linting framework merely for the sake of having one.
+
+68.7 CI acceptance
+
+CI is complete when:
+
+Pull Request
+     ↓
+GitHub Actions
+     ↓
+dependency installation
+     ↓
+test discovery
+     ↓
+full regression suite
+     ↓
+PASS / FAIL
+
+is automatic.
+
+---
+
+Phase 69 — Final Metadata Write Safety Gate
+
+Priority: P0
+Goal: Prove that a successfully resolved identity cannot accidentally become unsafe metadata.
+
+The resolver now explicitly distinguishes metadata states such as:
 
 METADATA_FOUND
 METADATA_PARTIAL
@@ -102,74 +178,29 @@ METADATA_NOT_FOUND
 METADATA_PROVIDER_ERROR
 METADATA_INVALID
 
-If the project already has a suitable result type, extend it instead of creating another competing abstraction.
+and retains provider operation results.
 
----
+The remaining task is to prove that these states are honored all the way through the archive-writing boundary.
 
-56.2 Identity state must remain separate
+69.1 Establish the write contract
 
-The pipeline must be able to represent:
-
-Identity:
-    RESOLVED
-
-Metadata:
-    FAILED
-
-without converting the entire operation into a fake success.
-
-Example:
-
-Identity:
-ComicVine 4000-12345
-confidence = 96
-
-Metadata:
-ComicVine lookup = HTTP 500
-
-Final:
-REVIEW / FAILED
-
-Not:
-
-ComicInfo:
-Series = Batman
-Number = 1
-
-and automatically write it.
-
----
-
-56.3 Remove unsafe fallback
-
-The fallback Comic(...) construction must not be used as a successful metadata retrieval result.
-
-If identity-only metadata generation is intentionally supported for some special case, it must be explicitly marked:
-
-source = IDENTITY_ONLY
-metadata_complete = false
-
-and must not be eligible for automatic archive modification.
-
----
-
-56.4 Define automatic-write requirements
-
-Automatic archive modification requires:
+Automatic modification requires all of:
 
 identity resolved
 AND
-confidence acceptable
+confidence accepted
 AND
-metadata retrieved
+metadata FOUND
 AND
 metadata valid
 AND
-merge succeeds
+merge successful
 AND
-archive validation succeeds
+archive transaction successful
+AND
+archive verification successful
 
-Anything else becomes:
+Anything else must result in:
 
 REVIEW
 
@@ -177,807 +208,541 @@ or:
 
 FAILED
 
-depending on the failure.
-
----
-
-56.5 Tests
-
-Add regression tests for:
-
-Provider lookup succeeds
-
-identity = valid
-metadata = valid
-→ AUTO_UPDATE
-
-Provider lookup fails
-
-identity = valid
-metadata = provider error
-→ REVIEW/FAILED
-→ archive unchanged
-
-Provider returns no metadata
-
-identity = valid
-metadata = NOT_FOUND
-→ REVIEW/FAILED
-→ archive unchanged
-
-Provider returns malformed data
-
-identity = valid
-metadata = INVALID
-→ REVIEW/FAILED
-→ archive unchanged
-
-Identity exists but metadata is incomplete
-
-identity = valid
-metadata = PARTIAL
-→ no automatic update
-
----
-
-Phase 57 — Make Provider Failure State Survive the Pipeline
-
-Priority: 🔴 P0
-
-Problem
-
-Provider exceptions are now classified, but classification is not useful if the final pipeline loses that information.
-
-The system must distinguish:
-
-NOT_FOUND
-
-from:
-
-PROVIDER_FAILURE
-
-from:
-
-PROVIDER_OFFLINE
-
----
-
-57.1 Create provider operation result
-
-Use the existing provider contract if possible.
-
-Every provider operation should expose:
-
-provider
-operation
-status
-error_type
-retryable
-message
-
-Example:
-
-ComicVine
-operation: lookup_issue
-status: RATE_LIMITED
-retryable: true
-
----
-
-57.2 Preserve provider states during resolution
-
-The resolver should retain something like:
-
-Kapowarr:
-    SUCCESS
-
-ComicVine:
-    RATE_LIMITED
-
-GCD:
-    NOT_FOUND
-
-instead of reducing everything to:
-
-candidates = []
-
----
-
-57.3 Resolution result
-
-The final resolution result should contain:
-
-identity
-confidence
-decision
-provider_results
-conflicts
-
-This makes failures explainable.
-
----
-
-57.4 Do not treat provider outage as "not found"
-
-These are fundamentally different:
-
-Provider says:
-"No matching comic."
-
-versus:
-
-Provider says:
-"Server unavailable."
-
-The first permits fallback.
-
-The second requires recording provider failure and applying the fallback policy.
-
----
-
-57.5 Retry behavior
-
-Respect the existing retry/rate-limit system.
-
-For retryable failures:
-
-attempt
-   ↓
-retry policy
-   ↓
-provider result
-
-Do not repeatedly retry indefinitely.
-
----
-
-57.6 Tests
+69.2 Test provider failure
 
 Test:
 
-404 / NOT_FOUND
+Identity:
+ComicVine #123
 
-timeout
+Metadata:
+ComicVine HTTP 500
 
-connection failure
+Expected:
 
-429
+metadata = METADATA_PROVIDER_ERROR
+decision = REVIEW/FAILED
+archive = unchanged
 
-401
+69.3 Test provider NOT_FOUND
 
-403
+Test:
 
-500
+Identity = resolved
+Provider = NOT_FOUND
 
-malformed response
+Expected:
 
-empty response
+NO automatic ComicInfo write
 
-successful fallback provider
+69.4 Test partial metadata
 
-Verify the final resolution result preserves the correct state.
+Provider returns:
 
----
+Series
+Number
 
-Phase 58 — Formalize Identity Authority and Conflict Rules
+but lacks required metadata.
 
-Priority: 🔴 P0
+Expected:
 
-The system now detects conflicts, but the remaining goal is to determine what the conflict actually means.
+METADATA_PARTIAL
+NO automatic update
 
-Do not simply use:
+69.5 Test invalid metadata
 
-conflict = true
-→ REVIEW
+Provider returns malformed or unusable data.
 
-for every possible disagreement.
+Expected:
 
----
+METADATA_INVALID
+NO automatic update
 
-58.1 Define evidence hierarchy
+69.6 Test successful metadata
 
-Document the hierarchy.
+Provider returns complete valid metadata.
 
-A reasonable starting model:
+Expected:
 
-Explicit user URL override
-        ↓
-Verified existing provider ID
-        ↓
-Multiple independent provider agreement
-        ↓
-Single trusted provider
-        ↓
-Existing ComicInfo identity
-        ↓
-Filename identity
-        ↓
-Directory/path hints
+METADATA_FOUND
+AUTO_UPDATE
 
-The exact ordering must be validated against the existing project behavior.
+69.7 Verify actual archive
 
----
+Do not stop at inspecting the decision object.
 
-58.2 Existing XML conflict types
+Verify the physical CBZ.
 
-Differentiate:
+Before processing:
 
-XML ↔ filename conflict
-XML ↔ provider conflict
-XML ↔ provider-ID conflict
-XML partial
-XML malformed
+SHA256(original archive)
 
-These should not all have identical severity.
+After processing:
 
----
+SHA256(original archive)
 
-58.3 Provider agreement
+will naturally differ if ComicInfo changes.
 
-Two providers agreeing on:
+Therefore also compare:
 
-series
-issue
-volume
-year
+all original non-ComicInfo entries
 
-should be stronger evidence than two providers merely returning similar titles.
+and verify:
+
+- images unchanged
+- directory structure unchanged
+- unrelated files unchanged
+- archive remains readable
+- ComicInfo is valid
 
 ---
 
-58.4 Provider disagreement
+Phase 70 — User-Facing CLI Dry-Run Integration Test
 
-Example:
+Priority: P1
 
-Kapowarr:
-Batman (2016) #1
+The internal dry-run system is already heavily tested, and "main.py" exposes:
 
-ComicVine:
-Batman (1940) #1
+python main.py --dry-run
 
-must become:
+with an explicit claim that no archive or persistent database is modified.
 
-MANUAL_REVIEW
+Now test the actual CLI path.
 
-unless there is explicit authoritative evidence resolving the difference.
+70.1 Create CLI fixture
 
----
-
-58.5 Provider ID disagreement
-
-This is especially important.
-
-If two sources provide different authoritative issue IDs:
-
-ComicVine = 4000-123
-ComicVine = 4000-456
-
-do not merge them merely because their titles look similar.
-
----
-
-58.6 Tests
-
-Add cases for:
-
-XML vs filename
-
-XML vs Kapowarr
-
-XML vs ComicVine
-
-Kapowarr vs ComicVine
-
-Kapowarr + ComicVine + GCD agreement
-
-provider-ID disagreement
-
-variant disagreement
-
-volume disagreement
-
-year disagreement
-
----
-
-Phase 59 — Canonical Comic Identity Key
-
-Priority: 🟠 P1
-
-The current candidate comparison uses series, issue number, and approximate year.
-
-That is not enough for all comic numbering.
-
----
-
-59.1 Create canonical identity comparison
-
-The identity comparison should consider:
-
-normalized series
-volume
-issue number
-issue suffix
-publication year
-publisher
-edition/variant
-
-where available.
-
----
-
-59.2 Preserve complex issue numbers
-
-Never convert issue numbers to integers.
-
-Correct:
-
-1
-1A
-1B
-1AU
-0
-0.5
-10.1
-Annual
-Special
-Director's Cut
-
-must remain distinguishable.
-
----
-
-59.3 Normalize only for comparison
-
-Do not destroy the original issue string.
-
-Example:
-
-stored:
-1A
-
-comparison:
-normalized representation
-
-The original value must remain available for ComicInfo output.
-
----
-
-59.4 Tests
-
-Add candidate comparisons for:
-
-1 vs 1A
-1A vs 1B
-1 vs 1.5
-1 vs Annual
-0 vs 1
-10 vs 10.1
-Volume 1 vs Volume 2
-1940 vs 2016
-
----
-
-Phase 60 — Strict Archive Integrity Mode
-
-Priority: 🟠 P1
-
-Current archive verification checks CRC and file size.
-
-That is good for normal operation, but a strict verification mode should provide stronger guarantees.
-
----
-
-60.1 Add entry SHA256 verification
-
-For unchanged archive entries:
-
-original entry SHA256
-        ==
-temporary entry SHA256
-
-ComicInfo.xml is excluded because it is intentionally changed.
-
----
-
-60.2 Keep CRC verification
-
-Do not replace the existing CRC checks.
-
-Use:
-
-CRC + size
-
-for fast verification.
-
-Use:
-
-SHA256
-
-for strict verification.
-
----
-
-60.3 Configuration
-
-Add a configuration option such as:
-
-strict_archive_verification
-
-Use the project's existing configuration style.
-
----
-
-60.4 Performance
-
-Do not hash every archive entry multiple times during normal operation unless configured.
-
-The Phase 53 benchmarks should determine the performance impact.
-
----
-
-60.5 Tests
-
-Create an archive containing:
-
-multiple images
-
-nested directories
-
-text files
-
-unusual filenames
-
-existing ComicInfo
-
-Verify unchanged entry SHA256 values before and after.
-
----
-
-Phase 61 — Durability and fsync Error Handling
-
-Priority: 🟠 P1
-
-The archive writer currently treats some filesystem durability failures as non-fatal.
-
-For example, helper functions currently catch exceptions broadly.
-
-That is inappropriate for safety-critical durability operations.
-
----
-
-61.1 Distinguish unsupported from failed
-
-Possible states:
-
-FSYNC_SUCCESS
-FSYNC_UNSUPPORTED
-FSYNC_FAILED
-
----
-
-61.2 Never silently swallow actual fsync failures
-
-If fsync() fails:
-
-log the failure
-
-classify it
-
-apply configured safety policy
-
-For production mode, the safest behavior is:
-
-archive update = FAILED
-
-rather than pretending the operation is durable.
-
----
-
-61.3 Directory fsync
-
-Retain:
-
-write temp
-→ fsync temp
-→ replace
-→ fsync final
-→ fsync directory
-
----
-
-61.4 Test failure injection
-
-Inject failures into:
-
-file fsync
-
-directory fsync
-
-replace
-
-verification
-
-Verify that the application reports the correct failure.
-
----
-
-Phase 62 — Real Library Integration Validation
-
-Priority: 🔴 P0 before production
-
-This is the final gate.
-
-Unit tests passing is not enough.
-
-Do not immediately point the application at the entire library.
-
----
-
-62.1 Build a test library
-
-Create a small isolated directory containing representative CBZs.
-
-Include:
+Create a temporary test library containing:
 
 Batman (2016) 001.cbz
 Batman (2016) 001A.cbz
-Batman (2016) 001B.cbz
 Batman (1940) 001.cbz
 TMNT 001.cbz
-TMNT 001A.cbz
 Annual
 Special
-0.5
-10.1
 TPB
-collection
 existing ComicInfo
 malformed ComicInfo
 missing ComicInfo
 
-Use copies of real files.
+70.2 Snapshot before execution
 
----
+Capture:
 
-62.2 Run dry-run first
+archive SHA256
+file size
+mtime
+permissions
+ownership where supported
+directory contents
+database contents
+cache contents
 
-The first execution must be:
+70.3 Execute actual command
 
-python main.py --dry-run
+Run:
 
-Verify:
+python main.py --dry-run <fixture>
+
+70.4 Verify zero mutations
+
+After execution:
 
 archives unchanged
-timestamps unchanged
 database unchanged
 cache unchanged
-no temp files
+no ComicInfo written
+no CBR conversion
+no archive replacement
+no unexpected temporary files
 
----
+70.5 Verify output
 
-62.3 Review generated decisions
-
-For every file record:
+The CLI must clearly show:
 
 filename
-identity
-provider
+parsed identity
+candidate
 confidence
-decision
+evidence
 metadata state
-conflicts
+decision
+proposed changes
 
-Manually inspect ambiguous cases.
-
----
-
-62.4 Real write test
-
-Only after dry-run is correct:
-
-Process a small batch.
-
-Example:
-
-5 files
-
-Then verify:
-
-ComicInfo.xml
-archive integrity
-images
-file permissions
-ownership
-timestamps
+This makes dry-run useful for manually reviewing a real library before enabling automatic processing.
 
 ---
 
-62.5 Kapowarr integration
+Phase 71 — Production Configuration Hardening
 
-Use an isolated/test Kapowarr library if possible.
+Priority: P1
 
-Verify:
+The resolver currently provides development-oriented defaults such as a localhost Kapowarr URL when configuration is absent.
 
-Kapowarr metadata
-        ↓
-resolver
-        ↓
-ComicInfo
+This should not silently create confusing production behavior.
 
-and confirm the system doesn't accidentally modify Kapowarr-managed files in unexpected ways.
+71.1 Separate disabled from misconfigured
 
----
+These states must be distinguishable:
 
-Phase 63 — Automation Stress Test
+Kapowarr disabled
 
-Priority: 🟠 P1
+Kapowarr enabled and reachable
 
-Test the actual watcher.
+Kapowarr enabled but unreachable
 
----
+Kapowarr enabled but authentication failed
 
-63.1 Self-write test
+71.2 Startup configuration validation
 
-Watcher sees:
+Validate:
 
-comic.cbz
+- provider URLs
+- API keys where required
+- archive paths
+- database paths
+- cache paths
+- watcher paths
+- writable directories
+- conversion executable availability
 
-It processes it.
+71.3 Safe defaults
 
-The resulting write must not trigger endless processing.
+Defaults should be safe.
 
-Expected:
+Do not silently enable destructive processing because configuration is missing.
 
-1 processing cycle
+Automatic processing should require explicit configuration.
 
-not:
+71.4 Environment variable handling
 
-2
-3
-4
-...
+Verify that:
 
----
+environment
+→ config
+→ provider
 
-63.2 Restart test
+works consistently.
 
-Process file.
+Ensure secrets never appear in logs.
 
-Restart application.
+71.5 Failure behavior
 
-Verify it does not immediately reprocess the same archive.
+A bad configuration should produce a clear error such as:
 
----
+Configuration error:
+Kapowarr is enabled but URL is invalid.
 
-63.3 Rapid modification test
+rather than:
 
-Simulate:
+Connection failed
 
-file appears
-file changes
-file changes again
-
-The job system must deduplicate appropriately.
-
----
-
-63.4 Failed processing test
-
-Force a provider/archive failure.
-
-Verify:
-
-FAILED/REVIEW
-
-doesn't produce an infinite retry loop.
+with no explanation.
 
 ---
 
-Phase 64 — Multi-Worker Stress Test
+Phase 72 — Dependency Reproducibility
 
-Priority: 🟠 P1
+Priority: P1
 
-Run multiple workers simultaneously.
+The current "requirements.txt" primarily uses minimum versions such as:
 
-Example:
+pyyaml>=6.0
+watchdog>=4.0.0
+requests>=2.31.0
+curl_cffi>=0.7.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+cloudscraper>=1.2.71
 
-worker-1
-worker-2
-worker-3
-worker-4
+Minimum-only dependencies can cause two installations to resolve different versions.
 
-against:
+72.1 Establish supported dependency strategy
 
-100 jobs
+Choose one:
 
-Verify:
+Option A
 
-each job processed once
+Use a lockfile.
 
-unless intentionally retried.
+Option B
+
+Pin release dependencies.
+
+Option C
+
+Use "pyproject.toml" with a reproducible environment.
+
+Do not implement all three.
+
+72.2 Preserve developer simplicity
+
+The normal install should remain straightforward.
+
+For example:
+
+python -m venv venv
+source venv/bin/activate
+pip install ...
+
+72.3 CI must use reproducible dependencies
+
+CI should install the same tested versions used for releases.
+
+72.4 Verify clean installation
+
+Test from an empty environment:
+
+new virtual environment
+↓
+install dependencies
+↓
+run tests
+↓
+294+ tests pass
 
 ---
 
-64.1 Worker crash
+Phase 73 — README Rewrite
 
-Kill a worker while processing.
+Priority: P1
 
-Verify:
+The README is currently the most visibly stale part of the project.
 
-lease expires
-       ↓
-job reclaimed
-       ↓
-new worker processes it
+It describes an older structure containing:
 
----
+providers/
+writers/
+static/
 
-64.2 Poison job
+while the actual repository now contains areas such as:
 
-Create a permanently failing archive.
+api/
+automation/
+cache/
+models/
+observability/
+pipeline/
+docs/
+tests/
 
-Verify:
+73.1 Rewrite repository structure
 
-attempt 1
-attempt 2
-attempt 3
-FAILED
+Use the actual current tree.
 
-and no infinite loop.
+Do not copy an old architecture diagram.
 
----
+73.2 Document startup
 
-Phase 65 — Final Security/Safety Audit
+Explain:
 
-Priority: 🟠 P1
-
-Search the repository for dangerous patterns.
-
-Run static searches for:
-
-except Exception:
-    pass
+python main.py
 
 and:
 
-int(issue_number)
+python main.py --dry-run <path>
 
-and direct provider imports from:
+73.3 Document configuration
 
-api/
+Explain:
 
-and archive operations outside the archive writer.
+- configuration file
+- environment variables
+- providers
+- Kapowarr
+- ComicVine
+- GCD/GCP
+- cache
+- automation
 
-Also search for:
+73.4 Document safety
 
-os.replace
-shutil.move
-os.remove
-open(..., "w")
+Clearly explain:
 
-and verify each usage is intentional.
+identity != metadata
+
+and:
+
+low confidence ≠ automatic write
+
+73.5 Document dry-run
+
+Give a real example.
+
+73.6 Document supported archives
+
+Explicitly document:
+
+CBZ
+CBR
+
+and conversion behavior.
+
+73.7 Document limitations
+
+Especially:
+
+- provider availability
+- Comic Vine protection
+- ambiguous comics
+- variants
+- unusual numbering
+- network failures
+- metadata conflicts
+
+73.8 Remove unsupported claims
+
+Every statement such as:
+
+always
+fully
+guaranteed
+safe
+atomic
+two-way
+
+must be verified against actual implementation.
 
 ---
 
-Phase 66 — Documentation Finalization
+Phase 74 — Provider Abstraction Review
 
-Priority: 🟡 P2
+Priority: P1
 
-Update:
+Do not automatically refactor the provider system.
+
+The current resolver is already large and directly handles:
+
+Kapowarr
+ComicVine
+GCP
+
+along with candidate construction and provider operation results.
+
+74.1 First measure the problem
+
+Determine whether adding another provider would require modifying large amounts of resolver logic.
+
+If not, leave it alone.
+
+74.2 If refactoring is justified
+
+Introduce a small provider runner/registry:
+
+ProviderRegistry
+       ↓
+ProviderAdapter
+       ↓
+ProviderOperationResult
+
+The resolver should primarily ask:
+
+search available providers
+
+rather than containing extensive provider-specific branching.
+
+74.3 Do not over-engineer
+
+Do NOT introduce:
+
+- plugin frameworks
+- dynamic dependency injection systems
+- complex event buses
+- unnecessary abstract factories
+
+The application is small enough that simple interfaces are preferable.
+
+74.4 Preserve current behavior
+
+Any provider refactor must maintain:
+
+same candidates
+same confidence
+same decisions
+same failure states
+same archive safety
+
+---
+
+Phase 75 — Resolver Maintainability Review
+
+Priority: P1
+
+"pipeline/resolver.py" has become one of the largest orchestration components.
+
+This is not currently a correctness failure.
+
+Do not split it simply because it is large.
+
+75.1 Identify responsibilities
+
+Review whether the following can remain clearly separated:
+
+identity resolution
+candidate construction
+provider execution
+metadata retrieval
+result construction
+
+75.2 Extract only if necessary
+
+Possible future structure:
+
+pipeline/
+├── resolver.py
+├── identity_resolver.py
+├── metadata_retriever.py
+├── provider_runner.py
+├── candidate_builder.py
+└── resolution_result.py
+
+75.3 Keep resolver as orchestrator
+
+The final resolver should ideally read approximately like:
+
+parse
+→ inspect existing metadata
+→ resolve identity
+→ retrieve metadata
+→ evaluate decision
+→ return result
+
+Implementation details should live in dedicated modules.
+
+75.4 Tests before refactor
+
+Before modifying the structure:
+
+python -m unittest discover tests
+
+After every extraction:
+
+python -m unittest discover tests
+
+Do not perform a large untested refactor.
+
+---
+
+Phase 76 — Documentation Guarantee Audit
+
+Priority: P2
+
+Review:
 
 AGENTS.md
 docs/architecture.md
+docs/invariants.md
 docs/metadata-resolution.md
 docs/provider-contract.md
 docs/archive-safety.md
 docs/automation.md
 docs/testing.md
-docs/invariants.md
+README.md
 
-Documentation must describe what the code actually guarantees.
+The testing documentation already defines strong invariants including no live network requests, archive failure-injection testing, API provider-import restrictions, and complex issue-number handling.
 
-Pay special attention to words such as:
+76.1 Audit guarantee language
+
+Search for:
 
 always
 never
@@ -985,228 +750,406 @@ guaranteed
 atomic
 durable
 safe
-automatic
 authoritative
+automatic
 
-Do not claim guarantees that depend on an optional configuration setting.
+76.2 Verify every claim
+
+For each claim:
+
+documentation claim
+        ↓
+implementation
+        ↓
+test
+
+All three must agree.
+
+76.3 Configuration-dependent guarantees
+
+Never claim:
+
+always durable
+
+if strict durability is optional.
+
+Instead document:
+
+With strict archive verification enabled...
+
+76.4 Update phase references
+
+Remove outdated references to phases that are now completed.
+
+The documentation should describe the current architecture, not the history of how it was built.
 
 ---
 
-Phase 67 — Final Regression
+Phase 77 — Production Library Validation
+
+Priority: P0
+
+This is the final real-world gate.
+
+The test suite already includes a real-library validation test suite and extensive archive/concurrency testing.
+
+Now perform an actual controlled validation outside the normal unit-test environment.
+
+77.1 Create isolated test library
+
+Use copies of real comic archives.
+
+Include:
+
+single issue
+variant
+annual
+special
+zero issue
+decimal issue
+TPB
+multiple volume years
+existing ComicInfo
+malformed ComicInfo
+missing ComicInfo
+ambiguous filename
+
+77.2 Run dry-run
+
+Run:
+
+python main.py --dry-run <test-library>
+
+77.3 Manually inspect every decision
+
+Record:
+
+file
+parsed identity
+provider
+candidate
+confidence
+metadata state
+conflicts
+decision
+
+77.4 Reject questionable decisions
+
+Any incorrect:
+
+AUTO_UPDATE
+
+is a release blocker.
+
+The system must prefer:
+
+REVIEW
+
+over a wrong comic.
+
+77.5 Process a tiny real batch
+
+After dry-run passes:
+
+5 files maximum
+
+Process them normally.
+
+77.6 Verify every archive
+
+Check:
+
+ComicInfo.xml
+archive opens
+images unchanged
+unrelated entries unchanged
+permissions preserved
+ownership preserved
+expected metadata present
+
+77.7 Expand gradually
+
+Only after the 5-file batch passes:
+
+5
+→ 25
+→ 100
+→ larger library
+
+Never jump directly to the complete library.
+
+---
+
+Phase 78 — Automation Production Test
+
+Priority: P1
+
+The project already contains automation stress tests for:
+
+- self-write avoidance
+- restart persistence
+- rapid event deduplication
+- failure-loop prevention.
+
+The final step is verifying the actual watcher behavior.
+
+78.1 Start watcher
+
+Point it at the isolated test library.
+
+78.2 Add one archive
+
+Expected:
+
+one queue entry
+one processing cycle
+
+78.3 Verify self-write
+
+ComicInfo modification must not create an infinite loop.
+
+78.4 Restart
+
+Restart the application.
+
+The existing completed archive must not endlessly reprocess.
+
+78.5 Rapid changes
+
+Simulate:
+
+create
+modify
+modify
+rename
+
+Verify appropriate deduplication.
+
+78.6 Provider failure
+
+Cause provider failure.
+
+Expected:
+
+REVIEW/FAILED
+bounded retry
+no infinite loop
+
+---
+
+Phase 79 — Release Checklist
+
+Priority: P2
+
+Create:
+
+docs/release-checklist.md
+
+Checklist:
+
+- [ ] Working tree clean
+- [ ] CI passing
+- [ ] Full test suite passing
+- [ ] No unexpected test skips
+- [ ] Dry-run CLI test passing
+- [ ] Archive safety tests passing
+- [ ] Provider failure tests passing
+- [ ] Queue concurrency tests passing
+- [ ] Automation stress tests passing
+- [ ] Real-library validation passing
+- [ ] README synchronized
+- [ ] Architecture documentation synchronized
+- [ ] Configuration documented
+- [ ] Dependencies reproducible
+- [ ] No secrets committed
+- [ ] No debug logging enabled
+- [ ] No stale phase documentation
+- [ ] Production test batch verified
+- [ ] Backup of real library available before first production run
+
+---
+
+Phase 80 — Final Regression Gate
+
+Priority: P0
 
 Run the complete suite:
 
-./venv/bin/python -m unittest discover tests
+python -m unittest discover tests
 
 Required:
 
 0 failures
 0 errors
 
-Then run:
+Then separately execute:
 
-unit tests
-integration tests
-failure injection
-property/fuzz
+CLI dry-run
 archive safety
-queue concurrency
-dry-run
+provider failure
+metadata safety
 automation
-real-library test
+multi-worker
+real-library validation
+
+CI must reproduce the same successful result.
 
 ---
 
 Final Acceptance Criteria
 
-The project is production-ready only when all of these are true.
+CI
+
+- [ ] GitHub Actions automatically runs the test suite
+- [ ] Pull requests cannot silently bypass regression testing
+- [ ] Clean environment passes all tests
+- [ ] Dependency installation is reproducible
 
 Identity
 
-[x] Filename alone cannot produce an automatic identity.
-
-[x] Identity resolution and metadata retrieval are separate states.
-
-[x] Metadata failure cannot become successful metadata.
-
-[x] Provider disagreement causes review.
-
-[x] Critical identity conflicts cannot auto-update.
-
-[x] Score margin is enforced.
-
-[x] Complex issue numbers remain intact.
-
-[x] Variants/editions are distinguishable.
-
-[x] Existing XML authority is explicitly evaluated.
-
-Providers
-
-[x] NOT_FOUND differs from provider failure.
-
-[x] Rate limiting is preserved.
-
-[x] Retryable errors are distinguished.
-
-[x] Provider state survives into the final job result.
-
-[x] No provider exception is silently discarded.
-
-[x] No live provider requests occur in unit tests.
+- [ ] Identity resolution remains separate from metadata retrieval
+- [ ] Provider failure cannot become successful metadata
+- [ ] Complex issue numbers remain intact
+- [ ] Provider disagreement remains reviewable
+- [ ] Existing ComicInfo authority remains explicit
 
 Metadata
 
-[x] Successful identity does not imply successful metadata.
+- [ ] "METADATA_FOUND" can update automatically when confidence requirements are met
+- [ ] "METADATA_PARTIAL" cannot automatically update
+- [ ] "METADATA_NOT_FOUND" cannot automatically update
+- [ ] "METADATA_PROVIDER_ERROR" cannot automatically update
+- [ ] "METADATA_INVALID" cannot automatically update
+- [ ] Wrong metadata is always treated as worse than missing metadata
 
-[x] Partial metadata cannot silently become a full Comic.
+Archive Safety
 
-[x] Invalid metadata cannot be written.
+- [ ] Original archive remains recoverable after failed writes
+- [ ] CRC verification remains enabled
+- [ ] Strict SHA256 verification works
+- [ ] fsync failures are not silently ignored
+- [ ] Archive replacement failures are reported correctly
+- [ ] Unrelated archive entries remain unchanged
 
-[x] Provider lookup failure leaves the archive untouched.
+Dry-Run
 
-Archives
+- [ ] CLI dry-run performs zero persistent mutations
+- [ ] CLI dry-run performs zero archive mutations
+- [ ] CLI dry-run does not create processing loops
+- [ ] CLI output explains the decision
 
-[x] Temporary archive is on the same filesystem.
+Providers
 
-[x] Pre-replacement verification passes.
-
-[x] Atomic replacement is used.
-
-[x] File fsync is performed.
-
-[x] Directory fsync is performed.
-
-[x] fsync failures are handled explicitly.
-
-[x] Existing entries are preserved.
-
-[x] CRC/size verification passes.
-
-[x] Strict SHA256 verification is available.
-
-[x] Post-replacement verification passes.
-
-Queue
-
-[x] Jobs cannot be double-claimed.
-
-[x] Worker leases work.
-
-[x] Crashed workers are recoverable.
-
-[x] Poison jobs stop retrying.
-
-[x] Multiple workers can safely operate concurrently.
+- [ ] NOT_FOUND differs from provider failure
+- [ ] RATE_LIMITED remains distinguishable
+- [ ] OFFLINE remains distinguishable
+- [ ] Retryable failures remain bounded
+- [ ] Provider state reaches the final result
+- [ ] Secrets never appear in logs
 
 Automation
 
-[x] Self-written archives are ignored.
+- [ ] Self-writes do not cause infinite processing
+- [ ] Restart does not cause endless reprocessing
+- [ ] Rapid filesystem events are deduplicated
+- [ ] Failed jobs eventually become terminal
+- [ ] Worker crashes allow jobs to be reclaimed
+- [ ] Multiple workers do not process the same job simultaneously
 
-[x] Restart does not cause duplicate processing.
-
-[x] Rapid file changes are deduplicated.
-
-[x] Failed jobs do not loop forever.
-
-Dry Run
-
-[x] No archive modification.
-
-[x] No cache modification.
-
-[x] No job modification.
-
-[x] No temporary files.
-
-[x] No persistent database writes.
-
-[x] Before/after filesystem state is identical.
-
----
-
-Implementation Order
-
-The AI agent must implement in this order:
-
-56
-Identity / Metadata separation
-        ↓
-57
-Provider failure propagation
-        ↓
-58
-Identity authority/conflict rules
-        ↓
-59
-Canonical identity comparison
-        ↓
-60
-Strict archive verification
-        ↓
-61
-fsync durability handling
-        ↓
-62
-Real-library integration
-        ↓
-63
-Automation stress testing
-        ↓
-64
-Multi-worker stress testing
-        ↓
-65
-Final safety audit
-        ↓
-66
 Documentation
-        ↓
-67
-Final regression
 
-Do not move to the next phase if the previous phase has failing tests.
+- [ ] README matches the current repository
+- [ ] Repository tree is accurate
+- [ ] Configuration is documented
+- [ ] Provider behavior is documented
+- [ ] Dry-run is documented
+- [ ] Safety guarantees are accurately described
+- [ ] Phase-history language is removed where obsolete
+
+Production Validation
+
+- [ ] Isolated real-library dry-run completed
+- [ ] Every AUTO_UPDATE decision manually validated
+- [ ] Small real write batch completed successfully
+- [ ] Archive integrity verified
+- [ ] Metadata correctness verified
+- [ ] Automation tested against the isolated library
+- [ ] Production backup exists
 
 ---
 
-Most Important Rule for the Agent
+Definition of Done
 
-The agent must enforce this invariant:
+The project is ready for normal production use only when:
 
-IDENTITY
-                    │
-                    ▼
-              RESOLUTION OK?
-                 /       \
-               NO         YES
-               │           │
-             REVIEW        ▼
-                     METADATA RETRIEVAL
-                         /       \
-                       FAIL      SUCCESS
-                        │           │
-                      REVIEW        ▼
-                              METADATA VALID?
-                                /       \
-                              NO         YES
-                              │           │
-                            REVIEW        ▼
-                                  MERGE/VALIDATION
-                                      │
-                                      ▼
-                                  ARCHIVE WRITE
-                                      │
-                                      ▼
-                               VERIFY + DURABILITY
-                                      │
-                                ┌─────┴─────┐
-                                ▼           ▼
-                              FAIL       SUCCESS
-                                │           │
-                              ROLLBACK     DONE
+CI PASS
+   ↓
+Full regression PASS
+   ↓
+CLI dry-run PASS
+   ↓
+Metadata safety PASS
+   ↓
+Archive safety PASS
+   ↓
+Provider failure PASS
+   ↓
+Automation PASS
+   ↓
+Real-library dry-run PASS
+   ↓
+Small real write batch PASS
+   ↓
+Documentation PASS
+   ↓
+Production release
 
-There must be no path from IDENTITY RESOLVED directly to ARCHIVE WRITE.
+The most important release rule is:
 
-That is the most important remaining correction.
+«When uncertain, the system must refuse to automatically modify the comic and send it to review instead.»
 
-And the agent should not declare the project production-ready merely because 245 tests pass. The final gate is a controlled real-library dry run followed by a small real write test, then automation and multi-worker testing.
+A missing ComicInfo.xml is recoverable.
+
+Incorrect ComicInfo metadata propagated across an entire library is not.
+
+---
+
+Recommended Implementation Order
+
+Do the work in this exact order:
+
+1. Phase 68 — CI
+2. Phase 69 — Metadata write safety
+3. Phase 70 — CLI dry-run integration
+4. Phase 71 — Production configuration
+5. Phase 72 — Dependency reproducibility
+6. Phase 73 — README
+7. Phase 74 — Provider abstraction review
+8. Phase 75 — Resolver maintainability review
+9. Phase 76 — Documentation guarantee audit
+10. Phase 77 — Real-library validation
+11. Phase 78 — Automation production test
+12. Phase 79 — Release checklist
+13. Phase 80 — Final regression gate
+
+Do not move to the next phase if the previous phase introduces failures.
+
+The goal is not to make the codebase bigger.
+
+The goal is to reach the point where an automated run against a real comic library can be trusted to:
+
+correctly identify comics
+        ↓
+retrieve trustworthy metadata
+        ↓
+refuse ambiguous results
+        ↓
+safely modify only approved archives
+        ↓
+verify the resulting archive
+        ↓
+avoid processing itself again
+        ↓
+recover from failures
+        ↓
+leave everything else untouched
