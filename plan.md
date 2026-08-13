@@ -53,7 +53,7 @@ The latest review identified these remaining areas:
 Priority| Issue| Status
 P0| CI enforcement| Completed
 P0| Metadata-write safety final verification| Completed
-P1| README architecture is stale| Needs update
+P1| README architecture is stale| Completed
 P1| Production configuration validation| Completed
 P1| Dependency reproducibility| Completed
 P1| CLI dry-run integration test| Completed
