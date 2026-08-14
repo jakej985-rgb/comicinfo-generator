@@ -950,12 +950,12 @@ Do not call the project complete until every item below is true.
 
 ### Security Checklist
 
-- [ ] API keys never returned by API
-- [ ] API keys never logged
-- [ ] CORS restricted
-- [ ] localhost is safe default
-- [ ] filesystem paths validated
-- [ ] remote access is explicit
+- [x] API keys never returned by API
+- [x] API keys never logged
+- [x] CORS restricted
+- [x] localhost is safe default
+- [x] filesystem paths validated
+- [x] remote access is explicit
 
 ### Configuration Checklist
 

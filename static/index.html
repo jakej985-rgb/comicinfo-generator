@@ -1423,8 +1423,22 @@
         if (data.success) {
           const cfg = data.config;
           document.getElementById('cfg-kapowarr-url').value = cfg.kapowarr.url || '';
-          document.getElementById('cfg-kapowarr-key').value = cfg.kapowarr.api_key || '';
-          document.getElementById('cfg-comicvine-key').value = cfg.comicvine.api_key || '';
+          const kapKeyInput = document.getElementById('cfg-kapowarr-key');
+          kapKeyInput.value = '';
+          if (cfg.kapowarr.api_key_set) {
+            kapKeyInput.placeholder = "•••••••• (Key Configured — leave blank to keep)";
+          } else {
+            kapKeyInput.placeholder = "API Key (optional)";
+          }
+
+          const cvKeyInput = document.getElementById('cfg-comicvine-key');
+          cvKeyInput.value = '';
+          if (cfg.comicvine.api_key_set) {
+            cvKeyInput.placeholder = "•••••••• (Key Configured — leave blank to keep)";
+          } else {
+            cvKeyInput.placeholder = "e.g. 1234567890abcdef...";
+          }
+
           document.getElementById('cfg-workers').value = cfg.automation.workers || 4;
           document.getElementById('cfg-prefer-kapowarr').checked = !!cfg.automation.prefer_kapowarr;
           document.getElementById('cfg-overwrite').checked = !!cfg.output.overwrite;

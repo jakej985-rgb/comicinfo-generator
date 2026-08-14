@@ -9,6 +9,7 @@ import json
 import os
 import sys
 import zipfile
+from typing import Optional
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
@@ -37,18 +38,56 @@ from services.processing import (
 _repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC_DIR = os.path.join(_repo_dir, "static")
 
+def sanitize_error_text(text: str) -> str:
+    """Sanitizes text to guarantee API keys are never exposed in error responses or logs."""
+    if not text:
+        return text
+    try:
+        cfg = load_config()
+        for secret in (cfg.comicvine.api_key, cfg.kapowarr.api_key):
+            if secret and len(secret) >= 4:
+                text = text.replace(secret, "********")
+    except Exception:
+        pass
+    return text
+
 
 class ComicServerHandler(BaseHTTPRequestHandler):
+
+    def _get_allowed_origin(self) -> Optional[str]:
+        """
+        Phase 80.2: Evaluates request Origin against configured CORS origins
+        and localhost/127.0.0.1 boundaries.
+        """
+        origin = self.headers.get("Origin")
+        if not origin:
+            return None
+        try:
+            cfg = load_config()
+            allowed = [o.rstrip("/").lower() for o in cfg.server.cors_origins]
+            parsed = urlparse(origin)
+            hostname = (parsed.hostname or "").lower()
+            if hostname in ("localhost", "127.0.0.1"):
+                return origin
+            if origin.rstrip("/").lower() in allowed:
+                return origin
+        except Exception:
+            pass
+        return None
 
     def _set_headers(self, status=200, content_type="application/json"):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        allowed_origin = self._get_allowed_origin()
+        if allowed_origin:
+            self.send_header("Access-Control-Allow-Origin", allowed_origin)
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
     def _json(self, status: int, data: dict):
+        if isinstance(data, dict) and "error" in data and isinstance(data["error"], str):
+            data["error"] = sanitize_error_text(data["error"])
         self._set_headers(status)
         self.wfile.write(json.dumps(data).encode("utf-8"))
 
@@ -88,14 +127,37 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             self._json(200, {
                 "success": True,
                 "config": {
-                    "comicvine": {"api_key": cfg.comicvine.api_key},
-                    "kapowarr": {"url": cfg.kapowarr.url, "api_key": cfg.kapowarr.api_key},
-                    "automation": {"mode": cfg.automation.mode, "workers": cfg.automation.workers,
-                                   "prefer_kapowarr": cfg.automation.prefer_kapowarr},
-                    "cache": {"enabled": cfg.cache.enabled, "db_path": cfg.cache.db_path},
-                    "output": {"embed_xml": cfg.output.embed_xml, "overwrite": cfg.output.overwrite,
-                               "delete_cbr": cfg.output.delete_cbr},
-                    "logging": {"level": cfg.logging.level, "log_file": cfg.logging.log_file}
+                    "comicvine": {
+                        "api_key_set": bool(cfg.comicvine.api_key and cfg.comicvine.api_key.strip())
+                    },
+                    "kapowarr": {
+                        "url": cfg.kapowarr.url,
+                        "api_key_set": bool(cfg.kapowarr.api_key and cfg.kapowarr.api_key.strip())
+                    },
+                    "server": {
+                        "host": cfg.server.host,
+                        "port": cfg.server.port,
+                        "cors_origins": list(cfg.server.cors_origins)
+                    },
+                    "automation": {
+                        "mode": cfg.automation.mode,
+                        "workers": cfg.automation.workers,
+                        "prefer_kapowarr": cfg.automation.prefer_kapowarr
+                    },
+                    "cache": {
+                        "enabled": cfg.cache.enabled,
+                        "db_path": cfg.cache.db_path
+                    },
+                    "output": {
+                        "embed_xml": cfg.output.embed_xml,
+                        "overwrite": cfg.output.overwrite,
+                        "delete_cbr": cfg.output.delete_cbr,
+                        "strict_archive_verification": cfg.output.strict_archive_verification
+                    },
+                    "logging": {
+                        "level": cfg.logging.level,
+                        "log_file": cfg.logging.log_file
+                    }
                 }
             })
 
@@ -239,8 +301,44 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             try:
                 new_cfg_data = fields.get("config", {})
                 init_config(DEFAULT_CONFIG_PATH)
-                with open(os.path.expanduser(DEFAULT_CONFIG_PATH), "w", encoding="utf-8") as f:
-                    yaml.dump(new_cfg_data, f, default_flow_style=False)
+                expanded = os.path.expanduser(DEFAULT_CONFIG_PATH)
+                existing_yaml = {}
+                if os.path.exists(expanded):
+                    try:
+                        with open(expanded, "r", encoding="utf-8") as f:
+                            existing_yaml = yaml.safe_load(f) or {}
+                    except Exception:
+                        existing_yaml = {}
+
+                # Deep update with secret preservation
+                if "comicvine" in new_cfg_data:
+                    cv = new_cfg_data["comicvine"]
+                    if not isinstance(existing_yaml.get("comicvine"), dict):
+                        existing_yaml["comicvine"] = {}
+                    if cv.get("clear_api_key"):
+                        existing_yaml["comicvine"]["api_key"] = ""
+                    elif "api_key" in cv and cv["api_key"].strip():
+                        existing_yaml["comicvine"]["api_key"] = cv["api_key"].strip()
+
+                if "kapowarr" in new_cfg_data:
+                    kap = new_cfg_data["kapowarr"]
+                    if not isinstance(existing_yaml.get("kapowarr"), dict):
+                        existing_yaml["kapowarr"] = {}
+                    if "url" in kap:
+                        existing_yaml["kapowarr"]["url"] = kap["url"]
+                    if kap.get("clear_api_key"):
+                        existing_yaml["kapowarr"]["api_key"] = ""
+                    elif "api_key" in kap and kap["api_key"].strip():
+                        existing_yaml["kapowarr"]["api_key"] = kap["api_key"].strip()
+
+                for section in ("server", "automation", "cache", "output", "logging"):
+                    if section in new_cfg_data and isinstance(new_cfg_data[section], dict):
+                        if not isinstance(existing_yaml.get(section), dict):
+                            existing_yaml[section] = {}
+                        existing_yaml[section].update(new_cfg_data[section])
+
+                with open(expanded, "w", encoding="utf-8") as f:
+                    yaml.dump(existing_yaml, f, default_flow_style=False)
                 self._json(200, {"success": True, "message": "Configuration saved successfully."})
             except Exception as e:
                 self._json(500, {"error": f"Failed to save config: {e}"})
@@ -384,8 +482,11 @@ class ComicServerHandler(BaseHTTPRequestHandler):
 
             cfg = load_config()
             self.send_response(200)
-            self.send_header("Content-Type", "application/x-ndjson")
-            self.send_header("Access-Control-Allow-Origin", "*")
+            allowed_origin = self._get_allowed_origin()
+            if allowed_origin:
+                self.send_header("Access-Control-Allow-Origin", allowed_origin)
+                self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type")
             self.end_headers()
 
             processed_count = 0

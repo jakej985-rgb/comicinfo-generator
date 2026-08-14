@@ -29,10 +29,26 @@ output:
   overwrite: false
   delete_cbr: true
 
+server:
+  host: "127.0.0.1"
+  port: 5005
+  cors_origins:
+    - "http://localhost:5005"
+    - "http://127.0.0.1:5005"
+
 logging:
   level: "INFO"
   log_file: "~/.comicinfo/generator.log"
 """
+
+@dataclass
+class ServerConfig:
+    host: str = "127.0.0.1"
+    port: int = 5005
+    cors_origins: list = field(default_factory=lambda: [
+        "http://localhost:5005",
+        "http://127.0.0.1:5005"
+    ])
 
 @dataclass
 class ComicvineConfig:
@@ -123,14 +139,24 @@ def validate_startup_config(cfg: "Config") -> list:
             f"Configuration error: Automation workers must be >= 1 (got {cfg.automation.workers})."
         )
 
-    # 4. Validate Logging Level
+    # 4. Validate Server Config
+    if not cfg.server.host or not cfg.server.host.strip():
+        raise ConfigurationError("Configuration error: server.host cannot be empty.")
+    if not (1 <= cfg.server.port <= 65535):
+        raise ConfigurationError(
+            f"Configuration error: server.port must be between 1 and 65535 (got {cfg.server.port})."
+        )
+    if not isinstance(cfg.server.cors_origins, list):
+        raise ConfigurationError("Configuration error: server.cors_origins must be a list of allowed origins.")
+
+    # 5. Validate Logging Level
     valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
     if cfg.logging.level.upper() not in valid_levels:
         raise ConfigurationError(
             f"Configuration error: Invalid log level '{cfg.logging.level}'. Must be one of {sorted(valid_levels)}."
         )
 
-    # 5. Validate Database & Cache directory writability
+    # 6. Validate Database & Cache directory writability
     if cfg.cache.enabled and cfg.cache.db_path and cfg.cache.db_path != ":memory:":
         db_dir = os.path.dirname(os.path.abspath(os.path.expanduser(cfg.cache.db_path)))
         if db_dir:
@@ -147,7 +173,7 @@ def validate_startup_config(cfg: "Config") -> list:
                     f"Configuration error: Cannot create or access cache database directory '{db_dir}': {e}"
                 )
 
-    # 6. Check conversion tool readiness
+    # 7. Check conversion tool readiness
     tools = check_conversion_tools()
     if not any(tools.values()):
         warnings.append(
@@ -161,6 +187,7 @@ def validate_startup_config(cfg: "Config") -> list:
 class Config:
     comicvine: ComicvineConfig = field(default_factory=ComicvineConfig)
     kapowarr: KapowarrConfig = field(default_factory=KapowarrConfig)
+    server: ServerConfig = field(default_factory=ServerConfig)
     automation: AutomationConfig = field(default_factory=AutomationConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
@@ -169,16 +196,23 @@ class Config:
 
     def to_safe_dict(self) -> dict:
         """
-        Phase 71.4: Returns a dictionary representation of configuration
+        Phase 71.4 & Phase 80.1: Returns a dictionary representation of configuration
         with sensitive secrets (API keys) securely masked.
         """
         return {
             "comicvine": {
-                "api_key": mask_secret(self.comicvine.api_key)
+                "api_key": mask_secret(self.comicvine.api_key),
+                "api_key_set": bool(self.comicvine.api_key and self.comicvine.api_key.strip())
             },
             "kapowarr": {
                 "url": self.kapowarr.url,
-                "api_key": mask_secret(self.kapowarr.api_key)
+                "api_key": mask_secret(self.kapowarr.api_key),
+                "api_key_set": bool(self.kapowarr.api_key and self.kapowarr.api_key.strip())
+            },
+            "server": {
+                "host": self.server.host,
+                "port": self.server.port,
+                "cors_origins": list(self.server.cors_origins)
             },
             "automation": {
                 "mode": self.automation.mode,
@@ -244,6 +278,12 @@ def load_config(config_path: Optional[str] = None, cli_overrides: Optional[dict]
     cfg.automation.workers = int(auto_yaml.get("workers", cfg.automation.workers) or 4)
     cfg.automation.prefer_kapowarr = bool(auto_yaml.get("prefer_kapowarr", False))
 
+    srv_yaml = yaml_data.get("server", {})
+    cfg.server.host = str(srv_yaml.get("host", cfg.server.host) or "127.0.0.1")
+    cfg.server.port = int(srv_yaml.get("port", cfg.server.port) or 5005)
+    if "cors_origins" in srv_yaml and isinstance(srv_yaml["cors_origins"], list):
+        cfg.server.cors_origins = [str(o) for o in srv_yaml["cors_origins"]]
+
     cache_yaml = yaml_data.get("cache", {})
     cfg.cache.enabled = bool(cache_yaml.get("enabled", cfg.cache.enabled))
     if "db_path" in cache_yaml and cache_yaml["db_path"]:
@@ -267,6 +307,15 @@ def load_config(config_path: Optional[str] = None, cli_overrides: Optional[dict]
         cfg.kapowarr.url = os.environ["KAPOWARR_URL"]
     if os.environ.get("KAPOWARR_API_KEY"):
         cfg.kapowarr.api_key = os.environ["KAPOWARR_API_KEY"]
+    if os.environ.get("COMICINFO_HOST"):
+        cfg.server.host = os.environ["COMICINFO_HOST"]
+    if os.environ.get("COMICINFO_PORT"):
+        try:
+            cfg.server.port = int(os.environ["COMICINFO_PORT"])
+        except ValueError:
+            pass
+    if os.environ.get("COMICINFO_CORS_ORIGINS"):
+        cfg.server.cors_origins = [o.strip() for o in os.environ["COMICINFO_CORS_ORIGINS"].split(",") if o.strip()]
     if os.environ.get("COMICINFO_WORKERS"):
         try:
             cfg.automation.workers = int(os.environ["COMICINFO_WORKERS"])
@@ -287,6 +336,12 @@ def load_config(config_path: Optional[str] = None, cli_overrides: Optional[dict]
             cfg.kapowarr.url = str(cli_overrides["kapowarr_url"])
         if "kapowarr_api_key" in cli_overrides and cli_overrides["kapowarr_api_key"] is not None:
             cfg.kapowarr.api_key = str(cli_overrides["kapowarr_api_key"])
+        if "host" in cli_overrides and cli_overrides["host"] is not None:
+            cfg.server.host = str(cli_overrides["host"])
+        if "port" in cli_overrides and cli_overrides["port"] is not None:
+            cfg.server.port = int(cli_overrides["port"])
+        if "cors_origins" in cli_overrides and cli_overrides["cors_origins"] is not None:
+            cfg.server.cors_origins = list(cli_overrides["cors_origins"])
         if "workers" in cli_overrides and cli_overrides["workers"] is not None:
             cfg.automation.workers = int(cli_overrides["workers"])
         if "overwrite" in cli_overrides and cli_overrides["overwrite"] is not None:
