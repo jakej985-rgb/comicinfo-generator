@@ -12,7 +12,7 @@ Goal: Finish the remaining production-hardening work without adding unnecessary 
 
 The project should be considered complete when it can reliably:
 
-```
+```text
 Comic archive discovered
         ↓
 Determine existing metadata
@@ -50,12 +50,12 @@ And importantly:
 
 ### 80.1 Remove API keys from `/api/config`
 
-#### Current problem
+#### Problem 80.1
 
 The API currently returns the actual ComicVine and Kapowarr API keys through `/api/config`.
 That must be removed.
 
-#### Change
+#### Change 80.1
 
 Instead of:
 
@@ -88,7 +88,7 @@ and:
 }
 ```
 
-#### Requirements
+#### Requirements 80.1
 
 - Never return raw API keys through GET.
 - Never include raw API keys in error messages.
@@ -97,9 +97,10 @@ and:
 - Preserve the ability to update a key.
 - An empty/missing key should still be representable.
 
-#### Tests
+#### Tests 80.1
 
 Add tests proving:
+
 - configured ComicVine key is not returned
 - configured Kapowarr key is not returned
 - `api_key_set == true`
@@ -115,9 +116,10 @@ Current behavior effectively allows:
 
 This should not remain the default.
 
-#### Preferred behavior
+#### Preferred Behavior 80.2
 
 For the local application:
+
 - `localhost`
 - `127.0.0.1`
 
@@ -134,16 +136,17 @@ server:
     - "http://127.0.0.1:5005"
 ```
 
-#### Tests
+#### Tests 80.2
 
 Verify:
+
 - allowed origin receives CORS header
 - unauthorized origin does not
 - default configuration is restrictive
 
 ---
 
-### 80.3 Bind safely by default
+### 80.3 Bind Safely by Default
 
 Make sure the application does not accidentally expose the management API to the entire LAN.
 
@@ -156,14 +159,14 @@ If LAN access is desired, make it an explicit configuration choice.
 
 ## PHASE 81 — Configuration Hardening
 
-### 81.1 Make startup validation mandatory
+### 81.1 Make Startup Validation Mandatory
 
 `validate_startup_config()` already exists.
 The problem is that configuration can be loaded without necessarily passing through the validation boundary.
 
-#### New startup flow
+#### Startup Flow 81.1
 
-```
+```text
 load_config()
       ↓
 validate_startup_config()
@@ -177,11 +180,12 @@ Do not allow production components to start with invalid configuration.
 
 ---
 
-### 81.2 Separate errors from warnings
+### 81.2 Separate Errors From Warnings
 
 Configuration problems should be classified:
 
-#### Fatal
+#### Fatal 81.2
+
 - invalid URL
 - invalid worker count
 - unusable cache path
@@ -189,7 +193,8 @@ Configuration problems should be classified:
 
 *Application startup stops.*
 
-#### Warning
+#### Warning 81.2
+
 - ComicVine key missing
 - Kapowarr unavailable
 - 7z/unrar unavailable
@@ -198,9 +203,10 @@ Configuration problems should be classified:
 
 ---
 
-### 81.3 Validate configuration types
+### 81.3 Validate Configuration Types
 
 Do not rely on:
+
 - `int(...)`
 - `bool(...)`
 - `str(...)`
@@ -214,9 +220,10 @@ rather than an unexpected Python exception.
 
 ---
 
-### 81.4 Add configuration tests
+### 81.4 Add Configuration Tests
 
 Cover:
+
 - defaults
 - YAML
 - environment variables
@@ -241,10 +248,11 @@ The goal is to minimize unnecessary external requests while improving accuracy.
 
 ---
 
-### 82.1 Establish the authoritative resolution order
+### 82.1 Establish Authoritative Resolution Order
 
 Implement this exact strategy:
 
+```text
 1. Explicit URL / explicit provider ID
        ↓
 2. Existing ComicInfo.xml
@@ -260,17 +268,19 @@ Implement this exact strategy:
 7. GCD
        ↓
 8. REVIEW / unresolved
+```
 
 However, existing ComicInfo should not automatically win if it is obviously invalid or conflicts with explicit user information.
 
 ---
 
-### 82.2 Existing ComicInfo should be treated as evidence
+### 82.2 Existing ComicInfo as Evidence
 
 Don't simply do: `ComicInfo exists → done`
 
 Instead:
-```
+
+```text
 ComicInfo exists
       ↓
 validate
@@ -286,11 +296,11 @@ A valid existing ComicInfo can eliminate network calls.
 
 ---
 
-### 82.3 Cache must be checked before network providers
+### 82.3 Cache Checked Before Network Providers
 
 Before calling any provider:
 
-```
+```text
 normalized identity
         ↓
 cache lookup
@@ -305,11 +315,11 @@ This is especially important for ComicVine request conservation.
 
 ---
 
-### 82.4 Kapowarr-first behavior
+### 82.4 Kapowarr-First Behavior
 
 When Kapowarr is configured and reachable:
 
-```
+```text
 filename
  ↓
 Kapowarr search
@@ -320,6 +330,7 @@ confidence
 ```
 
 Only call ComicVine if:
+
 - Kapowarr unavailable
 - OR Kapowarr returns no useful candidate
 - OR confidence below threshold
@@ -328,11 +339,12 @@ Do not call ComicVine merely because it exists as another provider.
 
 ---
 
-### 82.5 ComicVine fallback
+### 82.5 ComicVine Fallback
 
 ComicVine should be a fallback rather than an automatic first-class network request for every file.
 
 Track:
+
 - ComicVine requested?
 - reason?
 - query?
@@ -344,7 +356,7 @@ This will let you verify that the application is actually conserving requests.
 
 ---
 
-### 82.6 GCD fallback
+### 82.6 GCD Fallback
 
 GCD should behave the same way:
 GCD requested only when previous resolution stages fail.
@@ -352,7 +364,7 @@ It should not be silently queried as part of every resolution.
 
 ---
 
-### 82.7 Add provider resolution reason
+### 82.7 Add Provider Resolution Reason
 
 Every final result should expose something like:
 
@@ -382,6 +394,7 @@ This will make debugging dramatically easier.
 ## PHASE 83 — Provider Error Semantics
 
 The provider base classes already have useful states:
+
 - `SUCCESS`
 - `NOT_FOUND`
 - `CONNECTION_ERROR`
@@ -394,7 +407,7 @@ Now make the entire application consistently use them.
 
 ---
 
-### 83.1 Never convert provider errors into None
+### 83.1 Never Convert Provider Errors into None
 
 Avoid patterns such as:
 
@@ -409,7 +422,7 @@ because that turns `RATE_LIMITED` into `NOT_FOUND`.
 
 ---
 
-### 83.2 Standardize provider result
+### 83.2 Standardize Provider Result
 
 Use one structure:
 
@@ -437,14 +450,16 @@ ProviderOperationResult(
 
 ---
 
-### 83.3 Define retry policy
+### 83.3 Define Retry Policy
 
-#### Retry
+#### Retry Actions 83.3
+
 - `CONNECTION_ERROR`
 - `RATE_LIMITED`
 - temporary server failure
 
-#### Don't retry automatically
+#### Non-Retry Actions 83.3
+
 - `AUTH_ERROR`
 - `NOT_FOUND`
 - `INVALID_RESPONSE`
@@ -452,7 +467,7 @@ ProviderOperationResult(
 
 ---
 
-### 83.4 Preserve provider errors through the resolver
+### 83.4 Preserve Provider Errors Through Resolver
 
 The final result should be able to say:
 `No metadata found`
@@ -473,7 +488,7 @@ Clean up the current partial provider abstraction.
 
 Example architecture:
 
-```
+```text
 providers/
 ├── base.py
 ├── registry.py
@@ -483,7 +498,8 @@ providers/
 ```
 
 Registry:
-```
+
+```text
 ProviderRegistry
  ├── kapowarr
  ├── comicvine
@@ -492,7 +508,7 @@ ProviderRegistry
 
 ---
 
-### 84.2 Resolver should depend on registry
+### 84.2 Resolver Depends on Registry
 
 Instead of:
 
@@ -506,7 +522,7 @@ the resolver should request providers from the registry.
 
 ---
 
-### 84.3 Provider priority should be configuration
+### 84.3 Provider Priority as Configuration
 
 Example:
 
@@ -522,9 +538,10 @@ This allows the project to evolve without rewriting resolver logic.
 
 ---
 
-## PHASE 85 — Job/Queue State Consolidation
+## PHASE 85 — Job and Queue State Consolidation
 
 Currently there are several pieces involved in processing state:
+
 - `ProcessingQueue`
 - `CacheManager`
 - tracker
@@ -535,9 +552,10 @@ These should have clearly defined responsibilities.
 
 ---
 
-### 85.1 JobStore becomes authoritative for processing state
+### 85.1 JobStore Authoritative for Processing State
 
 Use:
+
 - `DISCOVERED`
 - `QUEUED`
 - `PROCESSING`
@@ -548,7 +566,7 @@ Use:
 
 ---
 
-### 85.2 Hash tracker becomes identity/idempotency data
+### 85.2 Hash Tracker as Idempotency Data
 
 It should answer:
 *Has this exact archive state already been processed?*
@@ -556,11 +574,11 @@ It should not become a second job system.
 
 ---
 
-### 85.3 ProcessingQueue becomes execution only
+### 85.3 ProcessingQueue for Execution Only
 
 The queue should:
 
-```
+```text
 claim job
  ↓
 execute
@@ -576,13 +594,14 @@ It should not maintain a competing permanent state model.
 
 ## PHASE 86 — Watcher Reliability
 
-### 86.1 Add file stability detection
+### 86.1 File Stability Detection
 
 Current flow:
 `filesystem event → process`
 
 Change to:
-```
+
+```text
 filesystem event
  ↓
 wait
@@ -603,11 +622,11 @@ For example:
 
 ---
 
-### 86.2 Debounce rapid events
+### 86.2 Debounce Rapid Events
 
 Multiple events for the same file should collapse into one pending operation.
 
-```
+```text
 Batman.cbz
   create
   modify
@@ -619,9 +638,10 @@ Batman.cbz
 
 ---
 
-### 86.3 Handle rename events
+### 86.3 Handle Rename Events
 
 Explicitly support:
+
 - `on_created`
 - `on_modified`
 - `on_moved`
@@ -632,10 +652,11 @@ For moved files:
 
 ---
 
-### 86.4 Watcher restart test
+### 86.4 Watcher Restart Test
 
 Verify:
-```
+
+```text
 application stops
  ↓
 library unchanged
@@ -657,15 +678,17 @@ The current dry-run implementation is good enough functionally, but strengthen t
 
 ---
 
-### 87.1 Separate planning from execution
+### 87.1 Separate Planning from Execution
 
 Create:
+
 - Resolution
 - Planning
 - Execution
 
 Pipeline:
-```
+
+```text
 Archive
  ↓
 Parse
@@ -690,15 +713,17 @@ ProcessingPlan(
 
 ---
 
-### 87.2 Dry-run executes only planning
+### 87.2 Dry-Run Executes Planning Only
 
 Dry-run:
-```
+
+```text
 Archive → Parse → Resolve → Plan → DISPLAY
 ```
 
 Normal run:
-```
+
+```text
 Archive → Parse → Resolve → Plan → Write → Verify → Track
 ```
 
@@ -721,7 +746,8 @@ library:
     - /mnt/comics
 ```
 
-#### Requirements
+### Requirements 88.1
+
 - multiple roots supported
 - recursive search supported
 - configurable
@@ -736,6 +762,7 @@ library:
 Audit every API endpoint.
 
 For each endpoint define:
+
 - input
 - validation
 - allowed values
@@ -746,12 +773,13 @@ Example:
 `/api/batch-preview`
 
 `folder_path`
+
 - required
 - must exist
 - must be directory
 - must be inside configured library roots
 
-#### Security boundary
+### Security Boundary 89.1
 
 Do not allow arbitrary filesystem access if the server is ever exposed outside localhost.
 
@@ -763,7 +791,8 @@ The current ComicVine scraper is necessarily tied to ComicVine HTML structure.
 
 Add regression fixtures for:
 
-#### Series
+### Series Scenarios 90.1
+
 - normal volume
 - volume with many pages
 - missing pagination
@@ -771,7 +800,8 @@ Add regression fixtures for:
 - renamed series
 - volume slug mismatch
 
-#### Issues
+### Issue Number Scenarios 90.2
+
 - `#1`
 - `#01`
 - `#1.5`
@@ -784,9 +814,10 @@ Add regression fixtures for:
 - `preview`
 - `one-shot`
 
-#### Exclusions
+### Exclusions 90.3
 
 Ensure these aren't incorrectly matched:
+
 - TPB
 - HC
 - GN
@@ -805,6 +836,7 @@ Ensure these aren't incorrectly matched:
 This is important before release.
 
 Simulate failures during:
+
 - provider request
 - provider parsing
 - cache read
@@ -825,7 +857,7 @@ Add structured logging for every processing job.
 
 Example:
 
-```
+```text
 JOB START
 file=Batman #001.cbz
 
@@ -850,7 +882,8 @@ COMPLETED
 ```
 
 For fallback:
-```
+
+```text
 RESOLUTION
 Kapowarr=NOT_FOUND
 ComicVine=SUCCESS
@@ -858,7 +891,8 @@ fallback=true
 ```
 
 For failure:
-```
+
+```text
 RESOLUTION
 ComicVine=RATE_LIMITED
 retryable=true
@@ -877,6 +911,7 @@ Then specifically:
 `python -m unittest discover tests -v` under Python 3.11 and 3.12.
 
 Verify:
+
 - all tests pass
 - zero unexpected warnings
 - zero traceback
@@ -887,7 +922,7 @@ Verify:
 
 Before processing your full comic library, create a small test library:
 
-```
+```text
 test-library/
 ├── Batman #001.cbz
 ├── Batman #002.cbz
@@ -913,7 +948,8 @@ Test:
 
 Do not call the project complete until every item below is true.
 
-### Security
+### Security Checklist
+
 - [ ] API keys never returned by API
 - [ ] API keys never logged
 - [ ] CORS restricted
@@ -921,13 +957,15 @@ Do not call the project complete until every item below is true.
 - [ ] filesystem paths validated
 - [ ] remote access is explicit
 
-### Configuration
+### Configuration Checklist
+
 - [ ] startup validation enforced
 - [ ] invalid values produce clear errors
 - [ ] precedence tested
 - [ ] warnings separated from fatal errors
 
-### Resolution
+### Resolution Checklist
+
 - [ ] existing ComicInfo checked first
 - [ ] cache checked before network
 - [ ] Kapowarr preferred
@@ -936,14 +974,16 @@ Do not call the project complete until every item below is true.
 - [ ] resolution reason recorded
 - [ ] provider errors preserved
 
-### Providers
+### Providers Checklist
+
 - [ ] provider registry implemented
 - [ ] resolver no longer hard-codes provider implementations
 - [ ] retry policy standardized
 - [ ] rate limiting handled correctly
 - [ ] authentication failures handled correctly
 
-### Automation
+### Automation Checklist
+
 - [ ] queue/job state unified
 - [ ] watcher debounced
 - [ ] file stability checked
@@ -951,20 +991,23 @@ Do not call the project complete until every item below is true.
 - [ ] duplicate events safe
 - [ ] provider failures bounded
 
-### Dry-run
+### Dry-Run Checklist
+
 - [ ] no archive modification
 - [ ] no persistent DB mutation
 - [ ] no destructive operations
 - [ ] planning and execution separated
 
-### Archive
+### Archive Checklist
+
 - [ ] CBZ atomic writing verified
 - [ ] archive verification passing
 - [ ] metadata preservation passing
 - [ ] CBR → CBZ workflow passing
 - [ ] CBR deletion behavior passing
 
-### Testing
+### Testing Checklist
+
 - [ ] full suite passes
 - [ ] Python 3.11 passes
 - [ ] Python 3.12 passes
@@ -975,11 +1018,11 @@ Do not call the project complete until every item below is true.
 
 ---
 
-## Recommended implementation order
+## Recommended Implementation Order
 
 Don't give the AI agent all of this as one giant "fix everything" instruction. Do it in controlled milestones:
 
-```
+```text
 80  Security
  ↓
 81  Configuration
@@ -1013,7 +1056,7 @@ Don't give the AI agent all of this as one giant "fix everything" instruction. D
 95  Release Gate
 ```
 
-### Most important change
+### Most Important Change
 
 If you're handing this to an AI coding agent, Phase 82 should be treated as the core functional requirement:
 
