@@ -5,31 +5,51 @@ import threading
 from typing import Optional, List, Callable
 from config import Config
 from cache.db import CacheManager
-from cache.tracker import is_file_unchanged, mark_file_processed
+from cache.jobs import (
+    JobStore,
+    STATUS_QUEUED,
+    STATUS_PROCESSING,
+    STATUS_COMPLETED,
+    STATUS_FAILED,
+    STATUS_SKIPPED,
+    STATUS_REVIEW,
+    STATUS_RETRYING
+)
+from cache.tracker import is_file_unchanged, mark_file_processed, calculate_sha256
 from pipeline.resolver import MetadataResolver
 from converters.cbr_to_cbz import convert_cbr_to_cbz
 from writers.archive import embed_comicinfo_in_cbz
 
 class ProcessingItem:
-    def __init__(self, file_path: str, url_override: str = "", delete_original_cbr: bool = True):
+    def __init__(self, file_path: str, url_override: str = "", delete_original_cbr: bool = True, job_id: str = ""):
         self.file_path = file_path
         self.url_override = url_override
         self.delete_original_cbr = delete_original_cbr
-        self.status = "pending"  # pending, processing, completed, skipped, failed
+        self.job_id = job_id
+        self.status = "pending"  # pending, processing, completed, skipped, failed, review, retrying
         self.error_message = ""
         self.target_file = ""
         self.provider_used = ""
+        self.confidence = 0.0
 
 class ProcessingQueue:
     """
-    Worker Queue Manager for batch and automated library processing.
+    Phase 85: Worker Queue Manager for execution only.
+    Lifecycle: claim job -> execute -> report result -> complete job in JobStore.
     Executes parallel worker threads, checks file hash status to skip unchanged files,
     converts CBR to CBZ, resolves metadata, and embeds ComicInfo.xml.
     """
 
-    def __init__(self, config: Config, cache_mgr: Optional[CacheManager] = None, log_callback: Optional[Callable[[str], None]] = None):
+    def __init__(
+        self,
+        config: Config,
+        cache_mgr: Optional[CacheManager] = None,
+        job_store: Optional[JobStore] = None,
+        log_callback: Optional[Callable[[str], None]] = None
+    ):
         self.config = config
         self.cache_mgr = cache_mgr or CacheManager(config.cache.db_path)
+        self.job_store = job_store
         self.resolver = MetadataResolver(config, self.cache_mgr)
         self.log_callback = log_callback or (lambda msg: print(msg))
 
@@ -48,7 +68,13 @@ class ProcessingQueue:
             for existing in self.results:
                 if existing.file_path == abs_path and existing.status in ("pending", "processing"):
                     return existing
-            item = ProcessingItem(file_path=abs_path, url_override=url_override)
+            
+            job_id = ""
+            if self.job_store:
+                job = self.job_store.create_job(abs_path, initial_status=STATUS_QUEUED)
+                job_id = job["id"]
+
+            item = ProcessingItem(file_path=abs_path, url_override=url_override, job_id=job_id)
             self.results.append(item)
         self.work_queue.put(item)
         return item
@@ -79,17 +105,23 @@ class ProcessingQueue:
                 continue
 
             try:
+                # 1. Claim Job
                 item.status = "processing"
+                if self.job_store and item.job_id:
+                    self.job_store.update_job_status(item.job_id, status=STATUS_PROCESSING)
+
                 file_path = item.file_path
 
-                # 1. Skip check if file unchanged
+                # 2. Idempotency check via Hash Tracker
                 if self.config.cache.enabled and is_file_unchanged(file_path, self.cache_mgr) and not self.config.output.overwrite:
                     item.status = "skipped"
                     item.target_file = file_path
+                    if self.job_store and item.job_id:
+                        self.job_store.update_job_status(item.job_id, status=STATUS_SKIPPED)
                     self.log(f"⚡ Skipped unchanged file: '{os.path.basename(file_path)}'")
                     continue
 
-                # 2. Handle CBR conversion if needed
+                # 3. Handle CBR conversion if needed
                 target_archive = file_path
                 if file_path.lower().endswith(".cbr"):
                     self.log(f"📦 Converting CBR to CBZ: '{os.path.basename(file_path)}'...")
@@ -97,7 +129,7 @@ class ProcessingQueue:
 
                 item.target_file = target_archive
 
-                # 3. Resolve Metadata
+                # 4. Resolve Metadata
                 self.log(f"🔍 Resolving metadata for: '{os.path.basename(target_archive)}'...")
                 comic, provider_used = self.resolver.resolve_file_metadata(target_archive, url_override=item.url_override)
                 item.provider_used = provider_used
@@ -105,22 +137,31 @@ class ProcessingQueue:
                 if not comic:
                     item.status = "failed"
                     item.error_message = "No metadata found"
+                    if self.job_store and item.job_id:
+                        self.job_store.mark_failed(item.job_id, error_code="METADATA_NOT_FOUND", error_message="No metadata found")
                     self.log(f"⚠️ Failed to resolve metadata for '{os.path.basename(target_archive)}'")
                     continue
 
-                # 4. Embed ComicInfo.xml into archive
+                # 5. Embed ComicInfo.xml into archive
                 self.log(f"⚡ Embedding ComicInfo.xml [{provider_used}] into '{os.path.basename(target_archive)}'...")
                 embed_comicinfo_in_cbz(target_archive, comic)
 
-                # 5. Mark file processed in hash tracker
+                # 6. Mark file processed in hash tracker (Idempotency)
                 mark_file_processed(target_archive, self.cache_mgr, provider_used=provider_used)
 
+                # 7. Complete job in JobStore
                 item.status = "completed"
+                if self.job_store and item.job_id:
+                    final_sha = calculate_sha256(target_archive) if os.path.exists(target_archive) else ""
+                    self.job_store.mark_completed(item.job_id, provider=provider_used, sha256=final_sha)
+
                 self.log(f"✅ Successfully tagged '{os.path.basename(target_archive)}' [{provider_used}]")
 
             except Exception as e:
                 item.status = "failed"
                 item.error_message = str(e)
+                if self.job_store and item.job_id:
+                    self.job_store.mark_failed(item.job_id, error_code="EXECUTION_ERROR", error_message=str(e))
                 self.log(f"❌ Error processing '{os.path.basename(item.file_path)}': {e}")
             finally:
                 self.work_queue.task_done()

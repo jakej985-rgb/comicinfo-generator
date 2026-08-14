@@ -984,11 +984,11 @@ Do not call the project complete until every item below is true.
 
 ### Automation Checklist
 
-- [ ] queue/job state unified
+- [x] queue/job state unified
 - [ ] watcher debounced
 - [ ] file stability checked
-- [ ] restart safe
-- [ ] duplicate events safe
+- [x] restart safe
+- [x] duplicate events safe
 - [ ] provider failures bounded
 
 ### Dry-Run Checklist

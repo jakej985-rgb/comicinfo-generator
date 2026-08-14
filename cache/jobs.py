@@ -4,17 +4,26 @@ import time
 import uuid
 from typing import Optional, List, Dict, Any
 
-STATUS_PENDING = "PENDING"
+STATUS_DISCOVERED = "DISCOVERED"
+STATUS_QUEUED = "QUEUED"
 STATUS_PROCESSING = "PROCESSING"
+STATUS_COMPLETED = "COMPLETED"
+STATUS_FAILED = "FAILED"
+STATUS_RETRYING = "RETRYING"
+STATUS_REVIEW = "REVIEW"
+
+# Backward compatibility aliases
+STATUS_PENDING = "PENDING"
 STATUS_SUCCESS = "SUCCESS"
 STATUS_SKIPPED = "SKIPPED"
-STATUS_REVIEW = "REVIEW"
 STATUS_UNRESOLVED = "UNRESOLVED"
-STATUS_FAILED = "FAILED"
+
+ACTIVE_CLAIMABLE_STATUSES = (STATUS_QUEUED, STATUS_PENDING, STATUS_DISCOVERED, STATUS_RETRYING)
 
 class JobStore:
     """
-    Phase 20 & 21: Durable Processing Job Store backed by SQLite.
+    Phase 20 & 21 & Phase 85: Durable Processing Job Store backed by SQLite.
+    Authoritative source of processing state (DISCOVERED, QUEUED, PROCESSING, COMPLETED, FAILED, RETRYING, REVIEW).
     Survives restarts, crashes, and power failures without losing work.
     """
 
@@ -90,10 +99,11 @@ class JobStore:
             conn.commit()
             return count
 
-    def create_job(self, file_path: str) -> dict:
+    def create_job(self, file_path: str, initial_status: str = STATUS_PENDING) -> dict:
         """
-        Phase 22: Deduplicates jobs using path + SHA256 as primary identity.
-        If same path and same SHA256 is already PENDING or PROCESSING, returns existing job.
+        Phase 22 & Phase 85: Deduplicates jobs using path + SHA256 as primary identity.
+        If same path and same SHA256 is already active (DISCOVERED, QUEUED, PENDING, PROCESSING, RETRYING),
+        returns existing job.
         If SHA256 changes (modified file), creates a new processing job.
         """
         abs_path = os.path.abspath(file_path)
@@ -119,16 +129,16 @@ class JobStore:
 
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            # Phase 22 Deduplication check (same path + same SHA256)
+            # Phase 22 & 85 Deduplication check (same path + same SHA256 across active states)
             if sha256:
                 cursor.execute("""
                     SELECT * FROM processing_jobs
-                    WHERE path = ? AND sha256 = ? AND status IN ('PENDING', 'PROCESSING');
+                    WHERE path = ? AND sha256 = ? AND status IN ('DISCOVERED', 'QUEUED', 'PENDING', 'PROCESSING', 'RETRYING');
                 """, (abs_path, sha256))
             else:
                 cursor.execute("""
                     SELECT * FROM processing_jobs
-                    WHERE path = ? AND status IN ('PENDING', 'PROCESSING');
+                    WHERE path = ? AND status IN ('DISCOVERED', 'QUEUED', 'PENDING', 'PROCESSING', 'RETRYING');
                 """, (abs_path,))
 
             existing = cursor.fetchone()
@@ -140,8 +150,8 @@ class JobStore:
 
             cursor.execute("""
                 INSERT INTO processing_jobs (id, path, sha256, size, mtime, status, created_at)
-                VALUES (?, ?, ?, ?, ?, 'PENDING', ?);
-            """, (job_id, abs_path, sha256, size, mtime, now))
+                VALUES (?, ?, ?, ?, ?, ?, ?);
+            """, (job_id, abs_path, sha256, size, mtime, initial_status, now))
             conn.commit()
 
             cursor.execute("SELECT * FROM processing_jobs WHERE id = ?;", (job_id,))
@@ -157,11 +167,11 @@ class JobStore:
 
     def claim_job(self, worker_id: str = "default_worker", lease_seconds: float = 300.0, max_attempts: int = 3) -> Optional[dict]:
         """
-        Phase 48: Atomically claims the next eligible job for a specific worker.
+        Phase 48 & Phase 85: Atomically claims the next eligible job for a specific worker.
         Uses SQLite exclusive transaction semantics (BEGIN IMMEDIATE) to guarantee
         that two concurrent workers cannot claim the same job.
         Eligible jobs:
-        - status == 'PENDING' and attempts < max_attempts
+        - status IN ('DISCOVERED', 'QUEUED', 'PENDING', 'RETRYING') and attempts < max_attempts
         - status == 'PROCESSING' and lease_until < now and attempts < max_attempts (expired lease recovery)
         """
         now = time.time()
@@ -178,17 +188,17 @@ class JobStore:
                 WHERE status = 'PROCESSING' AND lease_until IS NOT NULL AND lease_until < ? AND attempts >= ?;
             """, (now, max_attempts))
 
-            # 2. Reclaim expired leases where attempts < max_attempts back to PENDING
+            # 2. Reclaim expired leases where attempts < max_attempts back to RETRYING / PENDING
             cursor.execute("""
                 UPDATE processing_jobs
-                SET status = 'PENDING', worker_id = NULL, lease_until = NULL
+                SET status = 'RETRYING', worker_id = NULL, lease_until = NULL
                 WHERE status = 'PROCESSING' AND lease_until IS NOT NULL AND lease_until < ? AND attempts < ?;
             """, (now, max_attempts))
 
-            # 3. Find next available PENDING job
+            # 3. Find next available eligible job
             cursor.execute("""
                 SELECT id FROM processing_jobs
-                WHERE status = 'PENDING' AND attempts < ?
+                WHERE status IN ('DISCOVERED', 'QUEUED', 'PENDING', 'RETRYING') AND attempts < ?
                 ORDER BY created_at ASC
                 LIMIT 1;
             """, (max_attempts,))
@@ -207,7 +217,7 @@ class JobStore:
                     started_at = ?,
                     lease_until = ?,
                     attempts = attempts + 1
-                WHERE id = ? AND status = 'PENDING';
+                WHERE id = ? AND status IN ('DISCOVERED', 'QUEUED', 'PENDING', 'RETRYING');
             """, (worker_id, int(now), int(now), lease_until, job_id))
 
             if cursor.rowcount > 0:
@@ -218,6 +228,59 @@ class JobStore:
 
             conn.commit()
             return None
+
+    def mark_discovered(self, file_path: str) -> dict:
+        """Phase 85: Records a file as DISCOVERED before queueing."""
+        return self.create_job(file_path, initial_status=STATUS_DISCOVERED)
+
+    def mark_queued(self, job_id: str):
+        """Phase 85: Transitions job to QUEUED state."""
+        self.update_job_status(job_id, status=STATUS_QUEUED)
+
+    def mark_completed(
+        self,
+        job_id: str,
+        provider: str = "",
+        provider_id: str = "",
+        confidence: float = 0.0,
+        sha256: str = ""
+    ):
+        """Phase 85: Transitions job to COMPLETED state upon successful embed and hash tracking."""
+        self.update_job_status(
+            job_id=job_id,
+            status=STATUS_COMPLETED,
+            provider=provider,
+            provider_id=provider_id,
+            confidence=confidence,
+            sha256=sha256
+        )
+
+    def mark_failed(self, job_id: str, error_code: str = "", error_message: str = ""):
+        """Phase 85: Transitions job to FAILED state."""
+        self.update_job_status(
+            job_id=job_id,
+            status=STATUS_FAILED,
+            error_code=error_code,
+            error_message=error_message
+        )
+
+    def mark_retrying(self, job_id: str, error_code: str = "", error_message: str = ""):
+        """Phase 85: Transitions job to RETRYING state."""
+        self.update_job_status(
+            job_id=job_id,
+            status=STATUS_RETRYING,
+            error_code=error_code,
+            error_message=error_message
+        )
+
+    def mark_review(self, job_id: str, confidence: float = 0.0, error_message: str = ""):
+        """Phase 85: Transitions job to REVIEW state."""
+        self.update_job_status(
+            job_id=job_id,
+            status=STATUS_REVIEW,
+            confidence=confidence,
+            error_message=error_message
+        )
 
     def renew_lease(self, job_id: str, worker_id: str, lease_seconds: float = 300.0) -> bool:
         """
