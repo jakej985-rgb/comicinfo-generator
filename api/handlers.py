@@ -29,6 +29,14 @@ from services.story_arc import (
 from pipeline.resolver import MetadataResolver, read_existing_comicinfo
 
 from api.serializers import comic_to_dict, dict_to_comic
+from api.validation import (
+    ValidationError,
+    validate_filesystem_boundary,
+    validate_folder_path,
+    validate_comic_file_path,
+    validate_url,
+    validate_search_query
+)
 from services.metadata import detect_provider, fetch_and_merge_urls, scrape_any_volume, search_all_providers
 from services.search import extract_issue_num_from_filename
 from services.processing import (
@@ -175,6 +183,11 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             folder_path = query_params.get("folder_path", [""])[0]
             try:
                 cfg = load_config()
+                if series_url:
+                    validate_url(series_url)
+                if folder_path:
+                    folder_path = validate_folder_path(folder_path, configured_roots=cfg.library.roots, must_exist=False)
+
                 series_name, _, issues_list = "", {}, []
                 if series_url or series_id:
                     target_url = series_url or f"{cfg.kapowarr.url}/volume/{series_id}"
@@ -208,23 +221,31 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                     "success": True, "series_name": series_name,
                     "count": len(issues_list), "issues": issues_list
                 })
+            except ValidationError as ve:
+                self._json(ve.status_code, {"error": ve.message})
             except Exception as e:
                 self._json(500, {"error": str(e)})
 
         elif path == "/api/story-arc/search":
             q = query_params.get("q", [""])[0] or query_params.get("query", [""])[0]
             try:
+                valid_q = validate_search_query(q)
                 cfg = load_config()
-                arcs = search_story_arcs(q, api_key=cfg.comicvine.api_key)
+                arcs = search_story_arcs(valid_q, api_key=cfg.comicvine.api_key)
                 self._json(200, {"success": True, "count": len(arcs), "story_arcs": arcs})
+            except ValidationError as ve:
+                self._json(ve.status_code, {"error": ve.message})
             except Exception as e:
                 self._json(500, {"error": str(e)})
 
         elif path == "/api/story-arc/detail":
             arc_url = query_params.get("url", [""])[0]
             try:
-                details = get_story_arc_details(arc_url)
+                valid_url = validate_url(arc_url)
+                details = get_story_arc_details(valid_url)
                 self._json(200, {"success": True, "data": details})
+            except ValidationError as ve:
+                self._json(ve.status_code, {"error": ve.message})
             except Exception as e:
                 self._json(500, {"error": str(e)})
 
@@ -362,12 +383,9 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                 self._json(500, {"error": f"Failed to clear cache: {e}"})
 
         elif path == "/api/search":
-            query = fields.get("query", "").strip()
-            search_type = fields.get("type", "all").strip()
-            if not query:
-                self._json(400, {"error": "Missing search query"})
-                return
             try:
+                query = validate_search_query(fields.get("query", ""))
+                search_type = fields.get("type", "all").strip()
                 results, kapowarr_active = search_all_providers(query, search_type)
                 try:
                     cfg = load_config()
@@ -380,36 +398,38 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                     "count": len(results), "kapowarr_active": kapowarr_active,
                     "results": results
                 })
+            except ValidationError as ve:
+                self._json(ve.status_code, {"error": ve.message})
             except Exception as e:
                 self._json(500, {"error": str(e)})
 
         elif path == "/api/scrape":
             url_val = fields.get("urls") or fields.get("url") or ""
-            if not url_val:
-                self._json(400, {"error": "Missing database URL(s) or page text"})
-                return
             try:
-                comic = fetch_and_merge_urls(url_val)
-                provider = detect_provider(str(url_val))
+                valid_url = validate_url(str(url_val))
+                comic = fetch_and_merge_urls(valid_url)
+                provider = detect_provider(str(valid_url))
                 res = comic_to_dict(comic)
                 res["provider"] = provider
                 self._json(200, {"success": True, "provider": provider, "comic": res})
+            except ValidationError as ve:
+                self._json(ve.status_code, {"error": ve.message})
             except Exception as e:
                 self._json(500, {"error": str(e)})
 
         elif path == "/api/scrape-volume":
             url = fields.get("url", "").strip()
-            if not url:
-                self._json(400, {"error": "Missing Volume URL"})
-                return
             try:
-                series_name, issue_map, issues_list = scrape_any_volume(url)
-                provider = detect_provider(url)
+                valid_url = validate_url(url)
+                series_name, issue_map, issues_list = scrape_any_volume(valid_url)
+                provider = detect_provider(valid_url)
                 self._json(200, {
                     "success": True, "provider": provider,
                     "series_name": series_name, "issues": issue_map,
                     "issues_list": issues_list, "count": len(issue_map)
                 })
+            except ValidationError as ve:
+                self._json(ve.status_code, {"error": ve.message})
             except Exception as e:
                 self._json(500, {"error": str(e)})
 
@@ -417,18 +437,15 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             volume_url = fields.get("url", "").strip()
             folder_path_input = fields.get("folder_path", "").strip()
 
-            if not volume_url or not folder_path_input:
-                self._json(400, {"error": "Both Volume URL and Folder Path are required."})
-                return
-            if not os.path.exists(folder_path_input) or not os.path.isdir(folder_path_input):
-                self._json(404, {"error": f"Folder directory '{folder_path_input}' not found."})
-                return
-
             try:
-                provider = detect_provider(volume_url)
-                series_name, issue_map, issues_list = scrape_any_volume(volume_url)
+                cfg = load_config()
+                valid_url = validate_url(volume_url)
+                valid_folder = validate_folder_path(folder_path_input, configured_roots=cfg.library.roots, must_exist=True)
+
+                provider = detect_provider(valid_url)
+                series_name, issue_map, issues_list = scrape_any_volume(valid_url)
                 comic_files = [
-                    f for f in sorted(os.listdir(folder_path_input))
+                    f for f in sorted(os.listdir(valid_folder))
                     if f.lower().endswith((".cbz", ".cbr"))
                 ]
                 if not comic_files:
@@ -438,7 +455,7 @@ class ComicServerHandler(BaseHTTPRequestHandler):
 
                 items = []
                 for fname in comic_files:
-                    full_path = os.path.join(folder_path_input, fname)
+                    full_path = os.path.join(valid_folder, fname)
                     issue_num = extract_issue_num_from_filename(fname)
                     matched_url = (
                         issue_map.get(issue_num) or
@@ -462,11 +479,13 @@ class ComicServerHandler(BaseHTTPRequestHandler):
 
                 self._json(200, {
                     "success": True, "provider": provider,
-                    "series_name": series_name, "folder_path": folder_path_input,
+                    "series_name": series_name, "folder_path": valid_folder,
                     "total_files": len(comic_files), "total_series_issues": len(issues_list),
                     "matched_count": len([x for x in items if x["matched_url"]]),
                     "issues_list": issues_list, "items": items
                 })
+            except ValidationError as ve:
+                self._json(ve.status_code, {"error": ve.message})
             except Exception as e:
                 self._json(500, {"error": str(e)})
 
@@ -475,9 +494,11 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             items = fields.get("items") or []
             total_series_issues_override = fields.get("total_series_issues") or 0
 
-            if not folder_path_input or not os.path.exists(folder_path_input):
-                self._json(400, {
-                    "error": f"Folder directory '{folder_path_input}' not found."})
+            try:
+                cfg = load_config()
+                valid_folder = validate_folder_path(folder_path_input, configured_roots=cfg.library.roots, must_exist=True)
+            except ValidationError as ve:
+                self._json(ve.status_code, {"error": ve.message})
                 return
 
             cfg = load_config()
@@ -506,7 +527,7 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                     self.wfile.write(chunk.encode()); self.wfile.flush()
                     continue
 
-                full_file_path = os.path.join(folder_path_input, fname)
+                full_file_path = os.path.join(valid_folder, fname)
                 if not os.path.exists(full_file_path):
                     chunk = json.dumps({
                         "current": idx + 1, "total": len(items), "file": fname,
@@ -571,13 +592,18 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             file_path = fields.get("file_path", "").strip()
             url_str = fields.get("url", "").strip()
             try:
+                cfg = load_config()
+                if file_path:
+                    file_path = validate_comic_file_path(file_path, configured_roots=cfg.library.roots, must_exist=True)
+                if url_str:
+                    url_str = validate_url(url_str)
+
                 comic = None
                 if file_path and os.path.exists(file_path) and file_path.lower().endswith(".cbz"):
                     comic = read_existing_comicinfo(file_path)
                 if not comic and url_str:
                     comic = fetch_and_merge_urls(url_str)
                 if not comic and file_path:
-                    cfg = load_config()
                     resolver = MetadataResolver(config=cfg)
                     comic, _ = resolver.resolve_file_metadata(
                         file_path, url_override=url_str, force_overwrite=True)
@@ -585,6 +611,8 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                     self._json(200, {"success": True, "comic": comic_to_dict(comic)})
                 else:
                     self._json(404, {"error": "No metadata found for file or URL."})
+            except ValidationError as ve:
+                self._json(ve.status_code, {"error": ve.message})
             except Exception as e:
                 self._json(500, {"error": str(e)})
 
@@ -636,8 +664,12 @@ class ComicServerHandler(BaseHTTPRequestHandler):
                     "error": "file_path, story_arc_name, and new_arc_number are required."})
                 return
             try:
+                cfg = load_config()
+                valid_path = validate_comic_file_path(file_path, configured_roots=cfg.library.roots, must_exist=True)
                 self._json(200, update_issue_arc_number_on_device(
-                    file_path, story_arc_name, new_arc_number))
+                    valid_path, story_arc_name, new_arc_number))
+            except ValidationError as ve:
+                self._json(ve.status_code, {"error": ve.message})
             except Exception as e:
                 self._json(500, {"error": str(e)})
 
@@ -647,19 +679,23 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             if not file_path_input:
                 self._json(400, {"error": "Target comic file path is required."})
                 return
-            real_path = file_path_input if os.path.exists(file_path_input) else find_file_path(file_path_input)
-            if not real_path:
-                self._json(404, {"error": f"File '{file_path_input}' not found."})
-                return
             try:
+                cfg = load_config()
+                real_path = file_path_input if os.path.exists(file_path_input) else find_file_path(file_path_input)
+                if not real_path:
+                    self._json(404, {"error": f"File '{file_path_input}' not found."})
+                    return
+                valid_path = validate_comic_file_path(real_path, configured_roots=cfg.library.roots, must_exist=True)
                 comic = dict_to_comic(comic_data)
-                target_archive = embed_and_track(real_path, comic, provider="Manual")
+                target_archive = embed_and_track(valid_path, comic, provider="Manual")
                 self._json(200, {
                     "success": True, "target_file": target_archive,
-                    "deleted_original": real_path.lower().endswith(".cbr"),
+                    "deleted_original": valid_path.lower().endswith(".cbr"),
                     "message": f"Successfully embedded ComicInfo.xml into '{os.path.basename(target_archive)}'.",
                     "comic": comic_to_dict(comic)
                 })
+            except ValidationError as ve:
+                self._json(ve.status_code, {"error": ve.message})
             except Exception as e:
                 self._json(500, {"error": str(e)})
 
@@ -671,23 +707,28 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             if not url_val or not file_path_input:
                 self._json(400, {"error": "Comic database URL(s) and file path required"})
                 return
-            real_path = find_file_path(file_path_input)
-            if not real_path:
-                self._json(404, {"error": f"File '{file_path_input}' not found. Click Browse."})
-                return
             try:
-                comic = fetch_and_merge_urls(url_val)
-                provider = detect_provider(str(url_val))
-                target_archive = embed_and_track(real_path, comic, provider=provider)
+                cfg = load_config()
+                valid_url = validate_url(str(url_val))
+                real_path = find_file_path(file_path_input)
+                if not real_path:
+                    self._json(404, {"error": f"File '{file_path_input}' not found. Click Browse."})
+                    return
+                valid_path = validate_comic_file_path(real_path, configured_roots=cfg.library.roots, must_exist=True)
+                comic = fetch_and_merge_urls(valid_url)
+                provider = detect_provider(str(valid_url))
+                target_archive = embed_and_track(valid_path, comic, provider=provider)
                 res = comic_to_dict(comic)
                 res["provider"] = provider
                 self._json(200, {
                     "success": True, "provider": provider,
                     "target_file": target_archive,
-                    "deleted_original": delete_old_cbr and real_path.lower().endswith(".cbr"),
+                    "deleted_original": delete_old_cbr and valid_path.lower().endswith(".cbr"),
                     "message": f"Successfully embedded ComicInfo.xml [{provider}] into '{os.path.basename(target_archive)}'.",
                     "comic": res
                 })
+            except ValidationError as ve:
+                self._json(ve.status_code, {"error": ve.message})
             except Exception as e:
                 self._json(500, {"error": str(e)})
 
