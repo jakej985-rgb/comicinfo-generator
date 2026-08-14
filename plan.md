@@ -978,9 +978,9 @@ Do not call the project complete until every item below is true.
 
 - [ ] provider registry implemented
 - [ ] resolver no longer hard-codes provider implementations
-- [ ] retry policy standardized
-- [ ] rate limiting handled correctly
-- [ ] authentication failures handled correctly
+- [x] retry policy standardized
+- [x] rate limiting handled correctly
+- [x] authentication failures handled correctly
 
 ### Automation Checklist
 

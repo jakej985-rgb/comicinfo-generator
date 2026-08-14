@@ -30,10 +30,7 @@ class GCPProvider(BaseProvider):
 
     def lookup_issue(self, issue_id_or_url: str) -> Optional[Comic]:
         url = issue_id_or_url if issue_id_or_url.startswith("http") else f"https://www.comics.org/issue/{issue_id_or_url}/"
-        try:
-            return self._scrape_issue(url)
-        except Exception:
-            return None
+        return self._scrape_issue(url)
 
     def _scrape_issue(self, url_or_text: str, use_cache: bool = True) -> Comic:
         input_str = url_or_text.strip()

@@ -2,7 +2,7 @@ import os
 import re
 import zipfile
 import xml.etree.ElementTree as ET
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Any
 from models.comic import Comic
 from models.identity import ComicIdentity
 from config import Config
@@ -42,13 +42,27 @@ from dataclasses import dataclass, field
 
 @dataclass
 class ProviderOperationResult:
-    """Explicit state model for provider operation execution (Phase 57)."""
+    """Explicit state model for provider operation execution (Phase 57 & Phase 83)."""
     provider: str
-    operation: str
-    status: str  # SUCCESS, NOT_FOUND, OFFLINE, TIMEOUT, RATE_LIMITED, SERVER_ERROR, AUTH_FAILED, PARSE_ERROR, INVALID_RESPONSE
+    operation: str = ""
+    status: str = "SUCCESS"  # SUCCESS, NOT_FOUND, OFFLINE, TIMEOUT, RATE_LIMITED, SERVER_ERROR, AUTH_FAILED, PARSE_ERROR, INVALID_RESPONSE
     error_type: str = ""
+    error_code: Optional[str] = None
     retryable: bool = False
     message: str = ""
+    data: Any = None
+
+    def to_dict(self) -> dict:
+        return {
+            "provider": self.provider,
+            "operation": self.operation,
+            "status": self.status,
+            "error_type": self.error_type,
+            "error_code": self.error_code or (self.status if self.status != "SUCCESS" else None),
+            "retryable": self.retryable,
+            "message": self.message,
+            "data": self.data
+        }
 
 @dataclass
 class MetadataRetrievalResult:

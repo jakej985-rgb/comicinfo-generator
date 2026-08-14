@@ -1,6 +1,17 @@
 from abc import ABC, abstractmethod
 from typing import Optional, Tuple, List
 from models.comic import Comic
+from observability.retry import (
+    RetryableError,
+    NonRetryableError,
+    ProviderRateLimited,
+    ProviderTimeout,
+    ProviderUnavailable,
+    ProviderNotFound,
+    ProviderAuthError,
+    ProviderParseError as _ObservabilityParseError,
+    ProviderInvalidResponse
+)
 
 # --- Provider Response Status States ---
 STATE_SUCCESS = "SUCCESS"
@@ -12,7 +23,7 @@ STATE_PARSE_ERROR = "PARSE_ERROR"
 STATE_INVALID_RESPONSE = "INVALID_RESPONSE"
 
 
-# --- Provider Exceptions ---
+# --- Provider Exceptions (Phase 83: Unified Error Hierarchy) ---
 class ProviderError(Exception):
     """Base exception for provider operations."""
     def __init__(self, message: str, provider_name: str = "", original_exception: Optional[Exception] = None):
@@ -20,23 +31,23 @@ class ProviderError(Exception):
         self.provider_name = provider_name
         self.original_exception = original_exception
 
-class ProviderConnectionError(ProviderError):
-    """Raised when connecting to provider service fails."""
+class ProviderConnectionError(ProviderUnavailable, ProviderError):
+    """Raised when connecting to provider service fails (retryable)."""
 
-class ProviderAuthenticationError(ProviderError):
-    """Raised when authentication/API key fails."""
+class ProviderAuthenticationError(ProviderAuthError, ProviderError):
+    """Raised when authentication/API key fails (non-retryable)."""
 
-class ProviderRateLimitError(ProviderError):
-    """Raised when provider rate limits requests."""
+class ProviderRateLimitError(ProviderRateLimited, ProviderError):
+    """Raised when provider rate limits requests (retryable)."""
 
-class ProviderParseError(ProviderError):
-    """Raised when parsing provider response fails."""
+class ProviderParseError(_ObservabilityParseError, ProviderError):
+    """Raised when parsing provider response fails (non-retryable)."""
 
-class ProviderResponseError(ProviderError):
-    """Raised when provider returns an invalid or malformed response."""
+class ProviderResponseError(ProviderInvalidResponse, ProviderError):
+    """Raised when provider returns an invalid or malformed response (non-retryable)."""
 
-class MetadataNotFoundError(ProviderError):
-    """Raised when queried metadata item is not found."""
+class MetadataNotFoundError(ProviderNotFound, ProviderError):
+    """Raised when queried metadata item is not found (non-retryable)."""
 
 
 class BaseProvider(ABC):

@@ -1,7 +1,12 @@
 import time
 import requests
 from typing import Optional
-from providers.base import ProviderConnectionError, ProviderRateLimitError
+from providers.base import (
+    ProviderConnectionError,
+    ProviderRateLimitError,
+    ProviderAuthenticationError,
+    MetadataNotFoundError
+)
 
 try:
     import cloudscraper
@@ -41,7 +46,7 @@ class ComicVineClient:
         self._last_request_time = time.time()
 
     def fetch_html(self, url: str) -> str:
-        """Fetches HTML content from Comic Vine URL."""
+        """Fetches HTML content from Comic Vine URL with explicit typed error semantics."""
         self._rate_limit()
         html_content = ""
 
@@ -67,10 +72,14 @@ class ComicVineClient:
                 r = requests.get(url, headers=HEADERS, timeout=self.timeout)
                 if r.status_code == 429:
                     raise ProviderRateLimitError("Comic Vine request rate limited (HTTP 429).", provider_name="CV")
+                elif r.status_code in (401, 403):
+                    raise ProviderAuthenticationError(f"Comic Vine authentication failed (HTTP {r.status_code}).", provider_name="CV")
+                elif r.status_code == 404:
+                    raise MetadataNotFoundError(f"Comic Vine resource not found at '{url}' (HTTP 404).", provider_name="CV")
                 r.raise_for_status()
                 html_content = r.text
             except Exception as e:
-                if isinstance(e, ProviderRateLimitError):
+                if isinstance(e, (ProviderRateLimitError, ProviderAuthenticationError, MetadataNotFoundError)):
                     raise e
                 raise ProviderConnectionError(f"Failed to fetch Comic Vine URL '{url}': {e}", provider_name="CV", original_exception=e)
 

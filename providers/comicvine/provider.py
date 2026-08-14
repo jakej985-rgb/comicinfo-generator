@@ -88,10 +88,7 @@ class ComicVineProvider(BaseProvider):
 
     def lookup_issue(self, issue_id_or_url: str) -> Optional[Comic]:
         url = issue_id_or_url if issue_id_or_url.startswith("http") else f"https://comicvine.gamespot.com/issue/4000-{issue_id_or_url}/"
-        try:
-            return self._scrape_issue(url)
-        except Exception:
-            return None
+        return self._scrape_issue(url)
 
     def _scrape_issue(self, url: str, use_cache: bool = True) -> Comic:
         clean_url = url.strip()
