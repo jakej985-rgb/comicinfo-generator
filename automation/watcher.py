@@ -113,7 +113,10 @@ class ComicFileEventHandler(FileSystemEventHandler):
             return
 
         self.log(f"👀 Detected new/modified comic file: '{os.path.basename(abs_path)}'")
-        self.on_file_changed(abs_path)
+        try:
+            self.on_file_changed(abs_path)
+        except Exception as e:
+            self.log(f"⚠️ Error executing watcher consumer callback for '{os.path.basename(abs_path)}': {e}")
 
     def _schedule_event(self, event_path: str):
         """Debounces rapid filesystem events for the same file path (86.2)."""

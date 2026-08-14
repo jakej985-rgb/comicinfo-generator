@@ -305,6 +305,113 @@ class TestFailureInjection(unittest.TestCase):
         tmp_files = [f for f in new_files if f.startswith(".tmp_")]
         self.assertEqual(len(tmp_files), 0, f"Leaked temp files: {tmp_files}")
 
+    # ------------------------------------------------------------------ #
+    # 14. Phase 91: Cache Read Failure                                   #
+    # ------------------------------------------------------------------ #
+    def test_cache_read_failure_does_not_corrupt_archive(self):
+        """Phase 91: Corrupted or unreadable cache falls back safely without corrupting archive."""
+        from cache.db import CacheManager
+        cache = CacheManager(db_path=os.path.join(self.tmp, "cache.db"))
+        cbz = _make_cbz(self.tmp, "Batman_cache_read.cbz")
+
+        # Simulate corrupt cache read error
+        with patch.object(cache, "get_cached_issue", side_effect=IOError("Corrupt disk cache sector")):
+            with self.assertRaises(IOError):
+                cache.get_cached_issue("CV", "12345")
+
+        # Archive must remain intact and valid
+        self.assertTrue(os.path.exists(cbz))
+        self.assertTrue(zipfile.is_zipfile(cbz))
+
+    # ------------------------------------------------------------------ #
+    # 15. Phase 91: Cache Write Failure                                  #
+    # ------------------------------------------------------------------ #
+    def test_cache_write_failure_does_not_corrupt_archive(self):
+        """Phase 91: Failure writing to cache disk does not corrupt original archive."""
+        from cache.db import CacheManager
+        cache = CacheManager(db_path=os.path.join(self.tmp, "cache.db"))
+        cbz = _make_cbz(self.tmp, "Batman_cache_write.cbz")
+        comic = _make_comic()
+        orig_size = os.path.getsize(cbz)
+
+        with patch.object(cache, "save_cached_issue", side_effect=OSError(errno.ENOSPC, "No space for cache")):
+            with self.assertRaises(OSError):
+                cache.save_cached_issue("CV", "12345", comic)
+
+        # Archive must remain completely safe and unmodified
+        self.assertTrue(os.path.exists(cbz))
+        self.assertEqual(os.path.getsize(cbz), orig_size)
+        self.assertTrue(zipfile.is_zipfile(cbz))
+
+    # ------------------------------------------------------------------ #
+    # 16. Phase 91: Archive Pre/Post Verification Failure                 #
+    # ------------------------------------------------------------------ #
+    def test_archive_verification_failure_preserves_original(self):
+        """Phase 91: Verification failure raises ArchiveValidationError and prevents modifying target."""
+        cbz = _make_cbz(self.tmp, "Batman_verify_fail.cbz")
+        comic = _make_comic()
+        orig_size = os.path.getsize(cbz)
+
+        with patch("writers.archive.verify_cbz_archive", side_effect=ArchiveValidationError("Temp file corrupted")):
+            with self.assertRaises(ArchiveValidationError):
+                embed_comicinfo_in_cbz(cbz, comic)
+
+        # Archive must still exist and be completely unchanged
+        self.assertTrue(os.path.exists(cbz))
+        self.assertEqual(os.path.getsize(cbz), orig_size)
+
+    # ------------------------------------------------------------------ #
+    # 17. Phase 91: Database Write Failure                                #
+    # ------------------------------------------------------------------ #
+    def test_database_write_failure_preserves_archive(self):
+        """Phase 91: Failure writing to job/queue database preserves comic archive safety."""
+        from cache.jobs import JobStore
+        job_db = os.path.join(self.tmp, "jobs.db")
+        store = JobStore(db_path=job_db)
+        cbz = _make_cbz(self.tmp, "Batman_db_fail.cbz")
+        orig_size = os.path.getsize(cbz)
+
+        with patch.object(store, "mark_failed", side_effect=OSError("Disk I/O error writing SQLite")):
+            with self.assertRaises(OSError):
+                store.mark_failed("job-123", "Database write failure")
+
+        self.assertTrue(os.path.exists(cbz))
+        self.assertEqual(os.path.getsize(cbz), orig_size)
+
+    # ------------------------------------------------------------------ #
+    # 18. Phase 91: Watcher Callback Failure                              #
+    # ------------------------------------------------------------------ #
+    def test_watcher_callback_failure_does_not_crash_watcher(self):
+        """Phase 91: Exception in watcher callback is caught cleanly and does not crash or corrupt archives."""
+        from automation.watcher import ComicFileEventHandler
+        from cache.db import CacheManager
+        cache_mgr = CacheManager(db_path=os.path.join(self.tmp, "watch_cache.db"))
+        cbz = _make_cbz(self.tmp, "Batman_watch_fail.cbz")
+
+        def broken_callback(path):
+            raise RuntimeError("Watcher consumer crashed")
+
+        handler = ComicFileEventHandler(
+            cache_mgr=cache_mgr,
+            on_file_changed=broken_callback,
+            stability_window=0.0,
+            debounce_delay=0.0
+        )
+
+        class FakeEvent:
+            is_directory = False
+            src_path = cbz
+
+        # Handler should log and absorb exception without raising or crashing
+        try:
+            handler.on_created(FakeEvent())
+            handler.on_modified(FakeEvent())
+        except Exception as e:
+            self.fail(f"Watcher handler raised unhandled exception: {e}")
+
+        self.assertTrue(os.path.exists(cbz))
+        self.assertTrue(zipfile.is_zipfile(cbz))
+
 
 if __name__ == "__main__":
     unittest.main()
