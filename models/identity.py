@@ -110,6 +110,9 @@ class ComicIdentity:
     issue_number: str = ""            # Issue number string (e.g. "1", "1A", "0.5")
     identity_type: str = "Issue"      # "Issue", "Volume", "TPB", "Collected"
     volume_id: str = ""               # Provider-specific volume/series ID for cross-issue grouping
+    resolution_source: str = ""       # e.g. "url_override", "existing_comicinfo", "persistent_cache", "kapowarr", "comicvine_fallback", "gcd_fallback"
+    fallback_used: bool = False       # True if a fallback provider was used
+    fallback_reason: str = ""         # Reason why fallback was triggered
     confidence: float = 0.0           # Confidence score (0.0 to 100.0)
     confidence_level: str = "UNRESOLVED" # "AUTO_ACCEPT", "MANUAL_REVIEW", "UNRESOLVED"
     confidence_reasons: List[str] = field(default_factory=list)
@@ -140,6 +143,9 @@ class ComicIdentity:
             "volume": self.volume,
             "issue_number": self.issue_number,
             "identity_type": self.identity_type,
+            "resolution_source": self.resolution_source,
+            "fallback_used": self.fallback_used,
+            "fallback_reason": self.fallback_reason,
             "confidence": self.confidence,
             "confidence_level": self.confidence_level,
             "confidence_reasons": self.confidence_reasons,

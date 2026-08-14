@@ -149,7 +149,7 @@ class TestEndToEndResolutionMatrix(unittest.TestCase):
         self.assertEqual(identity.provider, "Kapowarr")
         self.assertEqual(decision.level, LEVEL_AUTO_ACCEPT)
 
-    # Case E: Filename + Kapowarr + ComicVine (Agreement Bonus)
+    # Case E: Filename + Kapowarr (Kapowarr-First Resolution with ComicVine conserved)
     @patch("pipeline.resolver.ComicVineProvider")
     @patch("pipeline.resolver.KapowarrProvider")
     @patch("pipeline.resolver.GCPProvider")
@@ -167,8 +167,10 @@ class TestEndToEndResolutionMatrix(unittest.TestCase):
 
         identity, decision = resolver.resolve_identity(cbz)
         self.assertIsNotNone(identity)
+        self.assertEqual(identity.provider, "Kapowarr")
+        self.assertEqual(identity.resolution_source, "kapowarr")
         self.assertGreaterEqual(decision.score, 90.0)
-        self.assertGreaterEqual(decision.provider_agreement_count, 2)
+        self.assertEqual(decision.level, LEVEL_AUTO_ACCEPT)
 
     # Case F: Filename + existing ComicInfo
     @patch("pipeline.resolver.ComicVineProvider")

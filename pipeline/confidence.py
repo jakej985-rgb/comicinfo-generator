@@ -35,6 +35,9 @@ class ConfidenceDecision:
     is_ambiguous_margin: bool = False
     provider_agreement_count: int = 0
     provider_results: dict = field(default_factory=dict)
+    resolution_source: str = ""
+    fallback_used: bool = False
+    fallback_reason: str = ""
 
 CandidateDecision = ConfidenceDecision
 

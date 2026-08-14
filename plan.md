@@ -966,13 +966,13 @@ Do not call the project complete until every item below is true.
 
 ### Resolution Checklist
 
-- [ ] existing ComicInfo checked first
-- [ ] cache checked before network
-- [ ] Kapowarr preferred
-- [ ] ComicVine used only when needed
-- [ ] GCD used as fallback
-- [ ] resolution reason recorded
-- [ ] provider errors preserved
+- [x] existing ComicInfo checked first
+- [x] cache checked before network
+- [x] Kapowarr preferred
+- [x] ComicVine used only when needed
+- [x] GCD used as fallback
+- [x] resolution reason recorded
+- [x] provider errors preserved
 
 ### Providers Checklist
 

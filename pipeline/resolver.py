@@ -62,7 +62,7 @@ class MetadataRetrievalResult:
 
 @dataclass
 class ResolutionResult:
-    """Full comprehensive result of identity and metadata resolution (Phase 57)."""
+    """Full comprehensive result of identity and metadata resolution (Phase 57 & Phase 82)."""
     identity: Optional[ComicIdentity] = None
     confidence: float = 0.0
     decision: Optional[ConfidenceDecision] = None
@@ -70,6 +70,9 @@ class ResolutionResult:
     conflicts: List[str] = field(default_factory=list)
     metadata_result: Optional[MetadataRetrievalResult] = None
     comic: Optional[Comic] = None
+    resolution_source: str = ""
+    fallback_used: bool = False
+    fallback_reason: str = ""
 
 def read_existing_comicinfo(cbz_path: str) -> Optional[Comic]:
     """Reads existing ComicInfo.xml from a .cbz archive if present and valid."""
@@ -108,13 +111,20 @@ class MetadataResolver:
 
     def resolve_identity(self, file_path: str, url_override: str = "") -> Tuple[Optional[ComicIdentity], ConfidenceDecision]:
         """
-        Phase 9 Step 1 & Phase 57: Resolves and verifies the canonical ComicIdentity from filename, directory hints,
-        existing metadata, and remote providers. Evaluates candidate pool via Central Candidate Decision Policy
-        and preserves provider operation results.
+        Phase 82: Authoritative Resolution Order:
+        1. Explicit URL / explicit provider ID
+        2. Existing ComicInfo.xml (validated complete, consistent, trusted)
+        3. Persistent cache lookup (before calling network providers)
+        4. Local filename / folder identity
+        5. Kapowarr-First (if configured and reachable)
+        6. ComicVine Fallback (only if Kapowarr fails or yields low confidence)
+        7. GCD Fallback (only if previous stages fail)
+        8. REVIEW / unresolved
         """
         provider_results: Dict[str, ProviderOperationResult] = {}
+        fname = os.path.basename(file_path) if file_path else ""
 
-        # 1. URL Override (Phase 28)
+        # --- Stage 1: Explicit URL / explicit provider ID (Phase 28) ---
         if url_override:
             m_cv = re.search(r"4000-(\d+)", url_override)
             if m_cv or "comicvine" in url_override:
@@ -122,58 +132,118 @@ class MetadataResolver:
                     provider="ComicVine",
                     issue_id=f"4000-{m_cv.group(1)}" if m_cv else url_override,
                     issue_provider="ComicVine",
-                    url=url_override
+                    resolution_source="url_override",
+                    fallback_used=False
                 )
                 provider_results["ComicVine"] = ProviderOperationResult(provider="ComicVine", operation="url_override", status="SUCCESS")
-                dec = ConfidenceDecision(score=100.0, level=LEVEL_AUTO_ACCEPT, action="UPDATE", provider_results=provider_results)
+                dec = ConfidenceDecision(
+                    score=100.0, level=LEVEL_AUTO_ACCEPT, action="UPDATE",
+                    provider_results=provider_results, resolution_source="url_override", fallback_used=False
+                )
                 return identity, dec
-            identity = ComicIdentity(provider="URLOverride", issue_id=url_override, url=url_override)
+            identity = ComicIdentity(
+                provider="URLOverride", issue_id=url_override,
+                resolution_source="url_override", fallback_used=False
+            )
             provider_results["URLOverride"] = ProviderOperationResult(provider="URLOverride", operation="url_override", status="SUCCESS")
-            dec = ConfidenceDecision(score=100.0, level=LEVEL_AUTO_ACCEPT, action="UPDATE", provider_results=provider_results)
+            dec = ConfidenceDecision(
+                score=100.0, level=LEVEL_AUTO_ACCEPT, action="UPDATE",
+                provider_results=provider_results, resolution_source="url_override", fallback_used=False
+            )
             return identity, dec
 
-        parsed = parse_filename_identity(file_path)
+        parsed = parse_filename_identity(file_path) if file_path else None
+        if not parsed:
+            dec = ConfidenceDecision(score=0.0, level=LEVEL_UNRESOLVED, action="SKIP", provider_results=provider_results)
+            return None, dec
 
-        # 2. Existing Embedded XML Authority & State Inspection (Phase 45)
+        # --- Stage 2: Existing ComicInfo.xml validation (Phase 82.2) ---
         existing_report = inspect_existing_comicinfo(file_path, parsed=parsed)
         existing = existing_report.comic
 
-        # 3. Gather local identity candidates (filename + directory + existing XML)
+        # If existing ComicInfo contains verified provider ID (trusted provenance) and matches parsed filename
+        if existing_report.state == STATE_VALID and existing_report.candidate_identity:
+            cand = existing_report.candidate_identity
+            if cand.issue_id:
+                cand_dec = evaluate_confidence(cand, parsed)
+                if not cand_dec.has_critical_conflict and cand_dec.score >= 80.0:
+                    cand.resolution_source = "existing_comicinfo"
+                    cand.fallback_used = False
+                    cand_dec.resolution_source = "existing_comicinfo"
+                    cand_dec.fallback_used = False
+                    cand_dec.provider_results = provider_results
+                    return cand, cand_dec
+
+        # --- Stage 3: Persistent Cache Lookup before Network (Phase 82.3) ---
+        if self.cache and parsed.series_name:
+            query_key = fname.lower()
+            cached_search = self.cache.get_cached_search("Kapowarr", "issue", query_key) or \
+                            self.cache.get_cached_search("ComicVine", "issue", query_key)
+            if cached_search and isinstance(cached_search, list):
+                cache_candidates = []
+                for item in cached_search:
+                    if isinstance(item, dict) and item.get("series_name"):
+                        cache_candidates.append(ComicIdentity(
+                            provider=item.get("provider", "Cache"),
+                            issue_id=str(item.get("issue_id", "")),
+                            series_name=item.get("series_name", ""),
+                            issue_number=str(item.get("issue_number", "")),
+                            publication_year=int(item.get("publication_year", 0)),
+                            publisher=item.get("publisher", ""),
+                            resolution_source="persistent_cache",
+                            fallback_used=False
+                        ))
+                if cache_candidates:
+                    best_cached, cached_dec = evaluate_candidate_pool_decision(
+                        cache_candidates, parsed, min_margin=10.0, existing_comic=existing
+                    )
+                    if best_cached and cached_dec.score >= 80.0 and not cached_dec.has_critical_conflict:
+                        best_cached.resolution_source = "persistent_cache"
+                        best_cached.fallback_used = False
+                        cached_dec.resolution_source = "persistent_cache"
+                        cached_dec.fallback_used = False
+                        cached_dec.provider_results = provider_results
+                        return best_cached, cached_dec
+
+        # --- Stage 4: Local filename & folder identity ---
         local_candidates = extract_identity_candidates(file_path)
         if existing_report.candidate_identity and not any(c.provider == "ExistingXML" for c in local_candidates):
             local_candidates.append(existing_report.candidate_identity)
 
-        # 4. Search Providers for Candidate Identity Signals (Phase 57)
-        fname = os.path.basename(file_path)
-        provider_candidates: List[ComicIdentity] = []
+        # --- Stage 5: Kapowarr-First Resolution (Phase 82.4) ---
+        kapowarr_candidates: List[ComicIdentity] = []
+        kapowarr_fail_reason = ""
 
-        # Kapowarr
         if self.kapowarr.test_connection():
             try:
                 searches = self.kapowarr.search_issue(fname)
                 if searches:
                     provider_results["Kapowarr"] = ProviderOperationResult(provider="Kapowarr", operation="search_issue", status="SUCCESS")
+                    for s in searches:
+                        if isinstance(s, ComicIdentity):
+                            s.resolution_source = "kapowarr"
+                            s.fallback_used = False
+                            kapowarr_candidates.append(s)
+                        elif isinstance(s, dict) and s.get("id"):
+                            s_year = int(s.get("year") or s.get("volume_year") or 0) if (s.get("year") or s.get("volume_year")) else 0
+                            s_series = s.get("series") or (s.get("title", "").split(" #")[0] if s.get("title") else parsed.series_name)
+                            s_pub = s.get("publisher", "") or s.get("pub", "")
+                            s_num = str(s.get("issue_number") or s.get("number") or parsed.issue_number)
+                            kapowarr_candidates.append(ComicIdentity(
+                                provider="Kapowarr",
+                                issue_id=str(s["id"]),
+                                issue_provider="Kapowarr",
+                                series_name=s_series,
+                                issue_number=s_num,
+                                publication_year=s_year,
+                                publisher=s_pub,
+                                resolution_source="kapowarr",
+                                fallback_used=False
+                            ))
                 else:
                     _logger.debug("PROVIDER_NOT_FOUND provider=Kapowarr operation=search_issue query=%s", fname)
                     provider_results["Kapowarr"] = ProviderOperationResult(provider="Kapowarr", operation="search_issue", status="NOT_FOUND")
-
-                for s in searches:
-                    if isinstance(s, ComicIdentity):
-                        provider_candidates.append(s)
-                    elif isinstance(s, dict) and s.get("id"):
-                        s_year = int(s.get("year") or s.get("volume_year") or 0) if (s.get("year") or s.get("volume_year")) else 0
-                        s_series = s.get("series") or (s.get("title", "").split(" #")[0] if s.get("title") else parsed.series_name)
-                        s_pub = s.get("publisher", "") or s.get("pub", "")
-                        s_num = str(s.get("issue_number") or s.get("number") or parsed.issue_number)
-                        provider_candidates.append(ComicIdentity(
-                            provider="Kapowarr",
-                            issue_id=str(s["id"]),
-                            issue_provider="Kapowarr",
-                            series_name=s_series,
-                            issue_number=s_num,
-                            publication_year=s_year,
-                            publisher=s_pub
-                        ))
+                    kapowarr_fail_reason = "Kapowarr returned no match"
             except Exception as e:
                 state, retryable = classify_provider_error(e, provider="Kapowarr", operation="search_issue", query_or_url=fname)
                 provider_results["Kapowarr"] = ProviderOperationResult(
@@ -184,6 +254,7 @@ class MetadataResolver:
                     retryable=retryable,
                     message=str(e)
                 )
+                kapowarr_fail_reason = f"Kapowarr error: {e}"
         else:
             _logger.info("PROVIDER_OFFLINE provider=Kapowarr operation=test_connection")
             provider_results["Kapowarr"] = ProviderOperationResult(
@@ -193,34 +264,59 @@ class MetadataResolver:
                 retryable=True,
                 message="Kapowarr service is offline or unreachable"
             )
+            kapowarr_fail_reason = "Kapowarr offline or unreachable"
 
-        # ComicVine
+        # Check if Kapowarr resolved it with high confidence (>= 70)
+        if kapowarr_candidates:
+            pool = local_candidates + kapowarr_candidates
+            best_kap, kap_dec = evaluate_candidate_pool_decision(pool, parsed, min_margin=10.0, existing_comic=existing)
+            if best_kap and kap_dec.score >= 70.0 and not kap_dec.has_critical_conflict:
+                best_kap.resolution_source = "kapowarr"
+                best_kap.fallback_used = False
+                kap_dec.resolution_source = "kapowarr"
+                kap_dec.fallback_used = False
+                kap_dec.provider_results = provider_results
+                return best_kap, kap_dec
+            else:
+                kapowarr_fail_reason = f"Kapowarr candidate confidence {kap_dec.score:.1f} < 70"
+
+        # --- Stage 6: ComicVine Fallback (Phase 82.5 — Only if Kapowarr failed or low confidence) ---
+        cv_candidates: List[ComicIdentity] = []
+        cv_fail_reason = ""
+        fallback_reason = kapowarr_fail_reason or "Kapowarr unavailable or insufficient"
+
         try:
             cv_results = self.comicvine.search_issue(fname)
             if cv_results:
                 provider_results["ComicVine"] = ProviderOperationResult(provider="ComicVine", operation="search_issue", status="SUCCESS")
+                for r in cv_results:
+                    if isinstance(r, ComicIdentity):
+                        r.resolution_source = "comicvine_fallback"
+                        r.fallback_used = True
+                        r.fallback_reason = fallback_reason
+                        cv_candidates.append(r)
+                    elif isinstance(r, dict) and r.get("url"):
+                        m_cv = re.search(r"4000-(\d+)", r["url"])
+                        r_year = int(r.get("year") or r.get("volume_year") or 0) if (r.get("year") or r.get("volume_year")) else 0
+                        r_series = r.get("series") or (r.get("title", "").split(" #")[0] if r.get("title") else parsed.series_name)
+                        r_pub = r.get("publisher", "") or r.get("pub", "")
+                        r_num = str(r.get("issue_number") or r.get("number") or parsed.issue_number)
+                        cv_candidates.append(ComicIdentity(
+                            provider="ComicVine",
+                            issue_id=f"4000-{m_cv.group(1)}" if m_cv else r["url"],
+                            issue_provider="ComicVine",
+                            series_name=r_series,
+                            issue_number=r_num,
+                            publication_year=r_year,
+                            publisher=r_pub,
+                            resolution_source="comicvine_fallback",
+                            fallback_used=True,
+                            fallback_reason=fallback_reason
+                        ))
             else:
                 _logger.debug("PROVIDER_NOT_FOUND provider=ComicVine operation=search_issue query=%s", fname)
                 provider_results["ComicVine"] = ProviderOperationResult(provider="ComicVine", operation="search_issue", status="NOT_FOUND")
-
-            for r in cv_results:
-                if isinstance(r, ComicIdentity):
-                    provider_candidates.append(r)
-                elif isinstance(r, dict) and r.get("url"):
-                    m_cv = re.search(r"4000-(\d+)", r["url"])
-                    r_year = int(r.get("year") or r.get("volume_year") or 0) if (r.get("year") or r.get("volume_year")) else 0
-                    r_series = r.get("series") or (r.get("title", "").split(" #")[0] if r.get("title") else parsed.series_name)
-                    r_pub = r.get("publisher", "") or r.get("pub", "")
-                    r_num = str(r.get("issue_number") or r.get("number") or parsed.issue_number)
-                    provider_candidates.append(ComicIdentity(
-                        provider="ComicVine",
-                        issue_id=f"4000-{m_cv.group(1)}" if m_cv else r["url"],
-                        issue_provider="ComicVine",
-                        series_name=r_series,
-                        issue_number=r_num,
-                        publication_year=r_year,
-                        publisher=r_pub
-                    ))
+                cv_fail_reason = "ComicVine returned no match"
         except Exception as e:
             state, retryable = classify_provider_error(e, provider="ComicVine", operation="search_issue", query_or_url=fname)
             provider_results["ComicVine"] = ProviderOperationResult(
@@ -231,34 +327,58 @@ class MetadataResolver:
                 retryable=retryable,
                 message=str(e)
             )
+            cv_fail_reason = f"ComicVine error: {e}"
 
-        # GCP (Grand Comics Database)
+        if cv_candidates:
+            pool = local_candidates + kapowarr_candidates + cv_candidates
+            best_cv, cv_dec = evaluate_candidate_pool_decision(pool, parsed, min_margin=10.0, existing_comic=existing)
+            if best_cv and cv_dec.score >= 70.0 and not cv_dec.has_critical_conflict:
+                best_cv.resolution_source = "comicvine_fallback"
+                best_cv.fallback_used = True
+                best_cv.fallback_reason = fallback_reason
+                cv_dec.resolution_source = "comicvine_fallback"
+                cv_dec.fallback_used = True
+                cv_dec.fallback_reason = fallback_reason
+                cv_dec.provider_results = provider_results
+                return best_cv, cv_dec
+            else:
+                cv_fail_reason = f"ComicVine candidate confidence {cv_dec.score:.1f} < 70"
+
+        # --- Stage 7: GCD Fallback (Phase 82.6 — Only if previous stages fail) ---
+        gcp_candidates: List[ComicIdentity] = []
+        gcd_fallback_reason = cv_fail_reason or fallback_reason
+
         if hasattr(self, "gcp") and self.gcp:
             try:
                 gcp_results = self.gcp.search_issue(fname)
                 if gcp_results:
                     provider_results["GCP"] = ProviderOperationResult(provider="GCP", operation="search_issue", status="SUCCESS")
+                    for g in gcp_results:
+                        if isinstance(g, ComicIdentity):
+                            g.resolution_source = "gcd_fallback"
+                            g.fallback_used = True
+                            g.fallback_reason = gcd_fallback_reason
+                            gcp_candidates.append(g)
+                        elif isinstance(g, dict) and (g.get("url") or g.get("id")):
+                            g_year = int(g.get("year") or g.get("volume_year") or 0) if (g.get("year") or g.get("volume_year")) else 0
+                            g_series = g.get("series") or (g.get("title", "").split(" #")[0] if g.get("title") else parsed.series_name)
+                            g_pub = g.get("publisher", "") or g.get("pub", "")
+                            g_num = str(g.get("issue_number") or g.get("number") or parsed.issue_number)
+                            gcp_candidates.append(ComicIdentity(
+                                provider="GCP",
+                                issue_id=str(g.get("id") or g.get("url")),
+                                issue_provider="GCP",
+                                series_name=g_series,
+                                issue_number=g_num,
+                                publication_year=g_year,
+                                publisher=g_pub,
+                                resolution_source="gcd_fallback",
+                                fallback_used=True,
+                                fallback_reason=gcd_fallback_reason
+                            ))
                 else:
                     _logger.debug("PROVIDER_NOT_FOUND provider=GCP operation=search_issue query=%s", fname)
                     provider_results["GCP"] = ProviderOperationResult(provider="GCP", operation="search_issue", status="NOT_FOUND")
-
-                for g in gcp_results:
-                    if isinstance(g, ComicIdentity):
-                        provider_candidates.append(g)
-                    elif isinstance(g, dict) and (g.get("url") or g.get("id")):
-                        g_year = int(g.get("year") or g.get("volume_year") or 0) if (g.get("year") or g.get("volume_year")) else 0
-                        g_series = g.get("series") or (g.get("title", "").split(" #")[0] if g.get("title") else parsed.series_name)
-                        g_pub = g.get("publisher", "") or g.get("pub", "")
-                        g_num = str(g.get("issue_number") or g.get("number") or parsed.issue_number)
-                        provider_candidates.append(ComicIdentity(
-                            provider="GCP",
-                            issue_id=str(g.get("id") or g.get("url")),
-                            issue_provider="GCP",
-                            series_name=g_series,
-                            issue_number=g_num,
-                            publication_year=g_year,
-                            publisher=g_pub
-                        ))
             except Exception as e:
                 state, retryable = classify_provider_error(e, provider="GCP", operation="search_issue", query_or_url=fname)
                 provider_results["GCP"] = ProviderOperationResult(
@@ -270,18 +390,17 @@ class MetadataResolver:
                     message=str(e)
                 )
 
-        # If no provider candidates and no existing XML, filename alone is not sufficient proof of identity
+        # --- Stage 8: Evaluate Candidate Pool / Unresolved ---
+        all_candidates = local_candidates + kapowarr_candidates + cv_candidates + gcp_candidates
         has_existing_xml = any(c.provider == "ExistingXML" for c in local_candidates)
-        if not provider_candidates and not has_existing_xml:
+        if not (kapowarr_candidates or cv_candidates or gcp_candidates) and not has_existing_xml:
             dec = ConfidenceDecision(score=0.0, level=LEVEL_UNRESOLVED, action="SKIP", provider_results=provider_results)
             return None, dec
 
-        all_candidates = local_candidates + provider_candidates
         if not all_candidates:
             dec = ConfidenceDecision(score=0.0, level=LEVEL_UNRESOLVED, action="SKIP", provider_results=provider_results)
             return None, dec
 
-        # 5. Evaluate Candidate Pool Decision via Central Decision Policy (Phase 44)
         best_cand, decision = evaluate_candidate_pool_decision(
             all_candidates,
             parsed,
@@ -421,6 +540,10 @@ class MetadataResolver:
             if meta_res.state == STATE_METADATA_FOUND and meta_res.comic:
                 comic = meta_res.comic
 
+        res_src = decision.resolution_source if decision and decision.resolution_source else (identity.resolution_source if identity else "")
+        fb_used = decision.fallback_used if decision and decision.fallback_used else (identity.fallback_used if identity else False)
+        fb_reason = decision.fallback_reason if decision and decision.fallback_reason else (identity.fallback_reason if identity else "")
+
         return ResolutionResult(
             identity=identity,
             confidence=decision.score if decision else 0.0,
@@ -428,5 +551,8 @@ class MetadataResolver:
             provider_results=decision.provider_results if decision else {},
             conflicts=[str(c) for c in (decision.conflicts if decision else [])],
             metadata_result=meta_res,
-            comic=comic
+            comic=comic,
+            resolution_source=res_src,
+            fallback_used=fb_used,
+            fallback_reason=fb_reason
         )
