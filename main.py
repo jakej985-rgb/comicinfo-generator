@@ -1,6 +1,6 @@
 import sys
 import os
-from config import load_config
+from config import load_config, ConfigurationError
 from pipeline.dry_run import DryRunContext
 from app import run_server
 
@@ -10,7 +10,11 @@ def run_dry_run(target_path: str):
     displaying resolved identity, confidence, evidence list, action, and changes
     without modifying any archive files or persistent database state.
     """
-    cfg = load_config()
+    try:
+        cfg = load_config(validate=True)
+    except ConfigurationError as ce:
+        print(f"FATAL CONFIGURATION ERROR: {ce}", file=sys.stderr)
+        sys.exit(1)
     target = os.path.abspath(target_path)
 
     print("=" * 65)

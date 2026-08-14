@@ -111,52 +111,56 @@ def check_conversion_tools() -> dict:
 
 def validate_startup_config(cfg: "Config") -> list:
     """
-    Phase 71.2 & 71.5: Validates production configuration settings.
+    Phase 71.2, 71.5 & Phase 81: Validates production configuration settings.
     Raises ConfigurationError on fatal misconfigurations and returns informative warnings.
     """
     warnings = []
 
-    # 1. Validate Kapowarr URL
+    # 1. Fatal: Validate Kapowarr URL
     if cfg.kapowarr.url and cfg.kapowarr.url.strip():
         url = cfg.kapowarr.url.strip()
         if not (url.startswith("http://") or url.startswith("https://")):
             raise ConfigurationError(
-                f"Configuration error: Kapowarr is enabled but URL is invalid ('{url}'). "
+                f"Configuration error: Kapowarr URL is invalid ('{url}'). "
                 "URL must begin with 'http://' or 'https://'."
             )
+    else:
+        warnings.append("Warning: Kapowarr URL is not configured. Kapowarr integration will be disabled.")
 
-    # 2. Validate ComicVine API key
+    # 2. Fatal / Warning: Validate ComicVine API key
     if cfg.comicvine.api_key:
         key = cfg.comicvine.api_key.strip()
         if any(c.isspace() for c in key):
             raise ConfigurationError(
                 "Configuration error: ComicVine API key contains invalid whitespace characters."
             )
+    else:
+        warnings.append("Warning: ComicVine API key is not configured. ComicVine metadata lookup will be disabled.")
 
-    # 3. Validate Workers
-    if cfg.automation.workers < 1:
+    # 3. Fatal: Validate Workers
+    if not isinstance(cfg.automation.workers, int) or cfg.automation.workers < 1:
         raise ConfigurationError(
-            f"Configuration error: Automation workers must be >= 1 (got {cfg.automation.workers})."
+            f"Configuration error: automation.workers must be an integer >= 1 (got {cfg.automation.workers})."
         )
 
-    # 4. Validate Server Config
+    # 4. Fatal: Validate Server Config
     if not cfg.server.host or not cfg.server.host.strip():
         raise ConfigurationError("Configuration error: server.host cannot be empty.")
-    if not (1 <= cfg.server.port <= 65535):
+    if not isinstance(cfg.server.port, int) or not (1 <= cfg.server.port <= 65535):
         raise ConfigurationError(
-            f"Configuration error: server.port must be between 1 and 65535 (got {cfg.server.port})."
+            f"Configuration error: server.port must be an integer between 1 and 65535 (got {cfg.server.port})."
         )
     if not isinstance(cfg.server.cors_origins, list):
         raise ConfigurationError("Configuration error: server.cors_origins must be a list of allowed origins.")
 
-    # 5. Validate Logging Level
+    # 5. Fatal: Validate Logging Level
     valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
-    if cfg.logging.level.upper() not in valid_levels:
+    if not isinstance(cfg.logging.level, str) or cfg.logging.level.upper() not in valid_levels:
         raise ConfigurationError(
             f"Configuration error: Invalid log level '{cfg.logging.level}'. Must be one of {sorted(valid_levels)}."
         )
 
-    # 6. Validate Database & Cache directory writability
+    # 6. Fatal: Validate Database & Cache directory writability
     if cfg.cache.enabled and cfg.cache.db_path and cfg.cache.db_path != ":memory:":
         db_dir = os.path.dirname(os.path.abspath(os.path.expanduser(cfg.cache.db_path)))
         if db_dir:
@@ -173,7 +177,7 @@ def validate_startup_config(cfg: "Config") -> list:
                     f"Configuration error: Cannot create or access cache database directory '{db_dir}': {e}"
                 )
 
-    # 7. Check conversion tool readiness
+    # 7. Warning: Check conversion tool readiness
     tools = check_conversion_tools()
     if not any(tools.values()):
         warnings.append(
@@ -236,6 +240,7 @@ class Config:
             "config_file_path": self.config_file_path
         }
 
+
 def init_config(config_path: str = DEFAULT_CONFIG_PATH, force: bool = False) -> str:
     """Generates default config.yaml file if it does not already exist."""
     expanded_path = os.path.expanduser(config_path)
@@ -247,10 +252,46 @@ def init_config(config_path: str = DEFAULT_CONFIG_PATH, force: bool = False) -> 
         f.write(DEFAULT_CONFIG_YAML)
     return expanded_path
 
-def load_config(config_path: Optional[str] = None, cli_overrides: Optional[dict] = None) -> Config:
+
+def _parse_bool(val, field_name: str) -> bool:
+    """Safely converts boolean-like values, handling strings and booleans."""
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return bool(val)
+    if isinstance(val, str):
+        lowered = val.strip().lower()
+        if lowered in ("true", "1", "yes", "on"):
+            return True
+        if lowered in ("false", "0", "no", "off"):
+            return False
+    raise ConfigurationError(f"Configuration error: {field_name} must be a boolean (got '{val}').")
+
+
+def _parse_int(val, field_name: str, min_val: Optional[int] = None, max_val: Optional[int] = None) -> int:
+    """Safely parses integers with bounds checking and clean error messages."""
+    try:
+        parsed = int(val)
+    except (ValueError, TypeError):
+        raise ConfigurationError(f"Configuration error: {field_name} must be an integer (got '{val}').")
+    if min_val is not None and parsed < min_val:
+        raise ConfigurationError(f"Configuration error: {field_name} must be >= {min_val} (got {parsed}).")
+    if max_val is not None and parsed > max_val:
+        raise ConfigurationError(f"Configuration error: {field_name} must be <= {max_val} (got {parsed}).")
+    return parsed
+
+
+def load_config(
+    config_path: Optional[str] = None,
+    cli_overrides: Optional[dict] = None,
+    validate: bool = False
+) -> Config:
     """
-    Loads configuration with resolution precedence:
+    Phase 71 & Phase 81: Loads configuration with resolution precedence:
     CLI Overrides > Environment Variables > config.yaml > Default Values
+
+    Guarantees controlled type conversions, clean ConfigurationError on invalid values,
+    and optional mandatory startup validation.
     """
     target_path = config_path or os.environ.get("COMICINFO_CONFIG") or DEFAULT_CONFIG_PATH
     expanded_path = os.path.expanduser(target_path)
@@ -259,7 +300,17 @@ def load_config(config_path: Optional[str] = None, cli_overrides: Optional[dict]
     if os.path.exists(expanded_path):
         try:
             with open(expanded_path, "r", encoding="utf-8") as f:
-                yaml_data = yaml.safe_load(f) or {}
+                loaded = yaml.safe_load(f)
+                if loaded is not None:
+                    if not isinstance(loaded, dict):
+                        raise ConfigurationError(
+                            f"Configuration error: Config file '{expanded_path}' must be a YAML mapping/dictionary."
+                        )
+                    yaml_data = loaded
+        except yaml.YAMLError as ye:
+            raise ConfigurationError(f"Configuration error: Malformed YAML in '{expanded_path}': {ye}")
+        except ConfigurationError:
+            raise
         except Exception as e:
             sys.stderr.write(f"Warning: Failed to parse config file '{expanded_path}': {e}\n")
 
@@ -267,66 +318,78 @@ def load_config(config_path: Optional[str] = None, cli_overrides: Optional[dict]
 
     # 1. Parse YAML values
     cv_yaml = yaml_data.get("comicvine", {})
-    cfg.comicvine.api_key = str(cv_yaml.get("api_key", cfg.comicvine.api_key) or "")
+    if isinstance(cv_yaml, dict):
+        cfg.comicvine.api_key = str(cv_yaml.get("api_key", cfg.comicvine.api_key) or "")
 
     kap_yaml = yaml_data.get("kapowarr", {})
-    cfg.kapowarr.url = str(kap_yaml.get("url", cfg.kapowarr.url) or "")
-    cfg.kapowarr.api_key = str(kap_yaml.get("api_key", cfg.kapowarr.api_key) or "")
+    if isinstance(kap_yaml, dict):
+        cfg.kapowarr.url = str(kap_yaml.get("url", cfg.kapowarr.url) or "")
+        cfg.kapowarr.api_key = str(kap_yaml.get("api_key", cfg.kapowarr.api_key) or "")
 
     auto_yaml = yaml_data.get("automation", {})
-    cfg.automation.mode = str(auto_yaml.get("mode", cfg.automation.mode) or "batch")
-    cfg.automation.workers = int(auto_yaml.get("workers", cfg.automation.workers) or 4)
-    cfg.automation.prefer_kapowarr = bool(auto_yaml.get("prefer_kapowarr", False))
+    if isinstance(auto_yaml, dict):
+        cfg.automation.mode = str(auto_yaml.get("mode", cfg.automation.mode) or "batch")
+        if "workers" in auto_yaml and auto_yaml["workers"] is not None:
+            cfg.automation.workers = _parse_int(auto_yaml["workers"], "automation.workers", min_val=1)
+        if "prefer_kapowarr" in auto_yaml and auto_yaml["prefer_kapowarr"] is not None:
+            cfg.automation.prefer_kapowarr = _parse_bool(auto_yaml["prefer_kapowarr"], "automation.prefer_kapowarr")
 
     srv_yaml = yaml_data.get("server", {})
-    cfg.server.host = str(srv_yaml.get("host", cfg.server.host) or "127.0.0.1")
-    cfg.server.port = int(srv_yaml.get("port", cfg.server.port) or 5005)
-    if "cors_origins" in srv_yaml and isinstance(srv_yaml["cors_origins"], list):
-        cfg.server.cors_origins = [str(o) for o in srv_yaml["cors_origins"]]
+    if isinstance(srv_yaml, dict):
+        cfg.server.host = str(srv_yaml.get("host", cfg.server.host) or "127.0.0.1")
+        if "port" in srv_yaml and srv_yaml["port"] is not None:
+            cfg.server.port = _parse_int(srv_yaml["port"], "server.port", min_val=1, max_val=65535)
+        if "cors_origins" in srv_yaml and srv_yaml["cors_origins"] is not None:
+            if not isinstance(srv_yaml["cors_origins"], list):
+                raise ConfigurationError("Configuration error: server.cors_origins must be a list of allowed origins.")
+            cfg.server.cors_origins = [str(o) for o in srv_yaml["cors_origins"]]
 
     cache_yaml = yaml_data.get("cache", {})
-    cfg.cache.enabled = bool(cache_yaml.get("enabled", cfg.cache.enabled))
-    if "db_path" in cache_yaml and cache_yaml["db_path"]:
-        cfg.cache.db_path = os.path.expanduser(str(cache_yaml["db_path"]))
+    if isinstance(cache_yaml, dict):
+        if "enabled" in cache_yaml and cache_yaml["enabled"] is not None:
+            cfg.cache.enabled = _parse_bool(cache_yaml["enabled"], "cache.enabled")
+        if "db_path" in cache_yaml and cache_yaml["db_path"]:
+            cfg.cache.db_path = os.path.expanduser(str(cache_yaml["db_path"]))
 
     out_yaml = yaml_data.get("output", {})
-    cfg.output.embed_xml = bool(out_yaml.get("embed_xml", cfg.output.embed_xml))
-    cfg.output.overwrite = bool(out_yaml.get("overwrite", cfg.output.overwrite))
-    cfg.output.delete_cbr = bool(out_yaml.get("delete_cbr", cfg.output.delete_cbr))
-    cfg.output.strict_archive_verification = bool(out_yaml.get("strict_archive_verification", cfg.output.strict_archive_verification))
+    if isinstance(out_yaml, dict):
+        if "embed_xml" in out_yaml and out_yaml["embed_xml"] is not None:
+            cfg.output.embed_xml = _parse_bool(out_yaml["embed_xml"], "output.embed_xml")
+        if "overwrite" in out_yaml and out_yaml["overwrite"] is not None:
+            cfg.output.overwrite = _parse_bool(out_yaml["overwrite"], "output.overwrite")
+        if "delete_cbr" in out_yaml and out_yaml["delete_cbr"] is not None:
+            cfg.output.delete_cbr = _parse_bool(out_yaml["delete_cbr"], "output.delete_cbr")
+        if "strict_archive_verification" in out_yaml and out_yaml["strict_archive_verification"] is not None:
+            cfg.output.strict_archive_verification = _parse_bool(out_yaml["strict_archive_verification"], "output.strict_archive_verification")
 
     log_yaml = yaml_data.get("logging", {})
-    cfg.logging.level = str(log_yaml.get("level", cfg.logging.level) or "INFO").upper()
-    if "log_file" in log_yaml and log_yaml["log_file"]:
-        cfg.logging.log_file = os.path.expanduser(str(log_yaml["log_file"]))
+    if isinstance(log_yaml, dict):
+        if "level" in log_yaml and log_yaml["level"]:
+            cfg.logging.level = str(log_yaml["level"]).upper()
+        if "log_file" in log_yaml and log_yaml["log_file"]:
+            cfg.logging.log_file = os.path.expanduser(str(log_yaml["log_file"]))
 
     # 2. Parse Environment Variables (Overrides YAML)
-    if os.environ.get("COMICVINE_API_KEY"):
+    if os.environ.get("COMICVINE_API_KEY") is not None:
         cfg.comicvine.api_key = os.environ["COMICVINE_API_KEY"]
-    if os.environ.get("KAPOWARR_URL"):
+    if os.environ.get("KAPOWARR_URL") is not None:
         cfg.kapowarr.url = os.environ["KAPOWARR_URL"]
-    if os.environ.get("KAPOWARR_API_KEY"):
+    if os.environ.get("KAPOWARR_API_KEY") is not None:
         cfg.kapowarr.api_key = os.environ["KAPOWARR_API_KEY"]
-    if os.environ.get("COMICINFO_HOST"):
+    if os.environ.get("COMICINFO_HOST") is not None:
         cfg.server.host = os.environ["COMICINFO_HOST"]
-    if os.environ.get("COMICINFO_PORT"):
-        try:
-            cfg.server.port = int(os.environ["COMICINFO_PORT"])
-        except ValueError:
-            pass
-    if os.environ.get("COMICINFO_CORS_ORIGINS"):
+    if os.environ.get("COMICINFO_PORT") is not None:
+        cfg.server.port = _parse_int(os.environ["COMICINFO_PORT"], "COMICINFO_PORT", min_val=1, max_val=65535)
+    if os.environ.get("COMICINFO_CORS_ORIGINS") is not None:
         cfg.server.cors_origins = [o.strip() for o in os.environ["COMICINFO_CORS_ORIGINS"].split(",") if o.strip()]
-    if os.environ.get("COMICINFO_WORKERS"):
-        try:
-            cfg.automation.workers = int(os.environ["COMICINFO_WORKERS"])
-        except ValueError:
-            pass
-    if os.environ.get("COMICINFO_CACHE_ENABLED"):
-        cfg.cache.enabled = os.environ["COMICINFO_CACHE_ENABLED"].lower() in ("true", "1", "yes")
-    if os.environ.get("COMICINFO_LOG_LEVEL"):
+    if os.environ.get("COMICINFO_WORKERS") is not None:
+        cfg.automation.workers = _parse_int(os.environ["COMICINFO_WORKERS"], "COMICINFO_WORKERS", min_val=1)
+    if os.environ.get("COMICINFO_CACHE_ENABLED") is not None:
+        cfg.cache.enabled = _parse_bool(os.environ["COMICINFO_CACHE_ENABLED"], "COMICINFO_CACHE_ENABLED")
+    if os.environ.get("COMICINFO_LOG_LEVEL") is not None:
         cfg.logging.level = os.environ["COMICINFO_LOG_LEVEL"].upper()
-    if os.environ.get("COMICINFO_STRICT_ARCHIVE_VERIFICATION"):
-        cfg.output.strict_archive_verification = os.environ["COMICINFO_STRICT_ARCHIVE_VERIFICATION"].lower() in ("true", "1", "yes")
+    if os.environ.get("COMICINFO_STRICT_ARCHIVE_VERIFICATION") is not None:
+        cfg.output.strict_archive_verification = _parse_bool(os.environ["COMICINFO_STRICT_ARCHIVE_VERIFICATION"], "COMICINFO_STRICT_ARCHIVE_VERIFICATION")
 
     # 3. Parse CLI Overrides (Overrides Environment & YAML)
     if cli_overrides:
@@ -339,16 +402,21 @@ def load_config(config_path: Optional[str] = None, cli_overrides: Optional[dict]
         if "host" in cli_overrides and cli_overrides["host"] is not None:
             cfg.server.host = str(cli_overrides["host"])
         if "port" in cli_overrides and cli_overrides["port"] is not None:
-            cfg.server.port = int(cli_overrides["port"])
+            cfg.server.port = _parse_int(cli_overrides["port"], "CLI port override", min_val=1, max_val=65535)
         if "cors_origins" in cli_overrides and cli_overrides["cors_origins"] is not None:
+            if not isinstance(cli_overrides["cors_origins"], list):
+                raise ConfigurationError("Configuration error: CLI cors_origins must be a list of allowed origins.")
             cfg.server.cors_origins = list(cli_overrides["cors_origins"])
         if "workers" in cli_overrides and cli_overrides["workers"] is not None:
-            cfg.automation.workers = int(cli_overrides["workers"])
+            cfg.automation.workers = _parse_int(cli_overrides["workers"], "CLI workers override", min_val=1)
         if "overwrite" in cli_overrides and cli_overrides["overwrite"] is not None:
-            cfg.output.overwrite = bool(cli_overrides["overwrite"])
+            cfg.output.overwrite = _parse_bool(cli_overrides["overwrite"], "CLI overwrite override")
         if "strict_archive_verification" in cli_overrides and cli_overrides["strict_archive_verification"] is not None:
-            cfg.output.strict_archive_verification = bool(cli_overrides["strict_archive_verification"])
+            cfg.output.strict_archive_verification = _parse_bool(cli_overrides["strict_archive_verification"], "CLI strict_archive_verification override")
         if "log_level" in cli_overrides and cli_overrides["log_level"] is not None:
             cfg.logging.level = str(cli_overrides["log_level"]).upper()
+
+    if validate:
+        validate_startup_config(cfg)
 
     return cfg

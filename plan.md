@@ -959,10 +959,10 @@ Do not call the project complete until every item below is true.
 
 ### Configuration Checklist
 
-- [ ] startup validation enforced
-- [ ] invalid values produce clear errors
-- [ ] precedence tested
-- [ ] warnings separated from fatal errors
+- [x] startup validation enforced
+- [x] invalid values produce clear errors
+- [x] precedence tested
+- [x] warnings separated from fatal errors
 
 ### Resolution Checklist
 

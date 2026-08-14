@@ -95,7 +95,7 @@ class TestProductionConfigHardening(unittest.TestCase):
         cfg_bad_workers.automation.workers = 0
         with self.assertRaises(ConfigurationError) as ctx:
             validate_startup_config(cfg_bad_workers)
-        self.assertIn("workers must be >= 1", str(ctx.exception))
+        self.assertIn("must be an integer >= 1", str(ctx.exception))
 
         # Invalid log level
         cfg_bad_log = Config()
@@ -162,7 +162,92 @@ class TestProductionConfigHardening(unittest.TestCase):
             validate_startup_config(cfg)
             self.fail("Expected ConfigurationError for invalid scheme URL")
         except ConfigurationError as ce:
-            self.assertIn("Configuration error: Kapowarr is enabled but URL is invalid", str(ce))
+            self.assertIn("Configuration error: Kapowarr URL is invalid", str(ce))
+
+    # ================================================================== #
+    # Phase 81: Configuration Hardening Test Suite                       #
+    # ================================================================== #
+    def test_81_1_mandatory_startup_validation(self):
+        """81.1: load_config with validate=True raises ConfigurationError on invalid config."""
+        invalid_yaml_path = os.path.join(self.tmp_dir, "invalid_config.yaml")
+        with open(invalid_yaml_path, "w") as f:
+            f.write("automation:\n  workers: 0\n")
+
+        with self.assertRaises(ConfigurationError) as ctx:
+            load_config(config_path=invalid_yaml_path, validate=True)
+        self.assertIn("automation.workers must be >= 1", str(ctx.exception))
+
+    def test_81_2_separate_fatal_errors_from_warnings(self):
+        """81.2: Fatal errors halt execution while warnings are collected non-fatally."""
+        # Fatal: Invalid port
+        cfg_bad_port = Config()
+        cfg_bad_port.server.port = 99999
+        with self.assertRaises(ConfigurationError):
+            validate_startup_config(cfg_bad_port)
+
+        # Non-fatal warnings: missing API keys & tools
+        cfg_minimal = Config()
+        cfg_minimal.comicvine.api_key = ""
+        cfg_minimal.kapowarr.url = ""
+        warnings = validate_startup_config(cfg_minimal)
+        self.assertTrue(any("ComicVine API key is not configured" in w for w in warnings))
+        self.assertTrue(any("Kapowarr URL is not configured" in w for w in warnings))
+
+    def test_81_3_controlled_type_parsing_and_malformed_yaml(self):
+        """81.3: Malformed YAML values (e.g. 'workers: bananas') produce clean ConfigurationErrors."""
+        bad_yaml_path = os.path.join(self.tmp_dir, "bad_type.yaml")
+        with open(bad_yaml_path, "w") as f:
+            f.write("automation:\n  workers: bananas\n")
+
+        with self.assertRaises(ConfigurationError) as ctx:
+            load_config(config_path=bad_yaml_path)
+        self.assertIn("automation.workers must be an integer", str(ctx.exception))
+
+        # Test non-dict YAML mapping
+        scalar_yaml_path = os.path.join(self.tmp_dir, "scalar.yaml")
+        with open(scalar_yaml_path, "w") as f:
+            f.write("just a raw string\n")
+        with self.assertRaises(ConfigurationError) as ctx:
+            load_config(config_path=scalar_yaml_path)
+        self.assertIn("must be a YAML mapping/dictionary", str(ctx.exception))
+
+    def test_81_4_precedence_hierarchy_cli_over_env_over_yaml_over_defaults(self):
+        """81.4: Precedence must strictly be CLI > Environment > YAML > Defaults."""
+        yaml_path = os.path.join(self.tmp_dir, "precedence.yaml")
+        with open(yaml_path, "w") as f:
+            f.write("""
+automation:
+  workers: 2
+logging:
+  level: "WARNING"
+server:
+  port: 6001
+""")
+
+        # 1. Defaults only
+        cfg_default = load_config(config_path=os.path.join(self.tmp_dir, "nonexistent.yaml"))
+        self.assertEqual(cfg_default.automation.workers, 4)
+        self.assertEqual(cfg_default.logging.level, "INFO")
+        self.assertEqual(cfg_default.server.port, 5005)
+
+        # 2. YAML overrides defaults
+        cfg_yaml = load_config(config_path=yaml_path)
+        self.assertEqual(cfg_yaml.automation.workers, 2)
+        self.assertEqual(cfg_yaml.logging.level, "WARNING")
+        self.assertEqual(cfg_yaml.server.port, 6001)
+
+        # 3. Environment overrides YAML
+        with patch.dict(os.environ, {"COMICINFO_WORKERS": "6", "COMICINFO_PORT": "7001"}):
+            cfg_env = load_config(config_path=yaml_path)
+            self.assertEqual(cfg_env.automation.workers, 6)
+            self.assertEqual(cfg_env.server.port, 7001)
+            self.assertEqual(cfg_env.logging.level, "WARNING")  # Still from YAML
+
+            # 4. CLI overrides Environment & YAML
+            cli_args = {"workers": 12, "port": 8001}
+            cfg_cli = load_config(config_path=yaml_path, cli_overrides=cli_args)
+            self.assertEqual(cfg_cli.automation.workers, 12)
+            self.assertEqual(cfg_cli.server.port, 8001)
 
 
 if __name__ == "__main__":

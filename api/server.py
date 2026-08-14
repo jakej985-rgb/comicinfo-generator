@@ -7,7 +7,7 @@ import os
 import sys
 from http.server import HTTPServer
 
-from config import load_config
+from config import load_config, validate_startup_config, ConfigurationError
 from api.handlers import ComicServerHandler
 
 PORT = 5005
@@ -15,7 +15,15 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file
 
 
 def run_server(port: int = None, host: str = None):
-    cfg = load_config()
+    try:
+        cfg = load_config()
+        warnings = validate_startup_config(cfg)
+        for w in warnings:
+            print(f"[{w}]", file=sys.stderr)
+    except ConfigurationError as ce:
+        print(f"FATAL CONFIGURATION ERROR: {ce}", file=sys.stderr)
+        sys.exit(1)
+
     target_host = host or cfg.server.host or "127.0.0.1"
     target_port = port or cfg.server.port or PORT
 
