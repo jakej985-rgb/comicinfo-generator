@@ -131,6 +131,30 @@ def score_identity_candidate(
             evidence.append(ev)
             reasons.append(ev.explanation)
 
+    # TPB / Collection format check (Phase 90.3)
+    cand_name_lower = (candidate.series_name or "").lower()
+    cand_is_tpb = any(k in cand_name_lower for k in ["tpb", "trade paperback", "omnibus", "compendium", "masterworks", "collection", "deluxe edition", "graphic novel"])
+    if parsed.is_tpb and not cand_is_tpb and candidate.issue_number:
+        score -= 50.0
+        ev = IdentityEvidence(
+            source="FilenameParser", field="format",
+            expected="TPB/Collection", actual="Single Issue",
+            score=-50.0,
+            explanation="Target file is a TPB/Collection but candidate is a single issue (-50.0)"
+        )
+        evidence.append(ev)
+        reasons.append(ev.explanation)
+    elif not parsed.is_tpb and cand_is_tpb:
+        score -= 50.0
+        ev = IdentityEvidence(
+            source="FilenameParser", field="format",
+            expected="Single Issue", actual="TPB/Collection",
+            score=-50.0,
+            explanation="Target file is a single issue but candidate is a TPB/Collection (-50.0)"
+        )
+        evidence.append(ev)
+        reasons.append(ev.explanation)
+
     # 3. Series Name Matching (+25 / -50)
     norm_cand_series = normalize_title(candidate.series_name)
     norm_parsed_series = normalize_title(parsed.series_name)
