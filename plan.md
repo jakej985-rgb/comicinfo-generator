@@ -989,7 +989,7 @@ Do not call the project complete until every item below is true.
 - [x] file stability checked
 - [x] restart safe
 - [x] duplicate events safe
-- [ ] provider failures bounded
+- [x] provider failures bounded
 
 ### Dry-Run Checklist
 
@@ -1000,21 +1000,21 @@ Do not call the project complete until every item below is true.
 
 ### Archive Checklist
 
-- [ ] CBZ atomic writing verified
-- [ ] archive verification passing
-- [ ] metadata preservation passing
-- [ ] CBR → CBZ workflow passing
-- [ ] CBR deletion behavior passing
+- [x] CBZ atomic writing verified
+- [x] archive verification passing
+- [x] metadata preservation passing
+- [x] CBR → CBZ workflow passing
+- [x] CBR deletion behavior passing
 
 ### Testing Checklist
 
-- [ ] full suite passes
-- [ ] Python 3.11 passes
-- [ ] Python 3.12 passes
-- [ ] security tests pass
-- [ ] provider failure tests pass
-- [ ] watcher lifecycle tests pass
-- [ ] real-library canary passes
+- [x] full suite passes
+- [x] Python 3.11 passes
+- [x] Python 3.12 passes
+- [x] security tests pass
+- [x] provider failure tests pass
+- [x] watcher lifecycle tests pass
+- [x] real-library canary passes
 
 ---
 
