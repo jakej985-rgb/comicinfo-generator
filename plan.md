@@ -1,1157 +1,1272 @@
-# ComicInfo Generator — Final Production Hardening Plan
+ComicInfo Generator — Remaining Work Completion Plan
 
-Repository: "jakej985-rgb/comicinfo-generator"
-Branch: "main"
-Purpose: Finish the remaining production-hardening issues identified during the latest repository review.
+Repository: jakej985-rgb/comicinfo-generator
+Branch: main
+Goal: Finish the remaining production-hardening work without adding unnecessary features or reopening completed CBR functionality.
 
----
+> Important: CBR conversion is not part of this plan as a problem. The intended behavior is correct: CBR → CBZ → embed ComicInfo.xml → optionally delete the original CBR.
 
-## 1. Mission
 
-The project has already completed the major architectural and safety phases.
 
-The current repository contains:
-
-- centralized identity resolution
-- confidence scoring
-- candidate-margin protection
-- existing ComicInfo inspection
-- provider failure classification
-- archive transaction safety
-- CRC/archive verification
-- strict archive integrity support
-- durable queue leases
-- automation self-write protection
-- multi-worker stress testing
-- dry-run isolation
-- provider-state propagation
-- conflict detection
-- extensive regression testing
-- 294 passing tests
-
-The latest commits explicitly report the final acceptance criteria as complete and the regression suite passing 294/294. The project should not be redesigned from scratch.
-
-The remaining work is to make the repository:
-
-1. reproducibly testable
-2. correctly documented
-3. production-configurable
-4. easier to maintain
-5. safe at the user-facing CLI boundary
-6. explicit about what is and is not guaranteed
-
-The guiding principle is:
-
-«Do not add new complexity unless it directly improves correctness, reproducibility, maintainability, or operational safety.»
 
 ---
 
-## 2. Current Remaining Issues
+1. Project Completion Goal
 
-The latest review identified these remaining areas:
+The project should be considered complete when it can reliably:
 
-Priority| Issue| Status
-P0| CI enforcement| Completed
-P0| Metadata-write safety final verification| Completed
-P1| README architecture is stale| Completed
-P1| Production configuration validation| Completed
-P1| Dependency reproducibility| Completed
-P1| CLI dry-run integration test| Completed
-P1| Provider abstraction maintainability| Completed (Architecture verified)
-P2| Documentation guarantee audit| Completed
-P2| Release/production checklist| Completed
+Comic archive discovered
+        ↓
+Determine existing metadata
+        ↓
+Use cached/local information first
+        ↓
+Prefer Kapowarr when available
+        ↓
+Use ComicVine/GCD only when necessary
+        ↓
+Resolve identity with confidence/evidence
+        ↓
+Generate/merge ComicInfo.xml
+        ↓
+Safely write archive
+        ↓
+Verify archive
+        ↓
+Record completed state
+        ↓
+Watcher ignores its own changes
 
----
+And importantly:
 
-Phase 68 — GitHub Actions CI Enforcement
+Provider failure ≠ metadata not found
+API credentials never exposed
+Dry-run never modifies data
+Restart does not reprocess completed files
+Concurrent workers cannot duplicate work
 
-Priority: P0
-Goal: Make the 294-test regression requirement enforceable automatically.
-
-68.1 Inspect current CI state
-
-First verify whether GitHub Actions currently exists.
-
-Search for:
-
-.github/
-.github/workflows/
-*.yml
-*.yaml
-
-Do not assume CI exists merely because the tests have been run manually.
-
-If no workflow exists, create one.
-
-68.2 Create test workflow
-
-Add:
-
-.github/
-└── workflows/
-    └── tests.yml
-
-The workflow should run on:
-
-push:
-  branches:
-    - main
-
-pull_request:
-  branches:
-    - main
-
-68.3 Python version
-
-Use the project's supported Python version.
-
-If the project does not formally declare one, determine the version actually required by the code/dependencies and document it.
-
-Do not unnecessarily test a huge Python matrix.
-
-A reasonable initial matrix is:
-
-Python 3.x
-
-with the exact supported version(s) established from the project.
-
-68.4 Install dependencies
-
-CI must install the same dependency set developers use.
-
-The workflow must not silently use a different environment from local development.
-
-68.5 Run complete regression suite
-
-Run:
-
-python -m unittest discover tests
-
-The workflow must fail on:
-
-failure
-error
-test discovery failure
-dependency installation failure
-
-68.6 Add static checks
-
-If practical, add lightweight checks for:
-
-- syntax errors
-- import errors
-- accidental provider imports in "api/"
-- existing architectural invariants
-
-Do not introduce a large linting framework merely for the sake of having one.
-
-68.7 CI acceptance
-
-CI is complete when:
-
-Pull Request
-     ↓
-GitHub Actions
-     ↓
-dependency installation
-     ↓
-test discovery
-     ↓
-full regression suite
-     ↓
-PASS / FAIL
-
-is automatic.
 
 ---
 
-Phase 69 — Final Metadata Write Safety Gate
+PHASE 80 — Security Hardening
 
-Priority: P0
-Goal: Prove that a successfully resolved identity cannot accidentally become unsafe metadata.
+80.1 Remove API keys from /api/config
 
-The resolver now explicitly distinguishes metadata states such as:
+Current problem
 
-METADATA_FOUND
-METADATA_PARTIAL
-METADATA_NOT_FOUND
-METADATA_PROVIDER_ERROR
-METADATA_INVALID
+The API currently returns the actual ComicVine and Kapowarr API keys through /api/config.
 
-and retains provider operation results.
+That must be removed.
 
-The remaining task is to prove that these states are honored all the way through the archive-writing boundary.
+Change
 
-69.1 Establish the write contract
+Instead of:
 
-Automatic modification requires all of:
+{
+  "comicvine": {
+    "api_key": "actual-secret"
+  }
+}
 
-identity resolved
-AND
-confidence accepted
-AND
-metadata FOUND
-AND
-metadata valid
-AND
-merge successful
-AND
-archive transaction successful
-AND
-archive verification successful
+return:
 
-Anything else must result in:
+{
+  "comicvine": {
+    "api_key_set": true
+  }
+}
 
-REVIEW
+and:
 
-or:
+{
+  "kapowarr": {
+    "url": "http://localhost:5656",
+    "api_key_set": true
+  }
+}
 
-FAILED
+Requirements
 
-69.2 Test provider failure
+Never return raw API keys through GET.
 
-Test:
+Never include raw API keys in error messages.
 
-Identity:
-ComicVine #123
+Never include raw API keys in logs.
 
-Metadata:
-ComicVine HTTP 500
+Never include raw API keys in exception traces sent to the browser.
 
-Expected:
+Preserve the ability to update a key.
 
-metadata = METADATA_PROVIDER_ERROR
-decision = REVIEW/FAILED
-archive = unchanged
+An empty/missing key should still be representable.
 
-69.3 Test provider NOT_FOUND
 
-Test:
+Tests
 
-Identity = resolved
-Provider = NOT_FOUND
+Add tests proving:
 
-Expected:
+configured ComicVine key is not returned
 
-NO automatic ComicInfo write
+configured Kapowarr key is not returned
 
-69.4 Test partial metadata
+api_key_set == true
 
-Provider returns:
+missing key produces false
 
-Series
-Number
+error responses don't contain the key
 
-but lacks required metadata.
 
-Expected:
-
-METADATA_PARTIAL
-NO automatic update
-
-69.5 Test invalid metadata
-
-Provider returns malformed or unusable data.
-
-Expected:
-
-METADATA_INVALID
-NO automatic update
-
-69.6 Test successful metadata
-
-Provider returns complete valid metadata.
-
-Expected:
-
-METADATA_FOUND
-AUTO_UPDATE
-
-69.7 Verify actual archive
-
-Do not stop at inspecting the decision object.
-
-Verify the physical CBZ.
-
-Before processing:
-
-SHA256(original archive)
-
-After processing:
-
-SHA256(original archive)
-
-will naturally differ if ComicInfo changes.
-
-Therefore also compare:
-
-all original non-ComicInfo entries
-
-and verify:
-
-- images unchanged
-- directory structure unchanged
-- unrelated files unchanged
-- archive remains readable
-- ComicInfo is valid
 
 ---
 
-Phase 70 — User-Facing CLI Dry-Run Integration Test
+80.2 Fix CORS
 
-Priority: P1
+Current behavior effectively allows:
 
-The internal dry-run system is already heavily tested, and "main.py" exposes:
+Access-Control-Allow-Origin: *
 
-python main.py --dry-run
+This should not remain the default.
 
-with an explicit claim that no archive or persistent database is modified.
+Preferred behavior
 
-Now test the actual CLI path.
+For the local application:
 
-70.1 Create CLI fixture
+localhost
+127.0.0.1
 
-Create a temporary test library containing:
+should be allowed.
 
-Batman (2016) 001.cbz
-Batman (2016) 001A.cbz
-Batman (1940) 001.cbz
-TMNT 001.cbz
-Annual
-Special
-TPB
-existing ComicInfo
-malformed ComicInfo
-missing ComicInfo
+Make CORS configurable if remote browser access is intentionally supported.
 
-70.2 Snapshot before execution
+Example:
 
-Capture:
+server:
+  host: "127.0.0.1"
+  cors_origins:
+    - "http://127.0.0.1:5005"
 
-archive SHA256
-file size
-mtime
-permissions
-ownership where supported
-directory contents
-database contents
-cache contents
+Tests
 
-70.3 Execute actual command
+Verify:
 
-```bash
-python main.py --dry-run <fixture>
-```
+allowed origin receives CORS header
 
-70.4 Verify zero mutations
+unauthorized origin does not
 
-After execution:
+default configuration is restrictive
 
-archives unchanged
-database unchanged
-cache unchanged
-no ComicInfo written
-no CBR conversion
-no archive replacement
-no unexpected temporary files
 
-70.5 Verify output
-
-The CLI must clearly show:
-
-filename
-parsed identity
-candidate
-confidence
-evidence
-metadata state
-decision
-proposed changes
-
-This makes dry-run useful for manually reviewing a real library before enabling automatic processing.
 
 ---
 
-Phase 71 — Production Configuration Hardening
+80.3 Bind safely by default
 
-Priority: P1
+Make sure the application does not accidentally expose the management API to the entire LAN.
 
-The resolver currently provides development-oriented defaults such as a localhost Kapowarr URL when configuration is absent.
+Default:
 
-This should not silently create confusing production behavior.
-
-71.1 Separate disabled from misconfigured
-
-These states must be distinguishable:
-
-Kapowarr disabled
-
-Kapowarr enabled and reachable
-
-Kapowarr enabled but unreachable
-
-Kapowarr enabled but authentication failed
-
-71.2 Startup configuration validation
-
-Validate:
-
-- provider URLs
-- API keys where required
-- archive paths
-- database paths
-- cache paths
-- watcher paths
-- writable directories
-- conversion executable availability
-
-71.3 Safe defaults
-
-Defaults should be safe.
-
-Do not silently enable destructive processing because configuration is missing.
-
-Automatic processing should require explicit configuration.
-
-71.4 Environment variable handling
-
-Verify that:
-
-environment
-→ config
-→ provider
-
-works consistently.
-
-Ensure secrets never appear in logs.
-
-71.5 Failure behavior
-
-A bad configuration should produce a clear error such as:
-
-Configuration error:
-Kapowarr is enabled but URL is invalid.
+127.0.0.1
 
 rather than:
 
-Connection failed
+0.0.0.0
 
-with no explanation.
+If LAN access is desired, make it an explicit configuration choice.
+
 
 ---
 
-Phase 72 — Dependency Reproducibility
+PHASE 81 — Configuration Hardening
 
-Priority: P1
+81.1 Make startup validation mandatory
 
-The current "requirements.txt" primarily uses minimum versions such as:
+validate_startup_config() already exists.
 
-pyyaml>=6.0
-watchdog>=4.0.0
-requests>=2.31.0
-curl_cffi>=0.7.0
-beautifulsoup4>=4.12.0
-lxml>=4.9.0
-cloudscraper>=1.2.71
+The problem is that configuration can be loaded without necessarily passing through the validation boundary.
 
-Minimum-only dependencies can cause two installations to resolve different versions.
+New startup flow
 
-72.1 Establish supported dependency strategy
+load_config()
+      ↓
+validate_startup_config()
+      ↓
+ApplicationContext
+      ↓
+start server / queue / watcher
 
-Choose one:
+Do not allow production components to start with invalid configuration.
 
-Option A
 
-Use a lockfile.
+---
 
-Option B
+81.2 Separate errors from warnings
 
-Pin release dependencies.
+Configuration problems should be classified:
 
-Option C
+Fatal
 
-Use "pyproject.toml" with a reproducible environment.
+invalid URL
+invalid worker count
+unusable cache path
+invalid configuration type
 
-Do not implement all three.
+Application startup stops.
 
-72.2 Preserve developer simplicity
+Warning
 
-The normal install should remain straightforward.
+ComicVine key missing
+Kapowarr unavailable
+7z/unrar unavailable
+
+Application can start, but clearly reports the limitation.
+
+
+---
+
+81.3 Validate configuration types
+
+Do not rely on:
+
+int(...)
+bool(...)
+str(...)
+
+without controlled error handling.
+
+For example, malformed YAML such as:
+
+workers: bananas
+
+should produce a clean:
+
+Configuration error:
+automation.workers must be an integer >= 1
+
+rather than an unexpected Python exception.
+
+
+---
+
+81.4 Add configuration tests
+
+Cover:
+
+defaults
+
+YAML
+
+environment variables
+
+CLI overrides
+
+invalid YAML
+
+invalid worker count
+
+invalid URLs
+
+invalid log level
+
+invalid cache directory
+
+missing conversion utilities
+
+precedence rules
+
+
+Verify:
+
+CLI > environment > YAML > defaults
+
+
+---
+
+PHASE 82 — Provider Resolution Redesign
+
+This is the most important functional phase.
+
+The goal is to minimize unnecessary external requests while improving accuracy.
+
+
+---
+
+82.1 Establish the authoritative resolution order
+
+Implement this exact strategy:
+
+1. Explicit URL / explicit provider ID
+       ↓
+2. Existing ComicInfo.xml
+       ↓
+3. Persistent cache
+       ↓
+4. Local filename / folder identity
+       ↓
+5. Kapowarr
+       ↓
+6. ComicVine
+       ↓
+7. GCD
+       ↓
+8. REVIEW / unresolved
+
+However, existing ComicInfo should not automatically win if it is obviously invalid or conflicts with explicit user information.
+
+
+---
+
+82.2 Existing ComicInfo should be treated as evidence
+
+Don't simply do:
+
+ComicInfo exists → done
+
+Instead:
+
+ComicInfo exists
+      ↓
+validate
+      ↓
+complete?
+      ↓
+consistent?
+      ↓
+trusted?
+
+A valid existing ComicInfo can eliminate network calls.
+
+
+---
+
+82.3 Cache must be checked before network providers
+
+Before calling any provider:
+
+normalized identity
+        ↓
+cache lookup
+        ↓
+valid cached result?
+        ↓
+YES → use cached result
+NO  → provider resolution
+
+This is especially important for ComicVine request conservation.
+
+
+---
+
+82.4 Kapowarr-first behavior
+
+When Kapowarr is configured and reachable:
+
+filename
+ ↓
+Kapowarr search
+ ↓
+candidate
+ ↓
+confidence
+
+Only call ComicVine if:
+
+Kapowarr unavailable
+OR
+Kapowarr returns no useful candidate
+OR
+confidence below threshold
+
+Do not call ComicVine merely because it exists as another provider.
+
+
+---
+
+82.5 ComicVine fallback
+
+ComicVine should be a fallback rather than an automatic first-class network request for every file.
+
+Track:
+
+ComicVine requested?
+reason?
+query?
+cache hit?
+rate limited?
+result?
+
+This will let you verify that the application is actually conserving requests.
+
+
+---
+
+82.6 GCD fallback
+
+GCD should behave the same way:
+
+GCD requested only when previous resolution stages fail
+
+It should not be silently queried as part of every resolution.
+
+
+---
+
+82.7 Add provider resolution reason
+
+Every final result should expose something like:
+
+{
+  "provider": "Kapowarr",
+  "resolution_source": "kapowarr",
+  "fallback_used": false
+}
+
+or:
+
+{
+  "provider": "ComicVine",
+  "resolution_source": "comicvine_fallback",
+  "fallback_used": true,
+  "fallback_reason": "Kapowarr returned no match"
+}
+
+This will make debugging dramatically easier.
+
+
+---
+
+PHASE 83 — Provider Error Semantics
+
+The provider base classes already have useful states:
+
+SUCCESS
+NOT_FOUND
+CONNECTION_ERROR
+AUTH_ERROR
+RATE_LIMITED
+PARSE_ERROR
+INVALID_RESPONSE
+
+Now make the entire application consistently use them.
+
+
+---
+
+83.1 Never convert provider errors into None
+
+Avoid patterns such as:
+
+try:
+    ...
+except Exception:
+    return None
+
+because that turns:
+
+RATE_LIMITED
+
+into:
+
+NOT_FOUND
+
+
+---
+
+83.2 Standardize provider result
+
+Use one structure:
+
+ProviderOperationResult(
+    status=SUCCESS,
+    provider="ComicVine",
+    data=...,
+    error_code=None,
+    retryable=False
+)
+
+Failure:
+
+ProviderOperationResult(
+    status=RATE_LIMITED,
+    provider="ComicVine",
+    data=None,
+    error_code="RATE_LIMITED",
+    retryable=True
+)
+
+
+---
+
+83.3 Define retry policy
+
+Retry
+
+CONNECTION_ERROR
+RATE_LIMITED
+temporary server failure
+
+Don't retry automatically
+
+AUTH_ERROR
+NOT_FOUND
+INVALID_RESPONSE
+PARSE_ERROR
+
+
+---
+
+83.4 Preserve provider errors through the resolver
+
+The final result should be able to say:
+
+No metadata found
+
+versus:
+
+ComicVine could not be queried because it was rate limited
+
+Those are completely different outcomes.
+
+
+---
+
+PHASE 84 — Provider Registry
+
+Clean up the current partial provider abstraction.
+
+
+---
+
+84.1 Create ProviderRegistry
+
+Example architecture:
+
+providers/
+├── base.py
+├── registry.py
+├── comicvine/
+├── gcd/
+└── kapowarr/
+
+Registry:
+
+ProviderRegistry
+ ├── kapowarr
+ ├── comicvine
+ └── gcd
+
+
+---
+
+84.2 Resolver should depend on registry
+
+Instead of:
+
+self.kapowarr = KapowarrProvider(...)
+self.comicvine = ComicVineProvider(...)
+self.gcd = GCPProvider(...)
+
+the resolver should request providers from the registry.
+
+
+---
+
+84.3 Provider priority should be configuration
+
+Example:
+
+providers:
+  priority:
+    - kapowarr
+    - comicvine
+    - gcd
+
+This allows the project to evolve without rewriting resolver logic.
+
+
+---
+
+PHASE 85 — Job/Queue State Consolidation
+
+Currently there are several pieces involved in processing state:
+
+ProcessingQueue
+CacheManager
+tracker
+JobStore
+watcher
+
+These should have clearly defined responsibilities.
+
+
+---
+
+85.1 JobStore becomes authoritative for processing state
+
+Use:
+
+DISCOVERED
+QUEUED
+PROCESSING
+COMPLETED
+FAILED
+RETRYING
+REVIEW
+
+
+---
+
+85.2 Hash tracker becomes identity/idempotency data
+
+It should answer:
+
+Has this exact archive state already been processed?
+
+It should not become a second job system.
+
+
+---
+
+85.3 ProcessingQueue becomes execution only
+
+The queue should:
+
+claim job
+ ↓
+execute
+ ↓
+report result
+ ↓
+release/complete job
+
+It should not maintain a competing permanent state model.
+
+
+---
+
+PHASE 86 — Watcher Reliability
+
+86.1 Add file stability detection
+
+Current flow:
+
+filesystem event
+ ↓
+process
+
+Change to:
+
+filesystem event
+ ↓
+wait
+ ↓
+check size/mtime
+ ↓
+wait
+ ↓
+check again
+ ↓
+unchanged?
+ ↓
+enqueue
 
 For example:
 
-python -m venv venv
-source venv/bin/activate
-pip install ...
+stability_window = 1–3 seconds
 
-72.3 CI must use reproducible dependencies
+Make it configurable.
 
-CI should install the same tested versions used for releases.
-
-72.4 Verify clean installation
-
-Test from an empty environment:
-
-new virtual environment
-↓
-install dependencies
-↓
-run tests
-↓
-294+ tests pass
 
 ---
 
-Phase 73 — README Rewrite
+86.2 Debounce rapid events
 
-Priority: P1
+Multiple events for the same file should collapse into one pending operation.
 
-The README is currently the most visibly stale part of the project.
-
-It describes an older structure containing:
-
-providers/
-writers/
-static/
-
-while the actual repository now contains areas such as:
-
-api/
-automation/
-cache/
-models/
-observability/
-pipeline/
-docs/
-tests/
-
-73.1 Rewrite repository structure
-
-Use the actual current tree.
-
-Do not copy an old architecture diagram.
-
-73.2 Document startup
-
-Explain:
-
-python main.py
-
-and:
-
-```bash
-python main.py --dry-run <path>
-```
-
-73.3 Document configuration
-
-Explain:
-
-- configuration file
-- environment variables
-- providers
-- Kapowarr
-- ComicVine
-- GCD/GCP
-- cache
-- automation
-
-73.4 Document safety
-
-Clearly explain:
-
-identity != metadata
-
-and:
-
-low confidence ≠ automatic write
-
-73.5 Document dry-run
-
-Give a real example.
-
-73.6 Document supported archives
-
-Explicitly document:
-
-CBZ
-CBR
-
-and conversion behavior.
-
-73.7 Document limitations
-
-Especially:
-
-- provider availability
-- Comic Vine protection
-- ambiguous comics
-- variants
-- unusual numbering
-- network failures
-- metadata conflicts
-
-73.8 Remove unsupported claims
-
-Every statement such as:
-
-always
-fully
-guaranteed
-safe
-atomic
-two-way
-
-must be verified against actual implementation.
-
----
-
-Phase 74 — Provider Abstraction Review
-
-Priority: P1
-
-Do not automatically refactor the provider system.
-
-The current resolver is already large and directly handles:
-
-Kapowarr
-ComicVine
-GCP
-
-along with candidate construction and provider operation results.
-
-74.1 First measure the problem
-
-Determine whether adding another provider would require modifying large amounts of resolver logic.
-
-If not, leave it alone.
-
-74.2 If refactoring is justified
-
-Introduce a small provider runner/registry:
-
-ProviderRegistry
+Batman.cbz
+  create
+  modify
+  modify
+  modify
        ↓
-ProviderAdapter
-       ↓
-ProviderOperationResult
+    ONE JOB
 
-The resolver should primarily ask:
-
-search available providers
-
-rather than containing extensive provider-specific branching.
-
-74.3 Do not over-engineer
-
-Do NOT introduce:
-
-- plugin frameworks
-- dynamic dependency injection systems
-- complex event buses
-- unnecessary abstract factories
-
-The application is small enough that simple interfaces are preferable.
-
-74.4 Preserve current behavior
-
-Any provider refactor must maintain:
-
-same candidates
-same confidence
-same decisions
-same failure states
-same archive safety
 
 ---
 
-Phase 75 — Resolver Maintainability Review
+86.3 Handle rename events
 
-Priority: P1
+Explicitly support:
 
-"pipeline/resolver.py" has become one of the largest orchestration components.
+on_created
+on_modified
+on_moved
+on_deleted
 
-This is not currently a correctness failure.
+For moved files:
 
-Do not split it simply because it is large.
+old path → new path
 
-75.1 Identify responsibilities
+should be handled safely.
 
-Review whether the following can remain clearly separated:
-
-identity resolution
-candidate construction
-provider execution
-metadata retrieval
-result construction
-
-75.2 Extract only if necessary
-
-Possible future structure:
-
-pipeline/
-├── resolver.py
-├── identity_resolver.py
-├── metadata_retriever.py
-├── provider_runner.py
-├── candidate_builder.py
-└── resolution_result.py
-
-75.3 Keep resolver as orchestrator
-
-The final resolver should ideally read approximately like:
-
-parse
-→ inspect existing metadata
-→ resolve identity
-→ retrieve metadata
-→ evaluate decision
-→ return result
-
-Implementation details should live in dedicated modules.
-
-75.4 Tests before refactor
-
-Before modifying the structure:
-
-python -m unittest discover tests
-
-After every extraction:
-
-python -m unittest discover tests
-
-Do not perform a large untested refactor.
 
 ---
 
-Phase 76 — Documentation Guarantee Audit
+86.4 Watcher restart test
 
-Priority: P2
+Verify:
 
-Review:
+application stops
+ ↓
+library unchanged
+ ↓
+application starts
+ ↓
+existing processed archive
+ ↓
+ZERO duplicate processing
 
-AGENTS.md
-docs/architecture.md
-docs/invariants.md
-docs/metadata-resolution.md
-docs/provider-contract.md
-docs/archive-safety.md
-docs/automation.md
-docs/testing.md
-README.md
+The current test already covers part of this; retain it and add the real watcher lifecycle version.
 
-The testing documentation already defines strong invariants including no live network requests, archive failure-injection testing, API provider-import restrictions, and complex issue-number handling.
-
-76.1 Audit guarantee language
-
-Search for:
-
-always
-never
-guaranteed
-atomic
-durable
-safe
-authoritative
-automatic
-
-76.2 Verify every claim
-
-For each claim:
-
-documentation claim
-        ↓
-implementation
-        ↓
-test
-
-All three must agree.
-
-76.3 Configuration-dependent guarantees
-
-Never claim:
-
-always durable
-
-if strict durability is optional.
-
-Instead document:
-
-With strict archive verification enabled...
-
-76.4 Update phase references
-
-Remove outdated references to phases that are now completed.
-
-The documentation should describe the current architecture, not the history of how it was built.
 
 ---
 
-Phase 77 — Production Library Validation
+PHASE 87 — Dry-Run Architecture
 
-Priority: P0
+The current dry-run implementation is good enough functionally, but strengthen the architecture.
 
-This is the final real-world gate.
-
-The test suite already includes a real-library validation test suite and extensive archive/concurrency testing.
-
-Now perform an actual controlled validation outside the normal unit-test environment.
-
-77.1 Create isolated test library
-
-Use copies of real comic archives.
-
-Include:
-
-single issue
-variant
-annual
-special
-zero issue
-decimal issue
-TPB
-multiple volume years
-existing ComicInfo
-malformed ComicInfo
-missing ComicInfo
-ambiguous filename
-
-77.2 Run dry-run
-
-```bash
-python main.py --dry-run <test-library>
-```
-
-77.3 Manually inspect every decision
-
-Record:
-
-file
-parsed identity
-provider
-candidate
-confidence
-metadata state
-conflicts
-decision
-
-77.4 Reject questionable decisions
-
-Any incorrect:
-
-AUTO_UPDATE
-
-is a release blocker.
-
-The system must prefer:
-
-REVIEW
-
-over a wrong comic.
-
-77.5 Process a tiny real batch
-
-After dry-run passes:
-
-5 files maximum
-
-Process them normally.
-
-77.6 Verify every archive
-
-Check:
-
-ComicInfo.xml
-archive opens
-images unchanged
-unrelated entries unchanged
-permissions preserved
-ownership preserved
-expected metadata present
-
-77.7 Expand gradually
-
-Only after the 5-file batch passes:
-
-5
-→ 25
-→ 100
-→ larger library
-
-Never jump directly to the complete library.
 
 ---
 
-Phase 78 — Automation Production Test
-
-Priority: P1
-
-The project already contains automation stress tests for:
-
-- self-write avoidance
-- restart persistence
-- rapid event deduplication
-- failure-loop prevention.
-
-The final step is verifying the actual watcher behavior.
-
-78.1 Start watcher
-
-Point it at the isolated test library.
-
-78.2 Add one archive
-
-Expected:
-
-one queue entry
-one processing cycle
-
-78.3 Verify self-write
-
-ComicInfo modification must not create an infinite loop.
-
-78.4 Restart
-
-Restart the application.
-
-The existing completed archive must not endlessly reprocess.
-
-78.5 Rapid changes
-
-Simulate:
-
-create
-modify
-modify
-rename
-
-Verify appropriate deduplication.
-
-78.6 Provider failure
-
-Cause provider failure.
-
-Expected:
-
-REVIEW/FAILED
-bounded retry
-no infinite loop
-
----
-
-Phase 79 — Release Checklist
-
-Priority: P2
+87.1 Separate planning from execution
 
 Create:
 
-docs/release-checklist.md
+Resolution
+Planning
+Execution
 
-Checklist:
+Pipeline:
 
-- [ ] Working tree clean
-- [ ] CI passing
-- [ ] Full test suite passing
-- [ ] No unexpected test skips
-- [ ] Dry-run CLI test passing
-- [ ] Archive safety tests passing
-- [ ] Provider failure tests passing
-- [ ] Queue concurrency tests passing
-- [ ] Automation stress tests passing
-- [ ] Real-library validation passing
-- [ ] README synchronized
-- [ ] Architecture documentation synchronized
-- [ ] Configuration documented
-- [ ] Dependencies reproducible
-- [ ] No secrets committed
-- [ ] No debug logging enabled
-- [ ] No stale phase documentation
-- [ ] Production test batch verified
-- [ ] Backup of real library available before first production run
+Archive
+ ↓
+Parse
+ ↓
+Resolve
+ ↓
+Plan
+ ↓
+Execute
 
----
+The planner returns:
 
-Phase 80 — Final Regression Gate
+ProcessingPlan(
+    action="UPDATE",
+    fields=[...],
+    provider="Kapowarr",
+    confidence=...
+)
 
-Priority: P0
-
-Run the complete suite:
-
-python -m unittest discover tests
-
-Required:
-
-0 failures
-0 errors
-
-Then separately execute:
-
-CLI dry-run
-archive safety
-provider failure
-metadata safety
-automation
-multi-worker
-real-library validation
-
-CI must reproduce the same successful result.
 
 ---
 
-Final Acceptance Criteria
+87.2 Dry-run executes only planning
 
-CI
+Dry-run:
 
-- [x] GitHub Actions automatically runs the test suite
-- [x] Pull requests cannot silently bypass regression testing
-- [x] Clean environment passes all tests
-- [x] Dependency installation is reproducible
+Archive
+ ↓
+Parse
+ ↓
+Resolve
+ ↓
+Plan
+ ↓
+DISPLAY
 
-Identity
+Normal run:
 
-- [x] Identity resolution remains separate from metadata retrieval
-- [x] Provider failure cannot become successful metadata
-- [x] Complex issue numbers remain intact
-- [x] Provider disagreement remains reviewable
-- [x] Existing ComicInfo authority remains explicit
+Archive
+ ↓
+Parse
+ ↓
+Resolve
+ ↓
+Plan
+ ↓
+Write
+ ↓
+Verify
+ ↓
+Track
 
-Metadata
+This removes the need to continually patch every future writer.
 
-- [x] "METADATA_FOUND" can update automatically when confidence requirements are met
-- [x] "METADATA_PARTIAL" cannot automatically update
-- [x] "METADATA_NOT_FOUND" cannot automatically update
-- [x] "METADATA_PROVIDER_ERROR" cannot automatically update
-- [x] "METADATA_INVALID" cannot automatically update
-- [x] Wrong metadata is always treated as worse than missing metadata
 
-Archive Safety
+---
 
-- [x] Original archive remains recoverable after failed writes
-- [x] CRC verification remains enabled
-- [x] Strict SHA256 verification works
-- [x] fsync failures are not silently ignored
-- [x] Archive replacement failures are reported correctly
-- [x] Unrelated archive entries remain unchanged
+PHASE 88 — Library Configuration
 
-Dry-Run
+Remove hard-coded environment-specific paths from core logic.
 
-- [x] CLI dry-run performs zero persistent mutations
-- [x] CLI dry-run performs zero archive mutations
-- [x] CLI dry-run does not create processing loops
-- [x] CLI output explains the decision
+Instead of relying on locations such as:
+
+~/Downloads
+~/Desktop
+~/Comics
+/mnt
+/media/m3tal
+
+provide:
+
+library:
+  roots:
+    - /mnt/comics
+
+
+---
+
+Requirements
+
+multiple roots supported
+
+recursive search supported
+
+configurable
+
+no assumptions about username
+
+no assumptions about /mnt
+
+no assumptions about your current server
+
+
+
+---
+
+PHASE 89 — API Input Validation
+
+Audit every API endpoint.
+
+For each endpoint define:
+
+input
+validation
+allowed values
+failure status
+side effects
+
+Example:
+
+/api/batch-preview
+
+folder_path
+ ├── required
+ ├── must exist
+ ├── must be directory
+ └── must be inside configured library roots
+
+
+---
+
+Security boundary
+
+Do not allow arbitrary filesystem access if the server is ever exposed outside localhost.
+
+
+---
+
+PHASE 90 — ComicVine Resilience
+
+The current ComicVine scraper is necessarily tied to ComicVine HTML structure.
+
+Add regression fixtures for:
+
+Series
+
+normal volume
+
+volume with many pages
+
+missing pagination
+
+alternate title
+
+renamed series
+
+volume slug mismatch
+
+
+Issues
+
+#1
+
+#01
+
+#1.5
+
+#1/2
+
+#½
+
+#0
+
+annual
+
+special
+
+FCBD
+
+preview
+
+one-shot
+
+
+Exclusions
+
+Ensure these aren't incorrectly matched:
+
+TPB
+HC
+GN
+Omnibus
+Compendium
+Masterworks
+Collection
+Deluxe
+Edition
+Volume
+
+
+---
+
+PHASE 91 — Failure Injection Tests
+
+This is important before release.
+
+Simulate failures during:
+
+provider request
+provider parsing
+cache read
+cache write
+archive read
+archive write
+archive verification
+database write
+watcher callback
+
+Verify the system never leaves the archive in a corrupt or misleading state.
+
+
+---
+
+PHASE 92 — Production Observability
+
+Add structured logging for every processing job.
+
+Example:
+
+JOB START
+file=Batman #001.cbz
+
+IDENTITY
+series=Batman
+issue=1
+year=2016
+
+RESOLUTION
+provider=Kapowarr
+fallback=false
+confidence=96
+
+ACTION
+UPDATE ComicInfo.xml
+
+WRITE
+archive verified=true
+
+RESULT
+COMPLETED
+
+For fallback:
+
+RESOLUTION
+Kapowarr=NOT_FOUND
+ComicVine=SUCCESS
+fallback=true
+
+For failure:
+
+RESOLUTION
+ComicVine=RATE_LIMITED
+retryable=true
+
+Never log API keys.
+
+
+---
+
+PHASE 93 — Final Regression Suite
+
+Before release, run:
+
+python -m unittest discover tests -v
+
+Then specifically:
+
+python -m unittest discover tests -v
+
+under Python 3.11 and 3.12.
+
+Verify:
+
+all tests pass
+zero unexpected warnings
+zero traceback
+
+
+---
+
+PHASE 94 — Real-World Canary Test
+
+Before processing your full comic library, create a small test library:
+
+test-library/
+├── Batman #001.cbz
+├── Batman #002.cbz
+├── Superman #001.cbz
+├── SomeComic.cbr
+├── ExistingMetadata.cbz
+└── AmbiguousComic.cbz
+
+Test:
+
+Case 1
+
+Existing ComicInfo.
+
+Expected:
+
+No unnecessary provider request
+
+Case 2
+
+Kapowarr match.
+
+Expected:
+
+Kapowarr used
+ComicVine not queried
+
+Case 3
+
+Kapowarr unavailable.
+
+Expected:
+
+ComicVine fallback
+
+Case 4
+
+No provider match.
+
+Expected:
+
+REVIEW
+archive unchanged
+
+Case 5
+
+CBR.
+
+Expected:
+
+CBR → CBZ
+ComicInfo embedded
+optional CBR deletion
+
+Case 6
+
+Watcher detects new file.
+
+Expected:
+
+ONE job
+ONE processing cycle
+
+Case 7
+
+Restart.
+
+Expected:
+
+ZERO duplicate processing
+
+
+---
+
+PHASE 95 — Release Gate
+
+Do not call the project complete until every item below is true.
+
+Security
+
+[ ] API keys never returned by API
+
+[ ] API keys never logged
+
+[ ] CORS restricted
+
+[ ] localhost is safe default
+
+[ ] filesystem paths validated
+
+[ ] remote access is explicit
+
+
+Configuration
+
+[ ] startup validation enforced
+
+[ ] invalid values produce clear errors
+
+[ ] precedence tested
+
+[ ] warnings separated from fatal errors
+
+
+Resolution
+
+[ ] existing ComicInfo checked first
+
+[ ] cache checked before network
+
+[ ] Kapowarr preferred
+
+[ ] ComicVine used only when needed
+
+[ ] GCD used as fallback
+
+[ ] resolution reason recorded
+
+[ ] provider errors preserved
+
 
 Providers
 
-- [x] NOT_FOUND differs from provider failure
-- [x] RATE_LIMITED remains distinguishable
-- [x] OFFLINE remains distinguishable
-- [x] Retryable failures remain bounded
-- [x] Provider state reaches the final result
-- [x] Secrets never appear in logs
+[ ] provider registry implemented
+
+[ ] resolver no longer hard-codes provider implementations
+
+[ ] retry policy standardized
+
+[ ] rate limiting handled correctly
+
+[ ] authentication failures handled correctly
+
 
 Automation
 
-- [x] Self-writes do not cause infinite processing
-- [x] Restart does not cause endless reprocessing
-- [x] Rapid filesystem events are deduplicated
-- [x] Failed jobs eventually become terminal
-- [x] Worker crashes allow jobs to be reclaimed
-- [x] Multiple workers do not process the same job simultaneously
+[ ] queue/job state unified
 
-Documentation
+[ ] watcher debounced
 
-- [x] README matches the current repository
-- [x] Repository tree is accurate
-- [x] Configuration is documented
-- [x] Provider behavior is documented
-- [x] Dry-run is documented
-- [x] Safety guarantees are accurately described
-- [x] Phase-history language is removed where obsolete
+[ ] file stability checked
 
-Production Validation
+[ ] restart safe
 
-- [x] Isolated real-library dry-run completed
-- [x] Every AUTO_UPDATE decision manually validated
-- [x] Small real write batch completed successfully
-- [x] Archive integrity verified
-- [x] Metadata correctness verified
-- [x] Automation tested against the isolated library
-- [x] Production backup exists
+[ ] duplicate events safe
 
----
+[ ] provider failures bounded
 
-Definition of Done
 
-The project is ready for normal production use only when:
+Dry-run
 
-CI PASS
-   ↓
-Full regression PASS
-   ↓
-CLI dry-run PASS
-   ↓
-Metadata safety PASS
-   ↓
-Archive safety PASS
-   ↓
-Provider failure PASS
-   ↓
-Automation PASS
-   ↓
-Real-library dry-run PASS
-   ↓
-Small real write batch PASS
-   ↓
-Documentation PASS
-   ↓
-Production release
+[ ] no archive modification
 
-The most important release rule is:
+[ ] no persistent DB mutation
 
-«When uncertain, the system must refuse to automatically modify the comic and send it to review instead.»
+[ ] no destructive operations
 
-A missing ComicInfo.xml is recoverable.
+[ ] planning and execution separated
 
-Incorrect ComicInfo metadata propagated across an entire library is not.
+
+Archive
+
+[ ] CBZ atomic writing verified
+
+[ ] archive verification passing
+
+[ ] metadata preservation passing
+
+[ ] CBR → CBZ workflow passing
+
+[ ] CBR deletion behavior passing
+
+
+Testing
+
+[ ] full suite passes
+
+[ ] Python 3.11 passes
+
+[ ] Python 3.12 passes
+
+[ ] security tests pass
+
+[ ] provider failure tests pass
+
+[ ] watcher lifecycle tests pass
+
+[ ] real-library canary passes
+
+
 
 ---
 
-Recommended Implementation Order
+Recommended implementation order
 
-Do the work in this exact order:
+Don't give the AI agent all of this as one giant "fix everything" instruction. Do it in controlled milestones:
 
-1. Phase 68 — CI
-2. Phase 69 — Metadata write safety
-3. Phase 70 — CLI dry-run integration
-4. Phase 71 — Production configuration
-5. Phase 72 — Dependency reproducibility
-6. Phase 73 — README
-7. Phase 74 — Provider abstraction review
-8. Phase 75 — Resolver maintainability review
-9. Phase 76 — Documentation guarantee audit
-10. Phase 77 — Real-library validation
-11. Phase 78 — Automation production test
-12. Phase 79 — Release checklist
-13. Phase 80 — Final regression gate
+80  Security
+ ↓
+81  Configuration
+ ↓
+82  Provider Resolution
+ ↓
+83  Provider Errors
+ ↓
+84  Provider Registry
+ ↓
+85  Job/Queue State
+ ↓
+86  Watcher Reliability
+ ↓
+87  Dry-Run Architecture
+ ↓
+88  Library Configuration
+ ↓
+89  API Validation
+ ↓
+90  ComicVine Resilience
+ ↓
+91  Failure Injection
+ ↓
+92  Observability
+ ↓
+93  Regression
+ ↓
+94  Canary
+ ↓
+95  Release Gate
 
-Do not move to the next phase if the previous phase introduces failures.
+Most important change
 
-The goal is not to make the codebase bigger.
+If you're handing this to an AI coding agent, Phase 82 should be treated as the core functional requirement:
 
-The goal is to reach the point where an automated run against a real comic library can be trusted to:
+> Do not query ComicVine/GCD when the existing ComicInfo, cache, or Kapowarr can resolve the comic.
 
-correctly identify comics
-        ↓
-retrieve trustworthy metadata
-        ↓
-refuse ambiguous results
-        ↓
-safely modify only approved archives
-        ↓
-verify the resulting archive
-        ↓
-avoid processing itself again
-        ↓
-recover from failures
-        ↓
-leave everything else untouched
+
+
+That directly matches the design you've been building toward and prevents the generator from wasting ComicVine requests on comics Kapowarr already knows about.
+
+CBR conversion should remain in the implementation and tests, but should not be treated as an outstanding architectural problem.
