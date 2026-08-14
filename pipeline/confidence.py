@@ -39,6 +39,10 @@ class ConfidenceDecision:
     fallback_used: bool = False
     fallback_reason: str = ""
 
+    @property
+    def confidence(self) -> float:
+        return self.score
+
 CandidateDecision = ConfidenceDecision
 
 

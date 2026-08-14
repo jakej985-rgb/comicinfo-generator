@@ -21,6 +21,7 @@ from cache.jobs import JobStore
 from pipeline.resolver import MetadataResolver
 from pipeline.filename_parser import parse_filename_identity
 from pipeline.confidence import ConfidenceDecision
+from pipeline.planner import ProcessingPlan, plan_archive
 
 
 @dataclass
@@ -35,6 +36,7 @@ class DryRunResult:
     proposed_comic: Optional[Comic]
     fields_to_change: List[str] = field(default_factory=list)
     metadata_state: str = "METADATA_NOT_FOUND"
+    plan: Optional[ProcessingPlan] = None
 
 
 class DryRunContext:
@@ -85,21 +87,10 @@ class DryRunContext:
         identity, decision = self.resolver.resolve_identity(abs_path)
         comic = None
         fields_to_change = []
-        metadata_state = "METADATA_NOT_FOUND"
-
-        if identity and decision.action != "SKIP":
-            meta_res = self.resolver.retrieve_metadata_result(identity, file_path=abs_path)
-            metadata_state = meta_res.state
-            if meta_res.state == "METADATA_FOUND" and meta_res.comic:
-                comic = meta_res.comic
-                if comic.title: fields_to_change.append("Title")
-                if comic.series: fields_to_change.append("Series")
-                if comic.number: fields_to_change.append("Number")
-                if comic.publisher: fields_to_change.append("Publisher")
-                if comic.year: fields_to_change.append("Year")
-                if comic.writers: fields_to_change.append("Writer")
-                if comic.pencillers: fields_to_change.append("Penciller")
-                if comic.characters: fields_to_change.append("Characters")
+        plan = plan_archive(abs_path, self.resolver)
+        comic = plan.proposed_comic
+        fields_to_change = plan.fields
+        metadata_state = plan.metadata_state
 
         result = DryRunResult(
             file_path=abs_path,
@@ -111,7 +102,8 @@ class DryRunContext:
             decision=decision,
             proposed_comic=comic,
             fields_to_change=fields_to_change,
-            metadata_state=metadata_state
+            metadata_state=metadata_state,
+            plan=plan
         )
         self.results.append(result)
         return result

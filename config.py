@@ -15,6 +15,10 @@ kapowarr:
   url: "http://localhost:5656"
   api_key: ""
 
+library:
+  roots: []
+  recursive: true
+
 providers:
   priority:
     - kapowarr
@@ -46,6 +50,11 @@ logging:
   level: "INFO"
   log_file: "~/.comicinfo/generator.log"
 """
+
+@dataclass
+class LibraryConfig:
+    roots: list = field(default_factory=list)
+    recursive: bool = True
 
 @dataclass
 class ProvidersConfig:
@@ -202,6 +211,7 @@ class Config:
     comicvine: ComicvineConfig = field(default_factory=ComicvineConfig)
     kapowarr: KapowarrConfig = field(default_factory=KapowarrConfig)
     providers: ProvidersConfig = field(default_factory=ProvidersConfig)
+    library: LibraryConfig = field(default_factory=LibraryConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
     automation: AutomationConfig = field(default_factory=AutomationConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
@@ -226,6 +236,10 @@ class Config:
             },
             "providers": {
                 "priority": list(self.providers.priority)
+            },
+            "library": {
+                "roots": list(self.library.roots),
+                "recursive": self.library.recursive
             },
             "server": {
                 "host": self.server.host,
@@ -348,6 +362,13 @@ def load_config(
         if "prefer_kapowarr" in auto_yaml and auto_yaml["prefer_kapowarr"] is not None:
             cfg.automation.prefer_kapowarr = _parse_bool(auto_yaml["prefer_kapowarr"], "automation.prefer_kapowarr")
 
+    lib_yaml = yaml_data.get("library", {})
+    if isinstance(lib_yaml, dict):
+        if "roots" in lib_yaml and isinstance(lib_yaml["roots"], list):
+            cfg.library.roots = [os.path.expanduser(str(r)) for r in lib_yaml["roots"] if r]
+        if "recursive" in lib_yaml and lib_yaml["recursive"] is not None:
+            cfg.library.recursive = _parse_bool(lib_yaml["recursive"], "library.recursive")
+
     prov_yaml = yaml_data.get("providers", {})
     if isinstance(prov_yaml, dict):
         if "priority" in prov_yaml and isinstance(prov_yaml["priority"], list):
@@ -395,6 +416,8 @@ def load_config(
         cfg.kapowarr.url = os.environ["KAPOWARR_URL"]
     if os.environ.get("KAPOWARR_API_KEY") is not None:
         cfg.kapowarr.api_key = os.environ["KAPOWARR_API_KEY"]
+    if os.environ.get("COMICINFO_LIBRARY_ROOTS") is not None:
+        cfg.library.roots = [os.path.expanduser(r.strip()) for r in os.environ["COMICINFO_LIBRARY_ROOTS"].split(",") if r.strip()]
     if os.environ.get("COMICINFO_PROVIDER_PRIORITY") is not None:
         cfg.providers.priority = [p.strip().lower() for p in os.environ["COMICINFO_PROVIDER_PRIORITY"].split(",") if p.strip()]
     if os.environ.get("COMICINFO_HOST") is not None:
@@ -414,6 +437,14 @@ def load_config(
 
     # 3. Parse CLI Overrides (Overrides Environment & YAML)
     if cli_overrides:
+        if "library_roots" in cli_overrides and cli_overrides["library_roots"] is not None:
+            roots = cli_overrides["library_roots"]
+            if isinstance(roots, str):
+                cfg.library.roots = [os.path.expanduser(r.strip()) for r in roots.split(",") if r.strip()]
+            elif isinstance(roots, list):
+                cfg.library.roots = [os.path.expanduser(str(r)) for r in roots if r]
+        if "recursive" in cli_overrides and cli_overrides["recursive"] is not None:
+            cfg.library.recursive = _parse_bool(cli_overrides["recursive"], "CLI recursive override")
         if "comicvine_api_key" in cli_overrides and cli_overrides["comicvine_api_key"] is not None:
             cfg.comicvine.api_key = str(cli_overrides["comicvine_api_key"])
         if "kapowarr_url" in cli_overrides and cli_overrides["kapowarr_url"] is not None:
@@ -441,3 +472,38 @@ def load_config(
         validate_startup_config(cfg)
 
     return cfg
+
+
+def discover_library_files(cfg: Config) -> list:
+    """
+    Phase 88.1: Discovers comic archive files (.cbz, .cbr) across configured library.roots
+    without any hardcoded paths or environment-specific assumptions.
+    """
+    discovered = []
+    seen = set()
+    for root in cfg.library.roots:
+        expanded = os.path.abspath(os.path.expanduser(root))
+        if not os.path.exists(expanded):
+            continue
+        if os.path.isfile(expanded):
+            if expanded.lower().endswith((".cbz", ".cbr")) and expanded not in seen:
+                seen.add(expanded)
+                discovered.append(expanded)
+        elif os.path.isdir(expanded):
+            if cfg.library.recursive:
+                for dirpath, _, filenames in os.walk(expanded):
+                    for f in sorted(filenames):
+                        if f.lower().endswith((".cbz", ".cbr")):
+                            full = os.path.join(dirpath, f)
+                            if full not in seen:
+                                seen.add(full)
+                                discovered.append(full)
+            else:
+                for f in sorted(os.listdir(expanded)):
+                    if f.lower().endswith((".cbz", ".cbr")):
+                        full = os.path.join(expanded, f)
+                        if full not in seen:
+                            seen.add(full)
+                            discovered.append(full)
+    return discovered
+

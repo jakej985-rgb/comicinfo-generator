@@ -993,10 +993,10 @@ Do not call the project complete until every item below is true.
 
 ### Dry-Run Checklist
 
-- [ ] no archive modification
-- [ ] no persistent DB mutation
-- [ ] no destructive operations
-- [ ] planning and execution separated
+- [x] no archive modification
+- [x] no persistent DB mutation
+- [x] no destructive operations
+- [x] planning and execution separated
 
 ### Archive Checklist
 
