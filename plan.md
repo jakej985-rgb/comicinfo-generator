@@ -976,8 +976,8 @@ Do not call the project complete until every item below is true.
 
 ### Providers Checklist
 
-- [ ] provider registry implemented
-- [ ] resolver no longer hard-codes provider implementations
+- [x] provider registry implemented
+- [x] resolver no longer hard-codes provider implementations
 - [x] retry policy standardized
 - [x] rate limiting handled correctly
 - [x] authentication failures handled correctly

@@ -15,6 +15,12 @@ kapowarr:
   url: "http://localhost:5656"
   api_key: ""
 
+providers:
+  priority:
+    - kapowarr
+    - comicvine
+    - gcd
+
 automation:
   mode: "batch"  # batch
   workers: 4
@@ -40,6 +46,10 @@ logging:
   level: "INFO"
   log_file: "~/.comicinfo/generator.log"
 """
+
+@dataclass
+class ProvidersConfig:
+    priority: list = field(default_factory=lambda: ["kapowarr", "comicvine", "gcd"])
 
 @dataclass
 class ServerConfig:
@@ -191,6 +201,7 @@ def validate_startup_config(cfg: "Config") -> list:
 class Config:
     comicvine: ComicvineConfig = field(default_factory=ComicvineConfig)
     kapowarr: KapowarrConfig = field(default_factory=KapowarrConfig)
+    providers: ProvidersConfig = field(default_factory=ProvidersConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
     automation: AutomationConfig = field(default_factory=AutomationConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
@@ -212,6 +223,9 @@ class Config:
                 "url": self.kapowarr.url,
                 "api_key": mask_secret(self.kapowarr.api_key),
                 "api_key_set": bool(self.kapowarr.api_key and self.kapowarr.api_key.strip())
+            },
+            "providers": {
+                "priority": list(self.providers.priority)
             },
             "server": {
                 "host": self.server.host,
@@ -334,6 +348,11 @@ def load_config(
         if "prefer_kapowarr" in auto_yaml and auto_yaml["prefer_kapowarr"] is not None:
             cfg.automation.prefer_kapowarr = _parse_bool(auto_yaml["prefer_kapowarr"], "automation.prefer_kapowarr")
 
+    prov_yaml = yaml_data.get("providers", {})
+    if isinstance(prov_yaml, dict):
+        if "priority" in prov_yaml and isinstance(prov_yaml["priority"], list):
+            cfg.providers.priority = [str(p).lower().strip() for p in prov_yaml["priority"]]
+
     srv_yaml = yaml_data.get("server", {})
     if isinstance(srv_yaml, dict):
         cfg.server.host = str(srv_yaml.get("host", cfg.server.host) or "127.0.0.1")
@@ -376,6 +395,8 @@ def load_config(
         cfg.kapowarr.url = os.environ["KAPOWARR_URL"]
     if os.environ.get("KAPOWARR_API_KEY") is not None:
         cfg.kapowarr.api_key = os.environ["KAPOWARR_API_KEY"]
+    if os.environ.get("COMICINFO_PROVIDER_PRIORITY") is not None:
+        cfg.providers.priority = [p.strip().lower() for p in os.environ["COMICINFO_PROVIDER_PRIORITY"].split(",") if p.strip()]
     if os.environ.get("COMICINFO_HOST") is not None:
         cfg.server.host = os.environ["COMICINFO_HOST"]
     if os.environ.get("COMICINFO_PORT") is not None:

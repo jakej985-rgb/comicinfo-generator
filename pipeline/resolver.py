@@ -95,13 +95,15 @@ def read_existing_comicinfo(cbz_path: str) -> Optional[Comic]:
 
 import logging
 from observability.retry import classify_provider_error, sanitize_log_url
+from providers.registry import ProviderRegistry
 
 _logger = logging.getLogger("comicinfo.resolver")
 
 class MetadataResolver:
     """
-    Two-Phase Metadata Resolver Architecture (Phase 9 & Phase 56 & Phase 57):
+    Two-Phase Metadata Resolver Architecture (Phase 9 & Phase 56 & Phase 57 & Phase 84):
     Strictly separates Identity Resolution (resolve_identity) from Metadata Retrieval (retrieve_metadata).
+    Requests providers via ProviderRegistry in configured priority order.
     Preserves provider operation states across the entire resolution pipeline.
     """
 
@@ -111,17 +113,64 @@ class MetadataResolver:
         cache_mgr: Optional[CacheManager] = None,
         kapowarr: Optional[KapowarrProvider] = None,
         comicvine: Optional[ComicVineProvider] = None,
-        gcp: Optional[GCPProvider] = None
+        gcp: Optional[GCPProvider] = None,
+        registry: Optional[ProviderRegistry] = None
     ):
         self.config = config
         self.cache_mgr = cache_mgr or (CacheManager(config.cache.db_path) if config and hasattr(config, "cache") else CacheManager())
         self.cache = self.cache_mgr
-        self.kapowarr = kapowarr or KapowarrProvider(
-            url=self.config.kapowarr.url if self.config and hasattr(self.config, "kapowarr") else "http://localhost:5656",
-            api_key=self.config.kapowarr.api_key if self.config and hasattr(self.config, "kapowarr") else ""
-        )
-        self.comicvine = comicvine or ComicVineProvider(api_key=self.config.comicvine.api_key if self.config and hasattr(self.config, "comicvine") else "")
-        self.gcp = gcp or GCPProvider()
+
+        if registry is not None:
+            self.registry = registry
+        else:
+            priority = self.config.providers.priority if self.config and hasattr(self.config, "providers") else None
+            self.registry = ProviderRegistry(priority=priority)
+
+            k_prov = kapowarr or KapowarrProvider(
+                url=self.config.kapowarr.url if self.config and hasattr(self.config, "kapowarr") else "http://localhost:5656",
+                api_key=self.config.kapowarr.api_key if self.config and hasattr(self.config, "kapowarr") else ""
+            )
+            cv_prov = comicvine or ComicVineProvider(
+                api_key=self.config.comicvine.api_key if self.config and hasattr(self.config, "comicvine") else ""
+            )
+            gcd_prov = gcp or GCPProvider()
+
+            self.registry.register("kapowarr", k_prov)
+            self.registry.register("comicvine", cv_prov)
+            self.registry.register("gcd", gcd_prov)
+
+    @property
+    def kapowarr(self) -> Optional[KapowarrProvider]:
+        return self.registry.get("kapowarr")
+
+    @kapowarr.setter
+    def kapowarr(self, val: Optional[KapowarrProvider]) -> None:
+        if val is not None:
+            self.registry.register("kapowarr", val)
+        else:
+            self.registry.unregister("kapowarr")
+
+    @property
+    def comicvine(self) -> Optional[ComicVineProvider]:
+        return self.registry.get("comicvine")
+
+    @comicvine.setter
+    def comicvine(self, val: Optional[ComicVineProvider]) -> None:
+        if val is not None:
+            self.registry.register("comicvine", val)
+        else:
+            self.registry.unregister("comicvine")
+
+    @property
+    def gcp(self) -> Optional[GCPProvider]:
+        return self.registry.get("gcd")
+
+    @gcp.setter
+    def gcp(self, val: Optional[GCPProvider]) -> None:
+        if val is not None:
+            self.registry.register("gcd", val)
+        else:
+            self.registry.unregister("gcd")
 
     def resolve_identity(self, file_path: str, url_override: str = "") -> Tuple[Optional[ComicIdentity], ConfidenceDecision]:
         """
