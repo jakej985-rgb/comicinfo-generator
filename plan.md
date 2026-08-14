@@ -985,8 +985,8 @@ Do not call the project complete until every item below is true.
 ### Automation Checklist
 
 - [x] queue/job state unified
-- [ ] watcher debounced
-- [ ] file stability checked
+- [x] watcher debounced
+- [x] file stability checked
 - [x] restart safe
 - [x] duplicate events safe
 - [ ] provider failures bounded
