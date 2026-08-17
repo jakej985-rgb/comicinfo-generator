@@ -1143,8 +1143,10 @@
         return alert("Please preview the batch folder first.");
       }
 
-      if (!confirm(`Are you sure you want to embed ComicInfo.xml into ${currentBatchItems.length} file(s) in '${folderPath}'?`)) {
-        return;
+      const embedBtn = document.getElementById('btn-run-batch-embed');
+      if (embedBtn) {
+        embedBtn.disabled = true;
+        embedBtn.innerHTML = '<span>⏳</span> Embedding in Progress...';
       }
 
       const totalCount = currentBatchItems.length;
