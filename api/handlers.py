@@ -321,8 +321,9 @@ class ComicServerHandler(BaseHTTPRequestHandler):
         if path == "/api/config":
             try:
                 new_cfg_data = fields.get("config", {})
-                init_config(DEFAULT_CONFIG_PATH)
-                expanded = os.path.expanduser(DEFAULT_CONFIG_PATH)
+                target_config_path = os.environ.get("COMICINFO_CONFIG") or DEFAULT_CONFIG_PATH
+                init_config(target_config_path)
+                expanded = os.path.expanduser(target_config_path)
                 existing_yaml = {}
                 if os.path.exists(expanded):
                     try:

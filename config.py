@@ -409,30 +409,30 @@ def load_config(
         if "log_file" in log_yaml and log_yaml["log_file"]:
             cfg.logging.log_file = os.path.expanduser(str(log_yaml["log_file"]))
 
-    # 2. Parse Environment Variables (Overrides YAML)
-    if os.environ.get("COMICVINE_API_KEY") is not None:
-        cfg.comicvine.api_key = os.environ["COMICVINE_API_KEY"]
-    if os.environ.get("KAPOWARR_URL") is not None:
-        cfg.kapowarr.url = os.environ["KAPOWARR_URL"]
-    if os.environ.get("KAPOWARR_API_KEY") is not None:
-        cfg.kapowarr.api_key = os.environ["KAPOWARR_API_KEY"]
-    if os.environ.get("COMICINFO_LIBRARY_ROOTS") is not None:
+    # 2. Parse Environment Variables (Overrides YAML if non-empty)
+    if os.environ.get("COMICVINE_API_KEY") is not None and os.environ.get("COMICVINE_API_KEY").strip() != "":
+        cfg.comicvine.api_key = os.environ["COMICVINE_API_KEY"].strip()
+    if os.environ.get("KAPOWARR_URL") is not None and os.environ.get("KAPOWARR_URL").strip() != "":
+        cfg.kapowarr.url = os.environ["KAPOWARR_URL"].strip()
+    if os.environ.get("KAPOWARR_API_KEY") is not None and os.environ.get("KAPOWARR_API_KEY").strip() != "":
+        cfg.kapowarr.api_key = os.environ["KAPOWARR_API_KEY"].strip()
+    if os.environ.get("COMICINFO_LIBRARY_ROOTS") is not None and os.environ.get("COMICINFO_LIBRARY_ROOTS").strip() != "":
         cfg.library.roots = [os.path.expanduser(r.strip()) for r in os.environ["COMICINFO_LIBRARY_ROOTS"].split(",") if r.strip()]
-    if os.environ.get("COMICINFO_PROVIDER_PRIORITY") is not None:
+    if os.environ.get("COMICINFO_PROVIDER_PRIORITY") is not None and os.environ.get("COMICINFO_PROVIDER_PRIORITY").strip() != "":
         cfg.providers.priority = [p.strip().lower() for p in os.environ["COMICINFO_PROVIDER_PRIORITY"].split(",") if p.strip()]
-    if os.environ.get("COMICINFO_HOST") is not None:
-        cfg.server.host = os.environ["COMICINFO_HOST"]
-    if os.environ.get("COMICINFO_PORT") is not None:
+    if os.environ.get("COMICINFO_HOST") is not None and os.environ.get("COMICINFO_HOST").strip() != "":
+        cfg.server.host = os.environ["COMICINFO_HOST"].strip()
+    if os.environ.get("COMICINFO_PORT") is not None and os.environ.get("COMICINFO_PORT").strip() != "":
         cfg.server.port = _parse_int(os.environ["COMICINFO_PORT"], "COMICINFO_PORT", min_val=1, max_val=65535)
-    if os.environ.get("COMICINFO_CORS_ORIGINS") is not None:
+    if os.environ.get("COMICINFO_CORS_ORIGINS") is not None and os.environ.get("COMICINFO_CORS_ORIGINS").strip() != "":
         cfg.server.cors_origins = [o.strip() for o in os.environ["COMICINFO_CORS_ORIGINS"].split(",") if o.strip()]
-    if os.environ.get("COMICINFO_WORKERS") is not None:
+    if os.environ.get("COMICINFO_WORKERS") is not None and os.environ.get("COMICINFO_WORKERS").strip() != "":
         cfg.automation.workers = _parse_int(os.environ["COMICINFO_WORKERS"], "COMICINFO_WORKERS", min_val=1)
-    if os.environ.get("COMICINFO_CACHE_ENABLED") is not None:
+    if os.environ.get("COMICINFO_CACHE_ENABLED") is not None and os.environ.get("COMICINFO_CACHE_ENABLED").strip() != "":
         cfg.cache.enabled = _parse_bool(os.environ["COMICINFO_CACHE_ENABLED"], "COMICINFO_CACHE_ENABLED")
-    if os.environ.get("COMICINFO_LOG_LEVEL") is not None:
-        cfg.logging.level = os.environ["COMICINFO_LOG_LEVEL"].upper()
-    if os.environ.get("COMICINFO_STRICT_ARCHIVE_VERIFICATION") is not None:
+    if os.environ.get("COMICINFO_LOG_LEVEL") is not None and os.environ.get("COMICINFO_LOG_LEVEL").strip() != "":
+        cfg.logging.level = os.environ["COMICINFO_LOG_LEVEL"].strip().upper()
+    if os.environ.get("COMICINFO_STRICT_ARCHIVE_VERIFICATION") is not None and os.environ.get("COMICINFO_STRICT_ARCHIVE_VERIFICATION").strip() != "":
         cfg.output.strict_archive_verification = _parse_bool(os.environ["COMICINFO_STRICT_ARCHIVE_VERIFICATION"], "COMICINFO_STRICT_ARCHIVE_VERIFICATION")
 
     # 3. Parse CLI Overrides (Overrides Environment & YAML)

@@ -13,9 +13,6 @@ services:
       - COMICINFO_PORT=5005
       - COMICINFO_CONFIG=/config/config.yaml
       - COMICINFO_LIBRARY_ROOTS=/comics
-      - COMICVINE_API_KEY=
-      - KAPOWARR_URL=http://localhost:5656
-      - KAPOWARR_API_KEY=
     volumes:
       - ./config:/config
       - /mnt/disk1/Comics:/comics
