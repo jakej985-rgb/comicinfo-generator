@@ -12,7 +12,9 @@ services:
       - COMICINFO_HOST=0.0.0.0
       - COMICINFO_PORT=5005
       - COMICINFO_CONFIG=/config/config.yaml
-      - COMICINFO_LIBRARY_ROOTS=/comics
+      - COMICINFO_LIBRARY_ROOTS=/mnt/disk1/Comics,/comics,/mnt/disk1/Books to Sort
     volumes:
       - ./config:/config
+      - /mnt/disk1/Comics:/mnt/disk1/Comics
       - /mnt/disk1/Comics:/comics
+      - /mnt/disk1/Books to Sort:/mnt/disk1/Books to Sort
