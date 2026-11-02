@@ -56,6 +56,10 @@ def inspect_existing_comicinfo(
             if not xml_names:
                 return ExistingMetadataReport(state=STATE_MISSING)
 
+            xml_info = zf.getinfo(xml_names[0])
+            if xml_info.file_size > 100 * 1024 * 1024:
+                return ExistingMetadataReport(state=STATE_MALFORMED, error_message="ComicInfo.xml exceeds size limit")
+
             xml_bytes = zf.read(xml_names[0])
     except Exception as e:
         return ExistingMetadataReport(
