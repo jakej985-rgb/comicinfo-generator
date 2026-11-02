@@ -14,6 +14,37 @@ class ParsedFilename:
     is_annual: bool = False
     is_special: bool = False
 
+_TPB_KEYWORDS = [
+    "tpb", "trade paperback", "hc", "hardcover", "gn", "graphic novel",
+    "omnibus", "compendium", "masterworks", "collection", "deluxe",
+    "deluxe edition", "collected edition", "complete edition",
+    "vol 0", "vol.0", "volume 0", "vol 1 tpb", "vol.1 tpb", "vol 1 hc", "volume 1 tpb"
+]
+_TPB_PATTERN = re.compile(r"\b(?:" + "|".join(re.escape(k) for k in _TPB_KEYWORDS) + r")\b")
+
+_SPECIAL_KEYWORDS = ["special", "giant", "fcbd", "free comic book day", "preview", "one-shot", "oneshot"]
+
+_YEAR_PATTERN = re.compile(r"[\(\[\b](19\d\d|20\d\d)[\)\]\b]")
+_VOL_PATTERN = re.compile(r"\b(?:v|vol|volume)\.?\s*(\d+)\b", re.I)
+
+
+_ANNUAL_PATTERN1 = re.compile(r"\bannual\s*#?\s*(\d+)\b", re.I)
+_ANNUAL_PATTERN2 = re.compile(r"\bannual\b", re.I)
+_FCBD_PATTERN = re.compile(r"\b(fcbd|free comic book day)\b", re.I)
+_ONESHOT_PATTERN = re.compile(r"\b(one-shot|oneshot)\b", re.I)
+_PREVIEW_PATTERN = re.compile(r"\bpreview\b", re.I)
+_SPECIAL_PATTERN1 = re.compile(r"\bspecial\s*#?\s*(\d+)\b", re.I)
+_SPECIAL_PATTERN2 = re.compile(r"\bspecial\b", re.I)
+_ISSUE_NUM_PATTERN1 = re.compile(r"#\s*(\d+½|\d+/\d+|\d+\.\d+|\d+[a-zA-Z]?|½|1/2|0\.5|0+)")
+_ISSUE_NUM_PATTERN2 = re.compile(r"\bissue\s*#?\s*(\d+½|\d+/\d+|\d+\.\d+|\d+[a-zA-Z]?|½|1/2|0\.5|0+)", re.I)
+_ISSUE_NUM_PATTERN3 = re.compile(r"(?:^|[\s_\-#])(\d{1,4}[a-zA-Z]?)\b(?=[^\d]*$)")
+
+_CLEAN_YEAR = re.compile(r"[\(\[\b](19\d\d|20\d\d)[\)\]\b]")
+_CLEAN_VOL = re.compile(r"\b(?:v|vol|volume)\.?\s*\d+\b", re.I)
+_CLEAN_NUM1 = re.compile(r"#\s*(\d+½|\d+/\d+|\d+\.\d+|\d+[a-zA-Z]?|½|1/2|0\.5|0)")
+_CLEAN_NUM2 = re.compile(r"\bissue\s*#?\s*(\d+½|\d+/\d+|\d+\.\d+|\d+[a-zA-Z]?|½|1/2|0\.5|0)", re.I)
+_CLEAN_SYMBOLS = re.compile(r"[_\-\.\(\)\[\]]+")
+
 def parse_filename_identity(file_path: str) -> ParsedFilename:
     """
     Parses a comic file path or filename to extract identity signals
@@ -32,19 +63,13 @@ def parse_filename_identity(file_path: str) -> ParsedFilename:
 
     # Edition markers & Exclusions (Phase 90.3)
     lower_name = name_no_ext.lower()
-    tpb_keywords = [
-        "tpb", "trade paperback", "hc", "hardcover", "gn", "graphic novel",
-        "omnibus", "compendium", "masterworks", "collection", "deluxe",
-        "deluxe edition", "collected edition", "complete edition",
-        "vol 0", "vol.0", "volume 0", "vol 1 tpb", "vol.1 tpb", "vol 1 hc", "volume 1 tpb"
-    ]
-    if any(re.search(r"\b" + re.escape(k) + r"\b", lower_name) for k in tpb_keywords):
+    if _TPB_PATTERN.search(lower_name):
         res.is_tpb = True
 
     # Special issue markers (Phase 90.2)
     if "annual" in lower_name:
         res.is_annual = True
-    if any(k in lower_name for k in ["special", "giant", "fcbd", "free comic book day", "preview", "one-shot", "oneshot"]):
+    if any(k in lower_name for k in _SPECIAL_KEYWORDS):
         res.is_special = True
 
     # Extract year (e.g. (2016) or [2016])
@@ -55,41 +80,41 @@ def parse_filename_identity(file_path: str) -> ParsedFilename:
         res.year = int(m_year.group(1))
 
     # Extract volume (e.g. v1, v01, Vol. 01, Volume 1)
-    m_vol = re.search(r"\b(?:v|vol|volume)\.?\s*(\d+)\b", name_no_ext, re.I)
+    m_vol = _VOL_PATTERN.search(name_no_ext)
     if m_vol:
         res.volume = m_vol.group(1).lstrip("0") or "1"
 
     # Extract issue number (e.g. #001, #1A, #1.5, 001, #0, #1/2, Annual 1, FCBD, Preview, One-Shot)
     m_num = None
     # 1. Named specials
-    if re.search(r"\bannual\s*#?\s*(\d+)\b", name_no_ext, re.I):
-        m_num = re.search(r"\bannual\s*#?\s*(\d+)\b", name_no_ext, re.I)
+    if _ANNUAL_PATTERN1.search(name_no_ext):
+        m_num = _ANNUAL_PATTERN1.search(name_no_ext)
         res.issue_number = str(int(m_num.group(1)))
         res.is_annual = True
-    elif re.search(r"\bannual\b", name_no_ext, re.I):
+    elif _ANNUAL_PATTERN2.search(name_no_ext):
         res.issue_number = "Annual"
         res.is_annual = True
-    elif re.search(r"\b(fcbd|free comic book day)\b", name_no_ext, re.I):
+    elif _FCBD_PATTERN.search(name_no_ext):
         res.issue_number = "FCBD"
-    elif re.search(r"\b(one-shot|oneshot)\b", name_no_ext, re.I):
+    elif _ONESHOT_PATTERN.search(name_no_ext):
         res.issue_number = "One-Shot"
-    elif re.search(r"\bpreview\b", name_no_ext, re.I):
+    elif _PREVIEW_PATTERN.search(name_no_ext):
         res.issue_number = "Preview"
-    elif re.search(r"\bspecial\s*#?\s*(\d+)\b", name_no_ext, re.I):
-        m_num = re.search(r"\bspecial\s*#?\s*(\d+)\b", name_no_ext, re.I)
+    elif _SPECIAL_PATTERN1.search(name_no_ext):
+        m_num = _SPECIAL_PATTERN1.search(name_no_ext)
         res.issue_number = str(int(m_num.group(1)))
         res.is_special = True
-    elif re.search(r"\bspecial\b", name_no_ext, re.I):
+    elif _SPECIAL_PATTERN2.search(name_no_ext):
         res.issue_number = "Special"
         res.is_special = True
     else:
         # 2. Standard and fractional numbers
-        m_num = re.search(r"#\s*(\d+½|\d+/\d+|\d+\.\d+|\d+[a-zA-Z]?|½|1/2|0\.5|0+)", name_no_ext)
+        m_num = _ISSUE_NUM_PATTERN1.search(name_no_ext)
         if not m_num:
-            m_num = re.search(r"\bissue\s*#?\s*(\d+½|\d+/\d+|\d+\.\d+|\d+[a-zA-Z]?|½|1/2|0\.5|0+)", name_no_ext, re.I)
+            m_num = _ISSUE_NUM_PATTERN2.search(name_no_ext)
         if not m_num:
             # Fallback to trailing space/underscore/dash number e.g. "Batman 001", "Batman_001"
-            m_num = re.search(r"(?:^|[\s_\-#])(\d{1,4}[a-zA-Z]?)\b(?=[^\d]*$)", name_no_ext)
+            m_num = _ISSUE_NUM_PATTERN3.search(name_no_ext)
 
         if m_num:
             raw_num = m_num.group(1).strip()
