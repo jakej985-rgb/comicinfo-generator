@@ -403,6 +403,8 @@ def _read_story_arc_from_cbz(file_path: str) -> tuple[str, str, bool]:
             if "comicinfo.xml" in names:
                 for n in zf.namelist():
                     if n.lower() == "comicinfo.xml":
+                        if zf.getinfo(n).file_size > 100 * 1024 * 1024:
+                            break
                         xml_bytes = zf.read(n)
                         root = ET.fromstring(xml_bytes)
                         arc = root.findtext("StoryArc") or root.findtext("Storyarc") or ""
@@ -442,6 +444,8 @@ def fix_story_arcs_on_device(issues_list: list[dict], story_arc_name: str) -> di
             with zipfile.ZipFile(full_p, "r") as zf:
                 for n in zf.namelist():
                     if n.lower() == "comicinfo.xml":
+                        if zf.getinfo(n).file_size > 100 * 1024 * 1024:
+                            break
                         existing_xml_bytes = zf.read(n)
                         break
 
@@ -545,6 +549,8 @@ def clean_duplicate_story_arcs_on_device(issues_list: list[dict]) -> dict:
             with zipfile.ZipFile(full_p, "r") as zf:
                 for n in zf.namelist():
                     if n.lower() == "comicinfo.xml":
+                        if zf.getinfo(n).file_size > 100 * 1024 * 1024:
+                            break
                         existing_xml_bytes = zf.read(n)
                         break
 
@@ -626,6 +632,8 @@ def rename_story_arc_on_device(issues_list: list[dict], old_name: str, new_name:
             with zipfile.ZipFile(full_p, "r") as zf:
                 for n in zf.namelist():
                     if n.lower() == "comicinfo.xml":
+                        if zf.getinfo(n).file_size > 100 * 1024 * 1024:
+                            break
                         existing_xml_bytes = zf.read(n)
                         break
 
@@ -714,6 +722,8 @@ def update_issue_arc_number_on_device(file_path: str, story_arc_name: str, new_a
         with zipfile.ZipFile(file_path, "r") as zf:
             for n in zf.namelist():
                 if n.lower() == "comicinfo.xml":
+                    if zf.getinfo(n).file_size > 100 * 1024 * 1024:
+                        break
                     existing_xml_bytes = zf.read(n)
                     break
 

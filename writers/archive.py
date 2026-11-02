@@ -8,6 +8,8 @@ from typing import Optional, Set, Dict, Tuple
 from models.comic import Comic
 from writers.comicinfo import generate_xml_bytes
 
+MAX_UNCOMPRESSED_FILE_SIZE = 100 * 1024 * 1024  # 100MB zip bomb limit
+
 # --- Explicit Archive Exceptions ---
 class ArchiveError(Exception):
     """Base exception for archive operations."""
@@ -38,6 +40,8 @@ def compute_archive_sha256_manifest(archive_path: str) -> Dict[str, str]:
         with zipfile.ZipFile(archive_path, 'r') as z:
             for item in z.infolist():
                 if item.filename.lower() != "comicinfo.xml" and not item.is_dir():
+                    if item.file_size > MAX_UNCOMPRESSED_FILE_SIZE:
+                        raise ArchiveReadError(f"File '{item.filename}' exceeds uncompressed size limit.", archive_path=archive_path, operation="read_manifest")
                     data = z.read(item.filename)
                     manifest[item.filename.lower()] = hashlib.sha256(data).hexdigest()
     except Exception:
@@ -88,7 +92,11 @@ def verify_cbz_archive(
 
             # 3. Confirm ComicInfo.xml is parseable
             try:
-                xml_data = z.read([n for n in z.namelist() if n.lower() == "comicinfo.xml"][0])
+                xml_name = [n for n in z.namelist() if n.lower() == "comicinfo.xml"][0]
+                xml_info = z.getinfo(xml_name)
+                if xml_info.file_size > MAX_UNCOMPRESSED_FILE_SIZE:
+                     raise ArchiveValidationError(f"ComicInfo.xml exceeds size limit.", archive_path=archive_path, operation="verify_comicinfo")
+                xml_data = z.read(xml_name)
                 ET.fromstring(xml_data)
             except Exception as xe:
                 raise ArchiveValidationError(
@@ -146,6 +154,8 @@ def verify_cbz_archive(
                 new_sha256_map = {}
                 for item in z.infolist():
                     if item.filename.lower() != "comicinfo.xml" and not item.is_dir():
+                        if item.file_size > MAX_UNCOMPRESSED_FILE_SIZE:
+                            raise ArchiveValidationError(f"File '{item.filename}' exceeds size limit.", archive_path=archive_path, operation="verify_sha256")
                         data = z.read(item.filename)
                         new_sha256_map[item.filename.lower()] = hashlib.sha256(data).hexdigest()
 
@@ -338,6 +348,8 @@ def embed_comicinfo_in_cbz(archive_path: str, comic: Comic, strict: bool = False
             if strict:
                 for item in src_z.infolist():
                     if item.filename.lower() != "comicinfo.xml" and not item.is_dir():
+                        if item.file_size > MAX_UNCOMPRESSED_FILE_SIZE:
+                            raise ArchiveReadError(f"File '{item.filename}' exceeds size limit.", archive_path=archive_path, operation="read_manifest")
                         data = src_z.read(item.filename)
                         original_sha256_manifest[item.filename.lower()] = hashlib.sha256(data).hexdigest()
     except Exception:
@@ -363,6 +375,8 @@ def embed_comicinfo_in_cbz(archive_path: str, comic: Comic, strict: bool = False
             with zipfile.ZipFile(temp_path, 'w') as dst_zip:
                 for item in src_zip.infolist():
                     if item.filename.lower() != "comicinfo.xml":
+                        if item.file_size > MAX_UNCOMPRESSED_FILE_SIZE:
+                            raise ArchiveWriteError(f"File '{item.filename}' exceeds size limit.", archive_path=archive_path, operation="read_file")
                         data = src_zip.read(item.filename)
                         dst_zip.writestr(item, data, compress_type=item.compress_type)
 

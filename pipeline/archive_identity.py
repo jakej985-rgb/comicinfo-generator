@@ -23,6 +23,9 @@ def extract_archive_identity(archive: ArchiveRecord) -> Optional[ComicIdentity]:
             with zipfile.ZipFile(archive.path, "r") as z:
                 xml_names = [n for n in z.namelist() if n.lower() == "comicinfo.xml"]
                 if xml_names:
+                    xml_info = z.getinfo(xml_names[0])
+                    if xml_info.file_size > 100 * 1024 * 1024:
+                        return None
                     xml_bytes = z.read(xml_names[0])
                     comic = ComicInfoParser.parse_xml_bytes(xml_bytes)
 
