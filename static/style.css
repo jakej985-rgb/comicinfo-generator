@@ -948,3 +948,10 @@ code {
     from { opacity: 0; transform: translateY(-5px); }
     to { opacity: 1; transform: translateY(0); }
 }
+
+
+/* Accessibility Focus States */
+.btn:focus-visible, .tbl-select:focus-visible, .form-control:focus-visible {
+    outline: 2px solid var(--accent-cyan);
+    outline-offset: 2px;
+}
