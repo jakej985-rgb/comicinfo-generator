@@ -1917,7 +1917,7 @@
             <div>
               <div id="arc-title-display" style="display: flex; align-items: center; gap: 10px; margin-bottom: 6px;">
                 <h2 id="arc-title-h2" style="font-size: 20px; color: #fff; margin: 0;">📚 ${arc.title}</h2>
-                <button title="Rename arc" onclick="startRenameArc()" style="background: none; border: none; cursor: pointer; color: var(--text-muted); font-size: 16px; padding: 2px 6px; border-radius: 4px; transition: color 0.2s;" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--text-muted)'">✏️</button>
+                <button title="Rename arc" aria-label="Rename arc" onclick="startRenameArc()" style="background: none; border: none; cursor: pointer; color: var(--text-muted); font-size: 16px; padding: 2px 6px; border-radius: 4px; transition: color 0.2s;" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--text-muted)'">✏️</button>
               </div>
               <div id="arc-title-edit" style="display: none; align-items: center; gap: 8px; margin-bottom: 6px;">
                 <input id="arc-title-input" class="form-control" style="height: 36px; font-size: 16px; font-weight: 700; max-width: 360px;" value="${arc.title}">
