@@ -91,6 +91,12 @@ FILENAME_CORPUS = [
     "Batman #1",
     # Uppercase extension
     "Batman #1.CBZ",
+    # Complex fractional and variant patterns
+    "Batman #01 1/2.cbz",
+    "Batman #2½.cbz",
+    "Batman #00005.cbz",
+    "Batman #000.cbz",
+    "Batman #12B (2020).cbz",
 ]
 
 ISSUE_NUMBER_CORPUS = [

@@ -4,8 +4,13 @@ import sqlite3
 import time
 import hashlib
 from typing import Optional, Dict, List
+from dataclasses import fields as dc_fields
 
 from models.comic import Comic
+
+# Bolt Optimization: Pre-compute valid Comic model field names set at module level
+# to avoid repeatedly calling fields(Comic) on every cached issue read.
+_COMIC_FIELD_NAMES = frozenset(f.name for f in dc_fields(Comic))
 
 # Phase 30 & 31: Schema version — bump this whenever parser logic changes
 # to automatically invalidate all cached provider results on next startup.
@@ -249,9 +254,8 @@ class CacheManager:
             if row and self._is_valid(row) and row["data_json"]:
                 try:
                     data = json.loads(row["data_json"])
-                    from dataclasses import fields as dc_fields
-                    valid_keys = {f.name for f in dc_fields(Comic)}
-                    filtered = {k: v for k, v in data.items() if k in valid_keys}
+                    # Bolt Optimization: Use precomputed _COMIC_FIELD_NAMES frozenset
+                    filtered = {k: v for k, v in data.items() if k in _COMIC_FIELD_NAMES}
                     return Comic(**filtered)
                 except Exception:
                     pass
