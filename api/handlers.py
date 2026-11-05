@@ -45,6 +45,7 @@ from services.processing import (
 
 _repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC_DIR = os.path.join(_repo_dir, "static")
+MAX_POST_BODY_SIZE = 10 * 1024 * 1024  # 10MB limit to prevent DoS via body memory exhaustion
 
 def sanitize_error_text(text: str) -> str:
     """Sanitizes text to guarantee API keys are never exposed in error responses or logs."""
@@ -86,6 +87,8 @@ class ComicServerHandler(BaseHTTPRequestHandler):
     def _set_headers(self, status=200, content_type="application/json"):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
         allowed_origin = self._get_allowed_origin()
         if allowed_origin:
             self.send_header("Access-Control-Allow-Origin", allowed_origin)
@@ -265,6 +268,9 @@ class ComicServerHandler(BaseHTTPRequestHandler):
         """Parses multipart or JSON POST body; returns (fields dict, uploaded_file or None)."""
         content_type = self.headers.get("Content-Type", "")
         content_length = int(self.headers.get("Content-Length", 0))
+        if content_length > MAX_POST_BODY_SIZE:
+            return None, None, f"Payload size {content_length} bytes exceeds maximum allowed limit of {MAX_POST_BODY_SIZE} bytes"
+
         fields = {}
         uploaded_file = None
 
@@ -504,6 +510,9 @@ class ComicServerHandler(BaseHTTPRequestHandler):
 
             cfg = load_config()
             self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
             allowed_origin = self._get_allowed_origin()
             if allowed_origin:
                 self.send_header("Access-Control-Allow-Origin", allowed_origin)
