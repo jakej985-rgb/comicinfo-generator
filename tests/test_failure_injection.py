@@ -379,6 +379,35 @@ class TestFailureInjection(unittest.TestCase):
         self.assertEqual(os.path.getsize(cbz), orig_size)
 
     # ------------------------------------------------------------------ #
+    # 19. Path Traversal (Zip Slip) Failure Injection                    #
+    # ------------------------------------------------------------------ #
+    def test_path_traversal_archive_fails_verification_and_preserves_original(self):
+        """Failure: Archive with path traversal filenames fails verification, original is safe."""
+        cbz = _make_cbz(self.tmp, "Batman_traversal.cbz")
+        comic = _make_comic()
+        orig_size = os.path.getsize(cbz)
+
+        # Inject path traversal entry into a mock CBZ
+        malicious_cbz = os.path.join(self.tmp, "malicious_slip.cbz")
+        with zipfile.ZipFile(malicious_cbz, "w") as zf:
+            zf.writestr("page_001.jpg", b"\xff\xd8\xff" + b"\x00" * 50)
+            zf.writestr("ComicInfo.xml", b"<ComicInfo><Title>Test</Title></ComicInfo>")
+            zf.writestr("../../etc/cron.d/evil", b"* * * * * root /bin/sh")
+
+        with self.assertRaises(ArchiveValidationError) as ctx:
+            verify_cbz_archive(malicious_cbz)
+        self.assertEqual(ctx.exception.operation, "verify_entry_path_safety")
+        self.assertIn("Insecure path traversal entry", str(ctx.exception))
+
+        # Trying to embed into malicious CBZ raises ArchiveValidationError and removes temp files
+        with self.assertRaises(ArchiveValidationError):
+            embed_comicinfo_in_cbz(malicious_cbz, comic)
+
+        # Original uninfected archive must remain intact
+        self.assertTrue(os.path.exists(cbz))
+        self.assertEqual(os.path.getsize(cbz), orig_size)
+
+    # ------------------------------------------------------------------ #
     # 18. Phase 91: Watcher Callback Failure                              #
     # ------------------------------------------------------------------ #
     def test_watcher_callback_failure_does_not_crash_watcher(self):

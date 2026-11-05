@@ -80,6 +80,25 @@ def verify_cbz_archive(
                     operation="testzip"
                 )
 
+            # Security Hardening: Validate entry names to prevent Zip Slip / path traversal attacks
+            for entry_name in z.namelist():
+                norm_entry = os.path.normpath(entry_name)
+                if (
+                    not entry_name
+                    or entry_name.startswith("/")
+                    or entry_name.startswith("\\")
+                    or os.path.isabs(norm_entry)
+                    or norm_entry == ".."
+                    or norm_entry.startswith(".." + os.sep)
+                    or norm_entry.startswith("../")
+                    or norm_entry.startswith("..\\")
+                ):
+                    raise ArchiveValidationError(
+                        f"Insecure path traversal entry '{entry_name}' detected in archive '{os.path.basename(archive_path)}'.",
+                        archive_path=archive_path,
+                        operation="verify_entry_path_safety"
+                    )
+
             namelist = [n.lower() for n in z.namelist()]
 
             # 2. Confirm ComicInfo.xml presence

@@ -44,5 +44,36 @@ class TestArchiveSafetyAndMetadata(unittest.TestCase):
         mode = st.st_mode & 0o777
         self.assertEqual(mode, 0o644)
 
+    def test_rejects_path_traversal_archive(self):
+        """Security: verify_cbz_archive rejects archives containing Zip Slip / path traversal entries."""
+        from writers.archive import ArchiveValidationError
+        traversal_cbz = os.path.join(self.temp_dir, "traversal.cbz")
+        try:
+            with zipfile.ZipFile(traversal_cbz, "w") as z:
+                z.writestr("page_001.jpg", b"fake_jpg")
+                z.writestr("ComicInfo.xml", b"<ComicInfo><Title>Evil</Title></ComicInfo>")
+                z.writestr("../../etc/evil.sh", b"malicious payload")
+
+            with self.assertRaises(ArchiveValidationError) as ctx:
+                verify_cbz_archive(traversal_cbz)
+            self.assertEqual(ctx.exception.operation, "verify_entry_path_safety")
+            self.assertIn("Insecure path traversal entry", str(ctx.exception))
+        finally:
+            if os.path.exists(traversal_cbz):
+                os.remove(traversal_cbz)
+
+    def test_allows_nested_safe_paths(self):
+        """Archives with valid relative subdirectories (e.g. pages/001.jpg) pass verification."""
+        nested_cbz = os.path.join(self.temp_dir, "nested.cbz")
+        try:
+            with zipfile.ZipFile(nested_cbz, "w") as z:
+                z.writestr("subfolder/page_001.jpg", b"fake_jpg")
+                z.writestr("ComicInfo.xml", b"<ComicInfo><Title>Good</Title></ComicInfo>")
+
+            verify_cbz_archive(nested_cbz)
+        finally:
+            if os.path.exists(nested_cbz):
+                os.remove(nested_cbz)
+
 if __name__ == "__main__":
     unittest.main()
