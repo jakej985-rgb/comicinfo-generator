@@ -44,6 +44,9 @@ _CLEAN_VOL = re.compile(r"\b(?:v|vol|volume)\.?\s*\d+\b", re.I)
 _CLEAN_NUM1 = re.compile(r"#\s*(\d+½|\d+/\d+|\d+\.\d+|\d+[a-zA-Z]?|½|1/2|0\.5|0)")
 _CLEAN_NUM2 = re.compile(r"\bissue\s*#?\s*(\d+½|\d+/\d+|\d+\.\d+|\d+[a-zA-Z]?|½|1/2|0\.5|0)", re.I)
 _CLEAN_SYMBOLS = re.compile(r"[_\-\.\(\)\[\]]+")
+_FRACTION_CHECK = re.compile(r"#\s*\d+/\d+")
+_FRACTION_SUB = re.compile(r"[½|1/2]")
+_LEADING_ZERO_NUM = re.compile(r"^0+(\d+)$")
 
 def parse_filename_identity(file_path: str) -> ParsedFilename:
     """
@@ -52,7 +55,8 @@ def parse_filename_identity(file_path: str) -> ParsedFilename:
     """
     res = ParsedFilename()
     # Safely handle fractional issue filenames (e.g. #1/2) that might otherwise be split by os.path.basename
-    if re.search(r"#\s*\d+/\d+", file_path) and not os.path.isabs(file_path) and not os.path.exists(file_path):
+    # Bolt Optimization: Use precompiled _FRACTION_CHECK pattern instead of re.search
+    if _FRACTION_CHECK.search(file_path) and not os.path.isabs(file_path) and not os.path.exists(file_path):
         basename = file_path
         parent_dir = ""
     else:
@@ -73,9 +77,10 @@ def parse_filename_identity(file_path: str) -> ParsedFilename:
         res.is_special = True
 
     # Extract year (e.g. (2016) or [2016])
-    m_year = re.search(r"[\(\[\b](19\d\d|20\d\d)[\)\]\b]", name_no_ext)
+    # Bolt Optimization: Use pre-compiled _YEAR_PATTERN
+    m_year = _YEAR_PATTERN.search(name_no_ext)
     if not m_year and parent_dir:
-        m_year = re.search(r"[\(\[\b](19\d\d|20\d\d)[\)\]\b]", parent_dir)
+        m_year = _YEAR_PATTERN.search(parent_dir)
     if m_year:
         res.year = int(m_year.group(1))
 
@@ -122,11 +127,11 @@ def parse_filename_identity(file_path: str) -> ParsedFilename:
                 if raw_num in ("½", "1/2", "0.5"):
                     res.issue_number = "0.5"
                 else:
-                    prefix = re.sub(r"[½|1/2]", "", raw_num).strip()
+                    prefix = _FRACTION_SUB.sub("", raw_num).strip()
                     res.issue_number = f"{prefix}.5"
             elif raw_num.isdigit():
                 res.issue_number = str(int(raw_num))
-            elif re.match(r"^0+(\d+)$", raw_num):
+            elif _LEADING_ZERO_NUM.match(raw_num):
                 res.issue_number = str(int(raw_num))
             else:
                 res.issue_number = raw_num
@@ -138,11 +143,12 @@ def parse_filename_identity(file_path: str) -> ParsedFilename:
     if m_num and m_num.start() > 0:
         clean = clean[:m_num.start()]
 
-    clean = re.sub(r"[\(\[\b](19\d\d|20\d\d)[\)\]\b]", "", clean)
-    clean = re.sub(r"\b(?:v|vol|volume)\.?\s*\d+\b", "", clean, flags=re.I)
-    clean = re.sub(r"#\s*(\d+½|\d+/\d+|\d+\.\d+|\d+[a-zA-Z]?|½|1/2|0\.5|0)", "", clean)
-    clean = re.sub(r"\bissue\s*#?\s*(\d+½|\d+/\d+|\d+\.\d+|\d+[a-zA-Z]?|½|1/2|0\.5|0)", "", clean, flags=re.I)
-    clean = re.sub(r"[_\-\.\(\)\[\]]+", " ", clean).strip()
+    # Bolt Optimization: Use precompiled regex .sub() calls instead of re.sub
+    clean = _CLEAN_YEAR.sub("", clean)
+    clean = _CLEAN_VOL.sub("", clean)
+    clean = _CLEAN_NUM1.sub("", clean)
+    clean = _CLEAN_NUM2.sub("", clean)
+    clean = _CLEAN_SYMBOLS.sub(" ", clean).strip()
 
     if res.is_annual and not clean.lower().endswith("annual") and "annual" in name_no_ext.lower():
         clean = f"{clean} Annual".strip()
@@ -151,8 +157,8 @@ def parse_filename_identity(file_path: str) -> ParsedFilename:
 
     # If parent dir has a clean series name (e.g. "Batman (2016)"), use parent dir as fallback/preference
     if parent_dir and parent_dir.lower() not in ("comics", "downloads", "tmp", "temp"):
-        clean_parent = re.sub(r"[\(\[\b](19\d\d|20\d\d)[\)\]\b]", "", parent_dir)
-        clean_parent = re.sub(r"[_\-\.\(\)\[\]]+", " ", clean_parent).strip()
+        clean_parent = _CLEAN_YEAR.sub("", parent_dir)
+        clean_parent = _CLEAN_SYMBOLS.sub(" ", clean_parent).strip()
         if clean_parent and (not clean or clean.lower() == clean_parent.lower()):
             clean = clean_parent
 
