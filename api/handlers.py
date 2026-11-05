@@ -89,6 +89,11 @@ class ComicServerHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
+        # Defense-in-depth: Restrict resource origins and execution to prevent XSS and clickjacking
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: http:; connect-src 'self';"
+        )
         allowed_origin = self._get_allowed_origin()
         if allowed_origin:
             self.send_header("Access-Control-Allow-Origin", allowed_origin)
@@ -513,6 +518,10 @@ class ComicServerHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/x-ndjson")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("X-Frame-Options", "DENY")
+            self.send_header(
+                "Content-Security-Policy",
+                "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: http:; connect-src 'self';"
+            )
             allowed_origin = self._get_allowed_origin()
             if allowed_origin:
                 self.send_header("Access-Control-Allow-Origin", allowed_origin)

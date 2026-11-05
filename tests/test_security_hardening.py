@@ -247,11 +247,15 @@ server:
     # 80.4: Defensive Security Headers & POST Body Size Limits           #
     # ------------------------------------------------------------------ #
     def test_80_4_security_headers_present(self):
-        """80.4: Responses must contain X-Content-Type-Options and X-Frame-Options security headers."""
+        """80.4: Responses must contain security headers (X-Content-Type-Options, X-Frame-Options, CSP)."""
         status, headers, _, _ = self._simulate_http_request("GET", "/api/config")
         self.assertEqual(status, 200)
         self.assertEqual(headers.get("X-Content-Type-Options"), "nosniff")
         self.assertEqual(headers.get("X-Frame-Options"), "DENY")
+        csp = headers.get("Content-Security-Policy", "")
+        self.assertIn("default-src 'self'", csp)
+        self.assertIn("script-src 'self' 'unsafe-inline'", csp)
+        self.assertIn("connect-src 'self'", csp)
 
     def test_80_4_oversized_post_payload_rejected(self):
         """80.4: POST requests with body exceeding MAX_POST_BODY_SIZE must be rejected with 400."""
