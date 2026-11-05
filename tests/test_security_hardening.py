@@ -243,6 +243,30 @@ server:
         self.assertEqual(loaded.server.host, "127.0.0.1")
         self.assertEqual(loaded.server.port, 5005)
 
+    # ------------------------------------------------------------------ #
+    # 80.4: Defensive Security Headers & POST Body Size Limits           #
+    # ------------------------------------------------------------------ #
+    def test_80_4_security_headers_present(self):
+        """80.4: Responses must contain X-Content-Type-Options and X-Frame-Options security headers."""
+        status, headers, _, _ = self._simulate_http_request("GET", "/api/config")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("X-Content-Type-Options"), "nosniff")
+        self.assertEqual(headers.get("X-Frame-Options"), "DENY")
+
+    def test_80_4_oversized_post_payload_rejected(self):
+        """80.4: POST requests with body exceeding MAX_POST_BODY_SIZE must be rejected with 400."""
+        from api.handlers import MAX_POST_BODY_SIZE
+        oversized_len = MAX_POST_BODY_SIZE + 1024
+
+        headers = {
+            "Content-Length": str(oversized_len),
+            "Content-Type": "application/json"
+        }
+        # Simulate request with declared Content-Length exceeding the limit
+        status, _, resp_json, _ = self._simulate_http_request("POST", "/api/search", headers=headers, body=None)
+        self.assertEqual(status, 400)
+        self.assertIn("exceeds maximum allowed limit", resp_json.get("error", ""))
+
 
 if __name__ == "__main__":
     unittest.main()
